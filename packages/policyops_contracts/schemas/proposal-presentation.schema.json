@@ -1,0 +1,88 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "RunScope": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "format": "uuid",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "case_id",
+        "run_id"
+      ],
+      "title": "RunScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The agent message (by sequence) that displayed one proposal version's presentation text.",
+  "properties": {
+    "action_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Action Digest",
+      "type": "string"
+    },
+    "message_id": {
+      "format": "uuid",
+      "title": "Message Id",
+      "type": "string"
+    },
+    "message_sequence": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Message Sequence",
+      "type": "integer"
+    },
+    "presentation_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Presentation Sha256",
+      "type": "string"
+    },
+    "presented_at": {
+      "format": "date-time",
+      "title": "Presented At",
+      "type": "string"
+    },
+    "proposal_id": {
+      "format": "uuid",
+      "title": "Proposal Id",
+      "type": "string"
+    },
+    "proposal_version": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Proposal Version",
+      "type": "integer"
+    },
+    "scope": {
+      "$ref": "#/$defs/RunScope"
+    }
+  },
+  "required": [
+    "scope",
+    "proposal_id",
+    "proposal_version",
+    "action_digest",
+    "presentation_sha256",
+    "message_id",
+    "message_sequence",
+    "presented_at"
+  ],
+  "title": "ProposalPresentationRecord",
+  "type": "object"
+}

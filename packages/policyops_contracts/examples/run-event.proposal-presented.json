@@ -1,0 +1,19 @@
+{
+  "event_id": "00000000-0000-0000-0000-0000000003e8",
+  "event_version": 1,
+  "occurred_at": "2026-01-01T12:00:05Z",
+  "payload": {
+    "action_digest": "fdfa9e64c52c5eeec627ecde59eecee2f844ebaa8174594671b4a7d0c32f7fe7",
+    "expires_at": "2026-01-01T12:15:00Z",
+    "proposal_id": "00000000-0000-0000-0000-0000000001f4",
+    "proposal_version": 1,
+    "type": "proposal.presented"
+  },
+  "schema_version": "policyops.run-event/v1",
+  "scope": {
+    "case_id": "00000000-0000-0000-0000-000000000002",
+    "run_id": "00000000-0000-0000-0000-000000000003",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "sequence": 21
+}

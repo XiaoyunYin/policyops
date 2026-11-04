@@ -1,0 +1,8 @@
+{
+  "allowlist_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "domain": "retail",
+  "kind": "mutation",
+  "label": "Retail demo 9999",
+  "seed_id": "retail-demo-9999",
+  "upstream_task_id": "9999"
+}

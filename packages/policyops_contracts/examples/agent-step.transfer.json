@@ -1,0 +1,7 @@
+{
+  "call": {
+    "summary": "Customer asked about a store credit program that is out of scope.",
+    "tool": "transfer_to_human_agents"
+  },
+  "kind": "tool_call"
+}

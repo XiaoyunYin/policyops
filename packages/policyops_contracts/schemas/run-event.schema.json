@@ -1,0 +1,555 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "ApprovalDecided": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "format": "uuid",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "approval.decided",
+          "default": "approval.decided",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "proposal_id",
+        "decision"
+      ],
+      "title": "ApprovalDecided",
+      "type": "object"
+    },
+    "ClarificationRequested": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "ambiguous_reply",
+            "declined",
+            "stale_presentation",
+            "expired"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "const": "consent.clarification_requested",
+          "default": "consent.clarification_requested",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "reason"
+      ],
+      "title": "ClarificationRequested",
+      "type": "object"
+    },
+    "ConsentRecorded": {
+      "additionalProperties": false,
+      "properties": {
+        "action_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Action Digest",
+          "type": "string"
+        },
+        "consent_id": {
+          "format": "uuid",
+          "title": "Consent Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "consent.recorded",
+          "default": "consent.recorded",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "consent_id",
+        "proposal_id",
+        "action_digest"
+      ],
+      "title": "ConsentRecorded",
+      "type": "object"
+    },
+    "ErrorCode": {
+      "enum": [
+        "invalid_input",
+        "unauthenticated",
+        "forbidden",
+        "not_found",
+        "conflict",
+        "stale_version",
+        "expired",
+        "customer_not_authenticated",
+        "customer_mismatch",
+        "policy_denied",
+        "policy_unsupported",
+        "consent_required",
+        "consent_ambiguous",
+        "approval_required",
+        "separation_of_duties",
+        "protocol_violation",
+        "upstream_money_precision",
+        "rate_limited",
+        "unavailable",
+        "internal"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "ErrorRaised": {
+      "additionalProperties": false,
+      "description": "Replayable error marker: code and identifiers only (the free-form detail stays in the response).",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "rule_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Id"
+        },
+        "type": {
+          "const": "error.raised",
+          "default": "error.raised",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "correlation_id",
+        "retryable"
+      ],
+      "title": "ErrorRaised",
+      "type": "object"
+    },
+    "EscalationRequested": {
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "escalation.requested",
+          "default": "escalation.requested",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id"
+      ],
+      "title": "EscalationRequested",
+      "type": "object"
+    },
+    "MessagePosted": {
+      "additionalProperties": false,
+      "properties": {
+        "message_id": {
+          "format": "uuid",
+          "title": "Message Id",
+          "type": "string"
+        },
+        "message_sequence": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Message Sequence",
+          "type": "integer"
+        },
+        "source": {
+          "enum": [
+            "seeded",
+            "simulated_customer",
+            "operator_entered_customer",
+            "staff_note",
+            "agent"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "type": {
+          "const": "case.message_posted",
+          "default": "case.message_posted",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_id",
+        "message_sequence",
+        "source"
+      ],
+      "title": "MessagePosted",
+      "type": "object"
+    },
+    "ProposalPresented": {
+      "additionalProperties": false,
+      "properties": {
+        "action_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Action Digest",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "proposal_version": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Proposal Version",
+          "type": "integer"
+        },
+        "type": {
+          "const": "proposal.presented",
+          "default": "proposal.presented",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "proposal_version",
+        "action_digest",
+        "expires_at"
+      ],
+      "title": "ProposalPresented",
+      "type": "object"
+    },
+    "RunScope": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "format": "uuid",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "case_id",
+        "run_id"
+      ],
+      "title": "RunScope",
+      "type": "object"
+    },
+    "RunStateChanged": {
+      "additionalProperties": false,
+      "properties": {
+        "current": {
+          "enum": [
+            "queued",
+            "running",
+            "waiting_input",
+            "waiting_approval",
+            "reconciling",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "budget_exceeded"
+          ],
+          "title": "Current",
+          "type": "string"
+        },
+        "previous": {
+          "anyOf": [
+            {
+              "enum": [
+                "queued",
+                "running",
+                "waiting_input",
+                "waiting_approval",
+                "reconciling",
+                "succeeded",
+                "failed",
+                "cancelled",
+                "budget_exceeded"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Previous"
+        },
+        "type": {
+          "const": "run.state_changed",
+          "default": "run.state_changed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "previous",
+        "current"
+      ],
+      "title": "RunStateChanged",
+      "type": "object"
+    },
+    "ToolCallFinished": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "enum": [
+            "ok",
+            "denied",
+            "escalated",
+            "error",
+            "unknown"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "rule_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Id"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "type": {
+          "const": "tool.finished",
+          "default": "tool.finished",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "outcome"
+      ],
+      "title": "ToolCallFinished",
+      "type": "object"
+    },
+    "ToolCallRequested": {
+      "additionalProperties": false,
+      "properties": {
+        "call_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Call Sha256",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ToolKind"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "type": {
+          "const": "tool.requested",
+          "default": "tool.requested",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "kind",
+        "call_sha256"
+      ],
+      "title": "ToolCallRequested",
+      "type": "object"
+    },
+    "ToolKind": {
+      "enum": [
+        "read",
+        "write",
+        "generic"
+      ],
+      "title": "ToolKind",
+      "type": "string"
+    },
+    "ToolName": {
+      "enum": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "get_item_details",
+        "list_all_product_types",
+        "calculate",
+        "transfer_to_human_agents",
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items",
+        "modify_user_address"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Event Version",
+      "type": "integer"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "payload": {
+      "discriminator": {
+        "mapping": {
+          "approval.decided": "#/$defs/ApprovalDecided",
+          "case.message_posted": "#/$defs/MessagePosted",
+          "consent.clarification_requested": "#/$defs/ClarificationRequested",
+          "consent.recorded": "#/$defs/ConsentRecorded",
+          "error.raised": "#/$defs/ErrorRaised",
+          "escalation.requested": "#/$defs/EscalationRequested",
+          "proposal.presented": "#/$defs/ProposalPresented",
+          "run.state_changed": "#/$defs/RunStateChanged",
+          "tool.finished": "#/$defs/ToolCallFinished",
+          "tool.requested": "#/$defs/ToolCallRequested"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RunStateChanged"
+        },
+        {
+          "$ref": "#/$defs/MessagePosted"
+        },
+        {
+          "$ref": "#/$defs/ToolCallRequested"
+        },
+        {
+          "$ref": "#/$defs/ToolCallFinished"
+        },
+        {
+          "$ref": "#/$defs/ProposalPresented"
+        },
+        {
+          "$ref": "#/$defs/ConsentRecorded"
+        },
+        {
+          "$ref": "#/$defs/ClarificationRequested"
+        },
+        {
+          "$ref": "#/$defs/ApprovalDecided"
+        },
+        {
+          "$ref": "#/$defs/EscalationRequested"
+        },
+        {
+          "$ref": "#/$defs/ErrorRaised"
+        }
+      ],
+      "title": "Payload"
+    },
+    "schema_version": {
+      "const": "policyops.run-event/v1",
+      "default": "policyops.run-event/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/RunScope"
+    },
+    "sequence": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "event_id",
+    "scope",
+    "sequence",
+    "occurred_at",
+    "payload"
+  ],
+  "title": "EventEnvelope",
+  "type": "object"
+}

@@ -1,0 +1,120 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "RunScope": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "format": "uuid",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "case_id",
+        "run_id"
+      ],
+      "title": "RunScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Action Digest",
+      "type": "string"
+    },
+    "approval_id": {
+      "format": "uuid",
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "consent_id": {
+      "format": "uuid",
+      "title": "Consent Id",
+      "type": "string"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "approve",
+        "reject"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "principal_id": {
+      "format": "uuid",
+      "title": "Principal Id",
+      "type": "string"
+    },
+    "proposal_id": {
+      "format": "uuid",
+      "title": "Proposal Id",
+      "type": "string"
+    },
+    "proposal_version": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Proposal Version",
+      "type": "integer"
+    },
+    "reason": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "role": {
+      "const": "reviewer",
+      "title": "Role",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "policyops.approval-decision/v1",
+      "default": "policyops.approval-decision/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/RunScope"
+    }
+  },
+  "required": [
+    "approval_id",
+    "scope",
+    "proposal_id",
+    "proposal_version",
+    "action_digest",
+    "consent_id",
+    "principal_id",
+    "role",
+    "decision",
+    "reason",
+    "decided_at",
+    "expires_at"
+  ],
+  "title": "ApprovalDecision",
+  "type": "object"
+}

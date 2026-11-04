@@ -1,0 +1,8 @@
+{
+  "code": "consent_ambiguous",
+  "correlation_id": "00000000-0000-0000-0000-00000000044c",
+  "detail": "Please reply yes to proceed, or say what to change.",
+  "retryable": false,
+  "rule_id": "consent.explicit_yes",
+  "schema_version": "policyops.error/v1"
+}

@@ -1,0 +1,84 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "RunScope": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "format": "uuid",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "case_id",
+        "run_id"
+      ],
+      "title": "RunScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "authenticated_at": {
+      "format": "date-time",
+      "title": "Authenticated At",
+      "type": "string"
+    },
+    "lookup_call_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Lookup Call Sha256",
+      "type": "string"
+    },
+    "lookup_tool": {
+      "enum": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip"
+      ],
+      "title": "Lookup Tool",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "policyops.customer-authentication/v1",
+      "default": "policyops.customer-authentication/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/RunScope"
+    },
+    "step_sequence": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Step Sequence",
+      "type": "integer"
+    },
+    "user_id": {
+      "maxLength": 64,
+      "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+      "title": "User Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "scope",
+    "user_id",
+    "lookup_tool",
+    "lookup_call_sha256",
+    "step_sequence",
+    "authenticated_at"
+  ],
+  "title": "CustomerAuthentication",
+  "type": "object"
+}

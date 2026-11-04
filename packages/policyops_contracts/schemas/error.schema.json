@@ -1,0 +1,79 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "ErrorCode": {
+      "enum": [
+        "invalid_input",
+        "unauthenticated",
+        "forbidden",
+        "not_found",
+        "conflict",
+        "stale_version",
+        "expired",
+        "customer_not_authenticated",
+        "customer_mismatch",
+        "policy_denied",
+        "policy_unsupported",
+        "consent_required",
+        "consent_ambiguous",
+        "approval_required",
+        "separation_of_duties",
+        "protocol_violation",
+        "upstream_money_precision",
+        "rate_limited",
+        "unavailable",
+        "internal"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/ErrorCode"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "detail": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Detail",
+      "type": "string"
+    },
+    "retryable": {
+      "title": "Retryable",
+      "type": "boolean"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rule Id"
+    },
+    "schema_version": {
+      "const": "policyops.error/v1",
+      "default": "policyops.error/v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "detail",
+    "correlation_id",
+    "retryable"
+  ],
+  "title": "ErrorEnvelope",
+  "type": "object"
+}

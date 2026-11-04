@@ -1,0 +1,101 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "CaseScope": {
+      "additionalProperties": false,
+      "description": "Tenant (workspace) and case scope carried by every case-level reference.",
+      "properties": {
+        "case_id": {
+          "format": "uuid",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "case_id"
+      ],
+      "title": "CaseScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "entered_by": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Entered By"
+    },
+    "message_id": {
+      "format": "uuid",
+      "title": "Message Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "policyops.case-message/v1",
+      "default": "policyops.case-message/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/CaseScope"
+    },
+    "sequence": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "source": {
+      "enum": [
+        "seeded",
+        "simulated_customer",
+        "operator_entered_customer",
+        "staff_note",
+        "agent"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "text": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "text_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Text Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "message_id",
+    "scope",
+    "sequence",
+    "source",
+    "entered_by",
+    "text",
+    "text_sha256",
+    "created_at"
+  ],
+  "title": "CaseMessage",
+  "type": "object"
+}

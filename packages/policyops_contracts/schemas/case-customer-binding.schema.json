@@ -1,0 +1,64 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "CaseScope": {
+      "additionalProperties": false,
+      "description": "Tenant (workspace) and case scope carried by every case-level reference.",
+      "properties": {
+        "case_id": {
+          "format": "uuid",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "case_id"
+      ],
+      "title": "CaseScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Server-only: which upstream customer a seeded case is scoped to.",
+  "properties": {
+    "bound_at": {
+      "format": "date-time",
+      "title": "Bound At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "policyops.case-customer-binding/v1",
+      "default": "policyops.case-customer-binding/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/CaseScope"
+    },
+    "seed_id": {
+      "pattern": "^retail-demo-\\d{1,4}$",
+      "title": "Seed Id",
+      "type": "string"
+    },
+    "user_id": {
+      "maxLength": 64,
+      "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+      "title": "User Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "scope",
+    "seed_id",
+    "user_id",
+    "bound_at"
+  ],
+  "title": "CaseCustomerBinding",
+  "type": "object"
+}

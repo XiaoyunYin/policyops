@@ -1,0 +1,62 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "Money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_minor": {
+          "maximum": 1000000000000,
+          "minimum": -1000000000000,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "const": "USD",
+          "default": "USD",
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount_minor"
+      ],
+      "title": "Money",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "item_id": {
+      "pattern": "^\\d{10}$",
+      "title": "Item Id",
+      "type": "string"
+    },
+    "price": {
+      "$ref": "#/$defs/Money"
+    },
+    "product_id": {
+      "pattern": "^\\d{10}$",
+      "title": "Product Id",
+      "type": "string"
+    },
+    "product_version": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Product Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "product_id",
+    "item_id",
+    "available",
+    "price",
+    "product_version"
+  ],
+  "title": "VariantSnapshot",
+  "type": "object"
+}

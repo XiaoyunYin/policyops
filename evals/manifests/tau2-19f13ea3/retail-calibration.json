@@ -1,0 +1,613 @@
+{
+  "allowlist": {
+    "count": 46,
+    "digest": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+    "order": "dev frame order",
+    "task_ids": [
+      "0",
+      "1",
+      "9",
+      "15",
+      "20",
+      "24",
+      "27",
+      "28",
+      "29",
+      "33",
+      "34",
+      "41",
+      "43",
+      "44",
+      "45",
+      "48",
+      "51",
+      "57",
+      "60",
+      "61",
+      "69",
+      "73",
+      "75",
+      "76",
+      "77",
+      "81",
+      "84",
+      "87",
+      "88",
+      "90",
+      "91",
+      "92",
+      "93",
+      "94",
+      "95",
+      "96",
+      "98",
+      "99",
+      "100",
+      "103",
+      "106",
+      "108",
+      "109",
+      "110",
+      "111",
+      "113"
+    ]
+  },
+  "commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062",
+  "excluded": [
+    {
+      "reasons": [
+        "reference_action_error"
+      ],
+      "task_id": "2"
+    },
+    {
+      "reasons": [
+        "reference_action_error"
+      ],
+      "task_id": "3"
+    },
+    {
+      "reasons": [
+        "open_upstream_issue",
+        "reference_action_error"
+      ],
+      "task_id": "4"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario",
+        "open_upstream_issue"
+      ],
+      "task_id": "5"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario",
+        "open_upstream_issue"
+      ],
+      "task_id": "7"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario"
+      ],
+      "task_id": "10"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario"
+      ],
+      "task_id": "12"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario"
+      ],
+      "task_id": "31"
+    },
+    {
+      "reasons": [
+        "reference_action_error"
+      ],
+      "task_id": "35"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario",
+        "reference_action_error"
+      ],
+      "task_id": "37"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario",
+        "reference_action_error"
+      ],
+      "task_id": "46"
+    },
+    {
+      "reasons": [
+        "reference_action_error"
+      ],
+      "task_id": "54"
+    },
+    {
+      "reasons": [
+        "reference_action_error"
+      ],
+      "task_id": "55"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario"
+      ],
+      "task_id": "62"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario",
+        "reference_action_error"
+      ],
+      "task_id": "67"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario"
+      ],
+      "task_id": "72"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario"
+      ],
+      "task_id": "82"
+    },
+    {
+      "reasons": [
+        "near_holdout_scenario"
+      ],
+      "task_id": "101"
+    }
+  ],
+  "exclusion_rules": {
+    "near_holdout_scenario": "retail-audit.json: dev_holdout_scenario_similarity.pairs_at_or_above_0.7 (nearest held-out scenario Jaccard >= 0.7)",
+    "open_upstream_issue": "retail-audit.json: upstream_issue_annotations with split dev and status open",
+    "reference_action_error": "upstream-verification.json: dev_reference_replay.tasks_with_action_errors"
+  },
+  "manifest_sha256": "8c204ea3e21d6f9735a2e20628f14f5bc217e09240bdcd2bea1419d7089bb3a2",
+  "official_split_unchanged": {
+    "dev": 64,
+    "dev_digest": "c4a2b3ffe20bd495b9c5a72f0fe649483a087b23199f52284c38f9d130c4b274",
+    "holdout": 50
+  },
+  "schema": "policyops.retail-calibration/v1",
+  "seeds": [
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 0",
+      "seed_id": "retail-demo-0",
+      "upstream_task_id": "0"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 1",
+      "seed_id": "retail-demo-1",
+      "upstream_task_id": "1"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 9",
+      "seed_id": "retail-demo-9",
+      "upstream_task_id": "9"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 15",
+      "seed_id": "retail-demo-15",
+      "upstream_task_id": "15"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 20",
+      "seed_id": "retail-demo-20",
+      "upstream_task_id": "20"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "read_only",
+      "label": "Retail demo 24",
+      "seed_id": "retail-demo-24",
+      "upstream_task_id": "24"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 27",
+      "seed_id": "retail-demo-27",
+      "upstream_task_id": "27"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 28",
+      "seed_id": "retail-demo-28",
+      "upstream_task_id": "28"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 29",
+      "seed_id": "retail-demo-29",
+      "upstream_task_id": "29"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 33",
+      "seed_id": "retail-demo-33",
+      "upstream_task_id": "33"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 34",
+      "seed_id": "retail-demo-34",
+      "upstream_task_id": "34"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 41",
+      "seed_id": "retail-demo-41",
+      "upstream_task_id": "41"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 43",
+      "seed_id": "retail-demo-43",
+      "upstream_task_id": "43"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 44",
+      "seed_id": "retail-demo-44",
+      "upstream_task_id": "44"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 45",
+      "seed_id": "retail-demo-45",
+      "upstream_task_id": "45"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 48",
+      "seed_id": "retail-demo-48",
+      "upstream_task_id": "48"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 51",
+      "seed_id": "retail-demo-51",
+      "upstream_task_id": "51"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "read_only",
+      "label": "Retail demo 57",
+      "seed_id": "retail-demo-57",
+      "upstream_task_id": "57"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 60",
+      "seed_id": "retail-demo-60",
+      "upstream_task_id": "60"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 61",
+      "seed_id": "retail-demo-61",
+      "upstream_task_id": "61"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 69",
+      "seed_id": "retail-demo-69",
+      "upstream_task_id": "69"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 73",
+      "seed_id": "retail-demo-73",
+      "upstream_task_id": "73"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 75",
+      "seed_id": "retail-demo-75",
+      "upstream_task_id": "75"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 76",
+      "seed_id": "retail-demo-76",
+      "upstream_task_id": "76"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 77",
+      "seed_id": "retail-demo-77",
+      "upstream_task_id": "77"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 81",
+      "seed_id": "retail-demo-81",
+      "upstream_task_id": "81"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 84",
+      "seed_id": "retail-demo-84",
+      "upstream_task_id": "84"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 87",
+      "seed_id": "retail-demo-87",
+      "upstream_task_id": "87"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 88",
+      "seed_id": "retail-demo-88",
+      "upstream_task_id": "88"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 90",
+      "seed_id": "retail-demo-90",
+      "upstream_task_id": "90"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 91",
+      "seed_id": "retail-demo-91",
+      "upstream_task_id": "91"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 92",
+      "seed_id": "retail-demo-92",
+      "upstream_task_id": "92"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 93",
+      "seed_id": "retail-demo-93",
+      "upstream_task_id": "93"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 94",
+      "seed_id": "retail-demo-94",
+      "upstream_task_id": "94"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 95",
+      "seed_id": "retail-demo-95",
+      "upstream_task_id": "95"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 96",
+      "seed_id": "retail-demo-96",
+      "upstream_task_id": "96"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 98",
+      "seed_id": "retail-demo-98",
+      "upstream_task_id": "98"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 99",
+      "seed_id": "retail-demo-99",
+      "upstream_task_id": "99"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 100",
+      "seed_id": "retail-demo-100",
+      "upstream_task_id": "100"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 103",
+      "seed_id": "retail-demo-103",
+      "upstream_task_id": "103"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 106",
+      "seed_id": "retail-demo-106",
+      "upstream_task_id": "106"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 108",
+      "seed_id": "retail-demo-108",
+      "upstream_task_id": "108"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 109",
+      "seed_id": "retail-demo-109",
+      "upstream_task_id": "109"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 110",
+      "seed_id": "retail-demo-110",
+      "upstream_task_id": "110"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 111",
+      "seed_id": "retail-demo-111",
+      "upstream_task_id": "111"
+    },
+    {
+      "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+      "domain": "retail",
+      "kind": "mutation",
+      "label": "Retail demo 113",
+      "seed_id": "retail-demo-113",
+      "upstream_task_id": "113"
+    }
+  ],
+  "sources": {
+    "retail-audit.json": "6582a7e511e1be8996f7d98ec467235ccc47bd2b91cc826b335fa6b2c89fdac3",
+    "retail-split.json": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+    "upstream-verification.json": "08c396e4ea5666adb20cd8947199c57b50f1676e69616152775beccc9662694b"
+  },
+  "tags": {
+    "basis": "upstream-verification.json: dev_reference_replay.per_task (db_changed, errors, deterministic)",
+    "mutation": [
+      "0",
+      "1",
+      "9",
+      "15",
+      "20",
+      "27",
+      "28",
+      "29",
+      "33",
+      "34",
+      "41",
+      "43",
+      "44",
+      "45",
+      "48",
+      "51",
+      "60",
+      "61",
+      "69",
+      "73",
+      "75",
+      "76",
+      "77",
+      "81",
+      "84",
+      "87",
+      "88",
+      "90",
+      "91",
+      "92",
+      "93",
+      "94",
+      "95",
+      "96",
+      "98",
+      "99",
+      "100",
+      "103",
+      "106",
+      "108",
+      "109",
+      "110",
+      "111",
+      "113"
+    ],
+    "read_only": [
+      "24",
+      "57"
+    ]
+  },
+  "visibility": "operator/server metadata; tags, seeds and bindings never enter the runtime task view"
+}

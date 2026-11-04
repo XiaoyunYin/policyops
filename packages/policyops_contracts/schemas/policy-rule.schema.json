@@ -1,0 +1,99 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "ToolName": {
+      "enum": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "get_item_details",
+        "list_all_product_types",
+        "calculate",
+        "transfer_to_human_agents",
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items",
+        "modify_user_address"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "ambiguity": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ambiguity"
+    },
+    "clause_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Clause Sha256",
+      "type": "string"
+    },
+    "enforcement": {
+      "enum": [
+        "deterministic",
+        "presentation",
+        "protocol",
+        "escalate",
+        "not_codified"
+      ],
+      "title": "Enforcement",
+      "type": "string"
+    },
+    "interpretation": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Interpretation",
+      "type": "string"
+    },
+    "line_end": {
+      "minimum": 1,
+      "title": "Line End",
+      "type": "integer"
+    },
+    "line_start": {
+      "minimum": 1,
+      "title": "Line Start",
+      "type": "integer"
+    },
+    "rule_id": {
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "title": "Rule Id",
+      "type": "string"
+    },
+    "tools": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ToolName"
+      },
+      "title": "Tools",
+      "type": "array"
+    }
+  },
+  "required": [
+    "rule_id",
+    "line_start",
+    "line_end",
+    "clause_sha256",
+    "enforcement",
+    "interpretation"
+  ],
+  "title": "PolicyRule",
+  "type": "object"
+}

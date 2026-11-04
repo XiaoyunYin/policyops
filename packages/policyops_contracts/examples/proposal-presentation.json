@@ -1,0 +1,14 @@
+{
+  "action_digest": "fdfa9e64c52c5eeec627ecde59eecee2f844ebaa8174594671b4a7d0c32f7fe7",
+  "message_id": "00000000-0000-0000-0000-0000000002bc",
+  "message_sequence": 10,
+  "presentation_sha256": "d618d638140d620cf32685fff851b94f8f832c9512517578448a1a1d3cdcb748",
+  "presented_at": "2026-01-01T12:00:05Z",
+  "proposal_id": "00000000-0000-0000-0000-0000000001f4",
+  "proposal_version": 1,
+  "scope": {
+    "case_id": "00000000-0000-0000-0000-000000000002",
+    "run_id": "00000000-0000-0000-0000-000000000003",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  }
+}

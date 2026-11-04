@@ -2,7 +2,7 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: development foundation (locked environments, CI, publication safeguards) and pinned public-data acquisition with reviewed split manifests. Application features and benchmark results are not implemented yet.**
+**Status: development foundation (locked environments, CI, publication safeguards), pinned public-data acquisition with reviewed split manifests, and typed retail/consent/approval contracts with deterministic domain rules. Application features (HTTP API, persistence, agent runtime, simulator, UI) and benchmark results are not implemented yet.**
 
 ## Intended architecture
 
@@ -25,6 +25,10 @@ flowchart LR
 The planned evaluation uses pinned public [Sierra τ-bench resources](https://github.com/sierra-research/tau2-bench), with separate reporting for upstream task outcomes, retrieval experiments, and application safety tests. Database checks and invariant tests will be distinguished from model-based judgments. Adapted tasks and changed simulator or judge settings will be identified explicitly.
 
 Retrieval experiments will compare full-policy context, PostgreSQL full-text search, dense vectors, hybrid rank fusion, and bounded reranking. Recovery and authorization tests will check duplicate writes, stale approvals, tenant isolation, and interrupted runs. No accuracy, performance, or cost improvements are claimed at this stage.
+
+## Contracts and domain rules
+
+`packages/policyops_contracts` defines the typed, strict wire contracts: retail tool calls and state snapshots, exact minor-unit money, displayed effects and their server-rendered confirmation text, action proposals bound by one SHA-256 digest, case messages with explicit provenance, customer consent, separate staff approval, agent steps, run events, errors, demo seeds and the clause-anchored pinned retail policy rule table. `packages/policyops/.../domain` holds the deterministic rules that use them. [docs/architecture.md](docs/architecture.md) explains the scope, policy interpretations, consent and approval binding, and the dev calibration allowlist. These are contract-level checks; runtime authorization, persistence and execution are later work.
 
 ## Development setup
 

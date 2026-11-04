@@ -1,0 +1,23 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "additionalProperties": false,
+  "properties": {
+    "amount_minor": {
+      "maximum": 1000000000000,
+      "minimum": -1000000000000,
+      "title": "Amount Minor",
+      "type": "integer"
+    },
+    "currency": {
+      "const": "USD",
+      "default": "USD",
+      "title": "Currency",
+      "type": "string"
+    }
+  },
+  "required": [
+    "amount_minor"
+  ],
+  "title": "Money",
+  "type": "object"
+}

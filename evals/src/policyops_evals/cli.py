@@ -6,6 +6,10 @@
     policyops-evals data upstream-check --acquired DIR [--check]
     policyops-evals data tokens --acquired DIR --cache DIR --extract DIR [--check]
     policyops-evals data check-manifests              offline: committed manifests only, no data
+    policyops-evals data calibration [--check]        offline: rebuild the retail dev allowlist and demo seeds
+    policyops-evals data policy-trace --acquired DIR  offline: verify policy rule anchors against pinned bytes
+    policyops-evals data seed-bindings --acquired DIR --out DIR
+                                                      offline: server-only seed customer bindings (private file)
 
 Every directory argument for data, caches or extracted text must lie outside the
 repository. No command calls a model, simulator, judge or embedding API.
@@ -35,7 +39,8 @@ from policyops_evals.build import (
     tree_for,
     validate_manifests,
 )
-from policyops_evals.canonical import ManifestError
+from policyops_evals.calibration import CALIBRATION, build_calibration, validate_calibration
+from policyops_evals.canonical import ManifestError, canonical_bytes, load_manifest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -116,7 +121,42 @@ def command_tokens(args: argparse.Namespace) -> int:
 
 
 def command_check_manifests(args: argparse.Namespace) -> int:
-    report(validate_manifests(load_committed(args.manifests)))
+    committed = load_committed(args.manifests)
+    summary = validate_manifests(committed)
+    calibration = load_manifest(args.manifests / CALIBRATION)
+    validate_calibration(calibration, committed)
+    summary["retail_calibration"] = {"allowlisted": calibration["allowlist"]["count"],
+                                     "excluded": len(calibration["excluded"]), "seeds": len(calibration["seeds"])}
+    report(summary)
+    return 0
+
+
+def command_calibration(args: argparse.Namespace) -> int:
+    manifest = build_calibration(load_committed(args.manifests))
+    return finish(emit({CALIBRATION: manifest}, args.manifests, check=args.check), args.check)
+
+
+def command_policy_trace(args: argparse.Namespace) -> int:
+    from policyops_evals.policy_trace import trace_policy
+
+    tree = tree_for(args.acquired, args.manifests)
+    report(trace_policy(tree.read(upstream.RETAIL_POLICY)))
+    return 0
+
+
+def command_seed_bindings(args: argparse.Namespace) -> int:
+    from policyops_evals.corpus import write_contained
+    from policyops_evals.projection import SplitGuard
+    from policyops_evals.seed_bindings import derive_bindings
+
+    tree = tree_for(args.acquired, args.manifests)
+    committed = load_committed(args.manifests)
+    calibration = load_manifest(args.manifests / CALIBRATION)
+    validate_calibration(calibration, committed)
+    guard = SplitGuard({"retail": committed[RETAIL_SPLIT], "banking_knowledge": committed[BANKING_SPLIT]})
+    result = derive_bindings(tree, calibration, guard)
+    target = write_contained(args.out, "seed-bindings.json", canonical_bytes(result))
+    report({"written": str(target), "bindings": len(result["bindings"]), "unavailable": result["unavailable"]})
     return 0
 
 
@@ -146,6 +186,11 @@ def parser() -> argparse.ArgumentParser:
     tokens.add_argument("--extract", type=outside_repository, required=True, help="extracted text output")
     tokens.add_argument("--check", action="store_true")
     add("check-manifests", command_check_manifests, "validate committed manifests offline", acquired=False)
+    add("calibration", command_calibration, "rebuild the retail dev allowlist and demo seeds",
+        acquired=False).add_argument("--check", action="store_true", help="compare instead of writing")
+    add("policy-trace", command_policy_trace, "verify policy rule anchors against the pinned policy")
+    add("seed-bindings", command_seed_bindings, "derive server-only seed customer bindings").add_argument(
+        "--out", type=outside_repository, required=True, help="private output directory outside the repository")
     return root
 
 

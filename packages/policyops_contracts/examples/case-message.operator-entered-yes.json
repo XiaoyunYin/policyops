@@ -1,0 +1,14 @@
+{
+  "created_at": "2026-01-01T12:00:30Z",
+  "entered_by": "00000000-0000-0000-0000-000000000065",
+  "message_id": "00000000-0000-0000-0000-00000000032b",
+  "schema_version": "policyops.case-message/v1",
+  "scope": {
+    "case_id": "00000000-0000-0000-0000-000000000002",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "sequence": 11,
+  "source": "operator_entered_customer",
+  "text": "Yes, please.",
+  "text_sha256": "2fa98e4d3bdb2c5d0c5bfc3d0da3126aab14ae1c8676a538b6098883e0e71ec8"
+}

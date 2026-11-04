@@ -1,0 +1,55 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "ToolName": {
+      "enum": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "get_item_details",
+        "list_all_product_types",
+        "calculate",
+        "transfer_to_human_agents",
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items",
+        "modify_user_address"
+      ],
+      "title": "ToolName",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Successful write executions recorded for one order (from execution receipts, T19).\n\n`complete` is true only when the source can vouch that no other successful\nwrite on this order exists. Order status alone does not prove that, so rules\nthat limit repetition escalate when history is incomplete.",
+  "properties": {
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "order_id": {
+      "pattern": "^#W\\d{7}$",
+      "title": "Order Id",
+      "type": "string"
+    },
+    "successful_tools": {
+      "items": {
+        "$ref": "#/$defs/ToolName"
+      },
+      "maxItems": 50,
+      "title": "Successful Tools",
+      "type": "array"
+    }
+  },
+  "required": [
+    "order_id",
+    "complete",
+    "successful_tools"
+  ],
+  "title": "OrderOperationHistory",
+  "type": "object"
+}

@@ -1,0 +1,50 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "Operator/server metadata for one allowlisted dev task; never part of the agent's input.\n\n`label` is deliberately neutral (\"Retail demo <task id>\"): a label derived\nfrom the reference actions would leak expected intent into a case. `kind`\n(mutation / read_only) is an eligibility tag for seed selection only.",
+  "properties": {
+    "allowlist_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Allowlist Sha256",
+      "type": "string"
+    },
+    "domain": {
+      "const": "retail",
+      "title": "Domain",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "mutation",
+        "read_only"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "pattern": "^Retail demo \\d{1,4}$",
+      "title": "Label",
+      "type": "string"
+    },
+    "seed_id": {
+      "pattern": "^retail-demo-\\d{1,4}$",
+      "title": "Seed Id",
+      "type": "string"
+    },
+    "upstream_task_id": {
+      "pattern": "^\\d{1,4}$",
+      "title": "Upstream Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "seed_id",
+    "label",
+    "domain",
+    "upstream_task_id",
+    "kind",
+    "allowlist_sha256"
+  ],
+  "title": "DemoSeed",
+  "type": "object"
+}

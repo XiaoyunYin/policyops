@@ -1,0 +1,149 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "RunScope": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "format": "uuid",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "format": "uuid",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "case_id",
+        "run_id"
+      ],
+      "title": "RunScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Action Digest",
+      "type": "string"
+    },
+    "basis": {
+      "enum": [
+        "explicit_affirmation",
+        "simulator_confirmation_event"
+      ],
+      "title": "Basis",
+      "type": "string"
+    },
+    "confirmed_at": {
+      "format": "date-time",
+      "title": "Confirmed At",
+      "type": "string"
+    },
+    "consent_id": {
+      "format": "uuid",
+      "title": "Consent Id",
+      "type": "string"
+    },
+    "customer_message_id": {
+      "format": "uuid",
+      "title": "Customer Message Id",
+      "type": "string"
+    },
+    "customer_message_sequence": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Customer Message Sequence",
+      "type": "integer"
+    },
+    "customer_message_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Customer Message Sha256",
+      "type": "string"
+    },
+    "entered_by": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Entered By"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "message_source": {
+      "enum": [
+        "simulated_customer",
+        "operator_entered_customer"
+      ],
+      "title": "Message Source",
+      "type": "string"
+    },
+    "presentation_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Presentation Sha256",
+      "type": "string"
+    },
+    "presented_message_sequence": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Presented Message Sequence",
+      "type": "integer"
+    },
+    "proposal_id": {
+      "format": "uuid",
+      "title": "Proposal Id",
+      "type": "string"
+    },
+    "proposal_version": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Proposal Version",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "policyops.customer-consent/v1",
+      "default": "policyops.customer-consent/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/RunScope"
+    }
+  },
+  "required": [
+    "consent_id",
+    "scope",
+    "proposal_id",
+    "proposal_version",
+    "action_digest",
+    "presentation_sha256",
+    "presented_message_sequence",
+    "customer_message_id",
+    "customer_message_sequence",
+    "customer_message_sha256",
+    "message_source",
+    "entered_by",
+    "basis",
+    "confirmed_at",
+    "expires_at"
+  ],
+  "title": "CustomerConsent",
+  "type": "object"
+}

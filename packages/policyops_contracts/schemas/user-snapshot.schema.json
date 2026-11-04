@@ -1,0 +1,152 @@
+{
+  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$defs": {
+    "Address": {
+      "additionalProperties": false,
+      "properties": {
+        "address1": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Address1",
+          "type": "string"
+        },
+        "address2": {
+          "maxLength": 100,
+          "minLength": 0,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "title": "Address2",
+          "type": "string"
+        },
+        "city": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "City",
+          "type": "string"
+        },
+        "country": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Country",
+          "type": "string"
+        },
+        "state": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "State",
+          "type": "string"
+        },
+        "zip": {
+          "pattern": "^\\d{5}$",
+          "title": "Zip",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address1",
+        "address2",
+        "city",
+        "state",
+        "country",
+        "zip"
+      ],
+      "title": "Address",
+      "type": "object"
+    },
+    "Money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_minor": {
+          "maximum": 1000000000000,
+          "minimum": -1000000000000,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "const": "USD",
+          "default": "USD",
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount_minor"
+      ],
+      "title": "Money",
+      "type": "object"
+    },
+    "PaymentMethodSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "gift_card_balance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "enum": [
+            "credit_card",
+            "paypal",
+            "gift_card"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "payment_method_id",
+        "kind"
+      ],
+      "title": "PaymentMethodSnapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/Address"
+    },
+    "payment_methods": {
+      "items": {
+        "$ref": "#/$defs/PaymentMethodSnapshot"
+      },
+      "maxItems": 50,
+      "title": "Payment Methods",
+      "type": "array"
+    },
+    "user_id": {
+      "maxLength": 64,
+      "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+      "title": "User Id",
+      "type": "string"
+    },
+    "version": {
+      "maximum": 9007199254740992,
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "user_id",
+    "version",
+    "address",
+    "payment_methods"
+  ],
+  "title": "UserSnapshot",
+  "type": "object"
+}

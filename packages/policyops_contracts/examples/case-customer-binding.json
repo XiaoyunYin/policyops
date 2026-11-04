@@ -1,0 +1,10 @@
+{
+  "bound_at": "2026-01-01T11:55:00Z",
+  "schema_version": "policyops.case-customer-binding/v1",
+  "scope": {
+    "case_id": "00000000-0000-0000-0000-000000000002",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "seed_id": "retail-demo-9999",
+  "user_id": "example_user_0001"
+}

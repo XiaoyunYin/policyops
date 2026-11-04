@@ -15,6 +15,7 @@ derived from it lives in [`evals/manifests/tau2-19f13ea3/`](../evals/manifests/t
 | `retail-audit.json` | Dev/holdout scoring profile, upstream issue annotations, reviewed-scenario replacements, near-duplicate check |
 | `upstream-verification.json` | Results of pinned upstream code run against the acquisition |
 | `corpus-tokens.json` | Extraction digests, sizes and tokenizer-specific counts |
+| `retail-calibration.json` | T04: dev demo/tuning allowlist (46 of 64), 18 sourced exclusions, mutation/read-only tags, neutral metadata-only seeds; see [architecture.md](architecture.md) |
 
 Each manifest carries `manifest_sha256` over its canonical JSON, so an edit that is not regenerated is detected.
 

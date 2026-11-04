@@ -1,0 +1,94 @@
+{
+  "action": {
+    "item_ids": [
+      "1000000001"
+    ],
+    "new_item_ids": [
+      "1000000003"
+    ],
+    "order_id": "#W0000001",
+    "payment_method_id": "gift_card_0000001",
+    "tool": "exchange_delivered_order_items"
+  },
+  "action_digest": "fdfa9e64c52c5eeec627ecde59eecee2f844ebaa8174594671b4a7d0c32f7fe7",
+  "created_at": "2026-01-01T12:00:00Z",
+  "customer_user_id": "example_user_0001",
+  "effect": {
+    "changes": [
+      {
+        "item_id": "1000000001",
+        "new_item_id": "1000000003",
+        "price_after": {
+          "amount_minor": 3000,
+          "currency": "USD"
+        },
+        "price_before": {
+          "amount_minor": 1999,
+          "currency": "USD"
+        },
+        "product_id": "9000000001"
+      }
+    ],
+    "kind": "exchange_delivered_order_items",
+    "one_time_action": true,
+    "order_id": "#W0000001",
+    "payment_method_id": "gift_card_0000001",
+    "price_difference": {
+      "amount_minor": 1001,
+      "currency": "USD"
+    },
+    "status_after": "exchange requested",
+    "status_before": "delivered"
+  },
+  "evidence": [],
+  "expires_at": "2026-01-01T12:15:00Z",
+  "intent_digest": "330873c7ea8721fa0d10ceeec632de5f78ef456cc781f3b7999bf6d2076b5ff4",
+  "policy": {
+    "path": "data/tau2/domains/retail/policy.md",
+    "sha256": "2c9652afbce57d6e087768d37cda64d31c53d50b3e3225cfdb791bac66466467",
+    "source_commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062"
+  },
+  "presentation": {
+    "text": "Exchange the following items in delivered order #W0000001:\n- item 1000000001 ($19.99) -> item 1000000003 ($30.00), product 9000000001\nThe exchange request records a price difference of $10.01 owed by the customer, with gift_card_0000001 as the payment method for it. No charge or refund is made by this request.\nAn exchange can be requested only once for this order. Its status becomes 'exchange requested', return instructions are sent by email, and no new order is placed.\nPlease confirm that this list includes every item you want to exchange.\nReply yes to proceed, or tell me what to change.",
+    "text_sha256": "d618d638140d620cf32685fff851b94f8f832c9512517578448a1a1d3cdcb748"
+  },
+  "proposal_id": "00000000-0000-0000-0000-0000000001f4",
+  "proposal_version": 1,
+  "rationale": "The customer asked to exchange one item for another option of the same product.",
+  "resource_versions": [
+    {
+      "kind": "order",
+      "resource_id": "#W0000001",
+      "version": 7
+    },
+    {
+      "kind": "product",
+      "resource_id": "9000000001",
+      "version": 11
+    },
+    {
+      "kind": "user",
+      "resource_id": "example_user_0001",
+      "version": 3
+    }
+  ],
+  "rule_ids": [
+    "auth.lookup_required",
+    "consent.explicit_yes",
+    "exchange.delivered_only_all_items",
+    "exchange.effect",
+    "exchange.price_difference_method",
+    "exchange.same_product_other_option",
+    "ids.product_item_distinct",
+    "orders.modify_exchange_once",
+    "policy.deny_violations",
+    "scope.single_customer",
+    "status.actionable"
+  ],
+  "schema_version": "policyops.action-proposal/v1",
+  "scope": {
+    "case_id": "00000000-0000-0000-0000-000000000002",
+    "run_id": "00000000-0000-0000-0000-000000000003",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  }
+}

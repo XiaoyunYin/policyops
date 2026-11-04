@@ -11,6 +11,7 @@ import pytest
 
 
 REPO = Path(__file__).resolve().parents[2]
+pytest_plugins = ["policyops_testing.plugin"]
 
 
 def pytest_configure(config: pytest.Config) -> None:

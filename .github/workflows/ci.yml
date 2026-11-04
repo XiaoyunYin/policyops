@@ -102,6 +102,55 @@ jobs:
       - name: No artifacts left in the checkout
         run: ${{ matrix.py }} -B scripts/check_repo_artifacts.py
 
+  postgres:
+    # Linux only: GitHub's Windows runners have no Linux container engine. The fixture starts its own labelled,
+    # read-only container on an ephemeral 127.0.0.1 port, binds all writable data under $RUNNER_TEMP/policyops
+    # and removes the container by ID; this job then checks that no owned container or new volume remains.
+    name: PostgreSQL fixture (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Route temporary files outside the checkout
+        run: |
+          root="$RUNNER_TEMP/policyops"
+          mkdir -p "$root/tmp"
+          {
+            echo "POLICYOPS_TEMP_DIR=$root"
+            echo "TEMP=$root/tmp"
+            echo "TMP=$root/tmp"
+            echo "TMPDIR=$root/tmp"
+            echo "PYTHONDONTWRITEBYTECODE=1"
+          } >> "$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          checksum: c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
+          enable-cache: false
+      - name: Pull the pinned PostgreSQL image by digest
+        run: |
+          image="$(python3 -B -c 'import json; p = json.load(open("infra/images.json"))["images"]["postgres"]; print(p["image"] + "@" + p["digest"])')"
+          docker pull "$image"
+          docker volume ls -q | sort > "$POLICYOPS_TEMP_DIR/volumes-before.txt"
+      - name: Application environment (frozen lock)
+        run: python3 -B scripts/devenv.py uv sync --frozen
+      - name: PostgreSQL integration tests
+        run: python3 -B scripts/devenv.py uv run --frozen pytest -m postgres
+      - name: No owned container or new volume remains
+        if: always()
+        run: |
+          left="$(docker ps -aq --filter label=policyops.owner=policyops-tests)"
+          docker volume ls -q | sort > "$POLICYOPS_TEMP_DIR/volumes-after.txt"
+          test -z "$left" || { echo "owned containers left: $left"; exit 1; }
+          diff "$POLICYOPS_TEMP_DIR/volumes-before.txt" "$POLICYOPS_TEMP_DIR/volumes-after.txt"
+      - name: No artifacts left in the checkout
+        run: python3 -B scripts/check_repo_artifacts.py
+
   web:
     name: Web (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -10,6 +10,7 @@ from policyops_contracts.agent import AgentStep
 from policyops_contracts.consent import ApprovalDecision, CaseMessage, CustomerConsent, ProposalPresentationRecord
 from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
+from policyops_contracts.evidence import EvidenceManifest
 from policyops_contracts.policy import RETAIL_POLICY, RETAIL_RULES, RULES_BY_ID
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail import WRITE_TOOLS, ToolName
@@ -22,7 +23,8 @@ EXAMPLE_MODELS: dict[str, type[BaseModel]] = {
     "action-proposal.exchange": ActionProposal, "proposal-presentation": ProposalPresentationRecord,
     "case-message.operator-entered-yes": CaseMessage, "customer-consent": CustomerConsent,
     "approval-decision": ApprovalDecision, "run-event.proposal-presented": EventEnvelope,
-    "error.consent-ambiguous": ErrorEnvelope, "case-customer-binding": CaseCustomerBinding,
+    "error.consent-ambiguous": ErrorEnvelope, "evidence-manifest.failed-run": EvidenceManifest,
+    "case-customer-binding": CaseCustomerBinding,
     "customer-authentication": CustomerAuthentication, "demo-seed": DemoSeed,
 }
 HIDDEN_FIELD_NAMES = ("user_scenario", "instructions", "known_info", "unknown_info", "reason_for_call",

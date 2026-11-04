@@ -49,6 +49,8 @@ plugins = ["pydantic.mypy"]
 warn_unreachable = true
 files = ["src", "tests"]
 
+mypy_path = ["../tests/support"]
+
 [[tool.mypy.overrides]]
 module = ["tau2", "tau2.*"]
 ignore_missing_imports = true
@@ -61,6 +63,8 @@ warn_required_dynamic_aliases = true
 [tool.pytest]
 minversion = "9.1"
 testpaths = ["tests"]
+# Shared harness plugin (network guard, seeds, fake provider, evidence) from the repository's tests/support.
+pythonpath = ["../tests/support"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider"]
 xfail_strict = true
 filterwarnings = ["error"]

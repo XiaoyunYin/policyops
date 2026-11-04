@@ -43,13 +43,13 @@ class RepositoryConfigTests(unittest.TestCase):
 
     def test_ci_routes_temp_outside_checkout_and_disables_bytecode(self) -> None:
         blocks = self.workflow.count('root="$RUNNER_TEMP/policyops"')
-        self.assertEqual(blocks, 3)
+        self.assertEqual(blocks, 4)
         self.assertEqual(self.workflow.count('echo "PYTHONDONTWRITEBYTECODE=1"'), blocks)
         self.assertEqual(self.workflow.count('echo "TMPDIR=$root/tmp"'), blocks)
 
     def test_artifact_checks_inventory_installed_tree_without_exemptions(self) -> None:
         self.assertNotIn("--allow", self.workflow)
-        self.assertEqual(self.workflow.count("scripts/check_repo_artifacts.py"), 3)
+        self.assertEqual(self.workflow.count("scripts/check_repo_artifacts.py"), 4)
         self.assertIn("--installed apps/web/node_modules", self.workflow)
         baseline = '"$POLICYOPS_TEMP_DIR/reports/web-installed.txt"'
         self.assertIn(f"--write-baseline {baseline}", self.workflow)
@@ -63,6 +63,18 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertIn(command, web_job)
         self.assertLess(web_job.index("npm ci"), web_job.index(command))
         self.assertLess(web_job.index(command), web_job.index("check_repo_artifacts.py --baseline"))
+
+    def test_postgres_job_pulls_the_pinned_digest_and_checks_teardown(self) -> None:
+        job = self.workflow[self.workflow.index("\n  postgres:\n"):self.workflow.index("\n  web:\n")]
+        self.assertIn("runs-on: ubuntu-24.04", job)
+        self.assertIn('["images"]["postgres"]', job)
+        self.assertIn('p["image"] + "@" + p["digest"]', job)
+        self.assertIn('docker pull "$image"', job)
+        self.assertEqual(self.workflow.count("pytest -m postgres"), 1)
+        self.assertIn("label=policyops.owner=policyops-tests", job)
+        self.assertIn("if: always()", job)
+        self.assertLess(job.index("volumes-before.txt"), job.index("pytest -m postgres"))
+        self.assertLess(job.index("pytest -m postgres"), job.index("volumes-after.txt"))
 
     def test_tool_versions_agree(self) -> None:
         node = (REPO / ".nvmrc").read_text(encoding="utf-8").strip()

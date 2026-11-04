@@ -11,6 +11,6 @@ WireModel base, which is unchanged.
 from policyops_contracts.base import WireModel
 
 
-CONTRACTS_SCHEMA_VERSION = "0.2.0"
+CONTRACTS_SCHEMA_VERSION = "0.3.0"
 
 __all__ = ["CONTRACTS_SCHEMA_VERSION", "WireModel"]

@@ -9,6 +9,7 @@ import pytest
 
 
 REPO = Path(__file__).resolve().parents[1]
+pytest_plugins = ["policyops_testing.plugin"]
 # Needs Node and the installed web dependencies; the web CI job runs it with unittest.
 collect_ignore = ["web"]
 

@@ -1,0 +1,78 @@
+{
+  "artifacts": [
+    {
+      "path": "commands/unit.stdout.txt",
+      "role": "log",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 120
+    },
+    {
+      "path": "commands/unit.stderr.txt",
+      "role": "log",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 0
+    },
+    {
+      "path": "reports/unit-junit.xml",
+      "role": "report",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 2048
+    }
+  ],
+  "code": {
+    "dirty_patch_sha256": null,
+    "git_head": "1111111111111111111111111111111111111111",
+    "git_tree": "2222222222222222222222222222222222222222"
+  },
+  "commands": [
+    {
+      "argv": [
+        "pytest",
+        "-q"
+      ],
+      "exit_code": 1,
+      "finished_at": "2026-01-01T12:02:00Z",
+      "outputs": [
+        "commands/unit.stdout.txt",
+        "commands/unit.stderr.txt"
+      ],
+      "started_at": "2026-01-01T12:00:10Z",
+      "step": "unit"
+    }
+  ],
+  "environment": [
+    {
+      "name": "POLICYOPS_TEST_SEED",
+      "value": "20261104"
+    }
+  ],
+  "failures": [
+    {
+      "artifacts": [
+        "commands/unit.stdout.txt",
+        "commands/unit.stderr.txt"
+      ],
+      "detail": "exited with code 1",
+      "kind": "nonzero_exit",
+      "step": "unit"
+    }
+  ],
+  "finished_at": "2026-01-01T12:03:00Z",
+  "metrics": [
+    {
+      "derivation": "count of passed test cases in reports/unit-junit.xml",
+      "name": "tests-passed",
+      "sources": [
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ],
+      "unit": "tests",
+      "value": "41"
+    }
+  ],
+  "purpose": "Synthetic harness run with one failing step",
+  "run_id": "example-run-1",
+  "schema_version": "policyops.evidence-manifest/v1",
+  "seed": 20261104,
+  "started_at": "2026-01-01T12:00:00Z",
+  "task_id": "T05"
+}

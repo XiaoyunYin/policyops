@@ -1,5 +1,5 @@
 {
-  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
   "additionalProperties": false,
   "description": "Operator/server metadata for one allowlisted dev task; never part of the agent's input.\n\n`label` is deliberately neutral (\"Retail demo <task id>\"): a label derived\nfrom the reference actions would leak expected intent into a case. `kind`\n(mutation / read_only) is an eligibility tag for seed selection only.",
   "properties": {

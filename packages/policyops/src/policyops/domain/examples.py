@@ -126,6 +126,7 @@ def build_examples() -> dict[str, bytes]:
     from policyops_contracts.digest import text_sha256
     from policyops_contracts.errors import ErrorCode, ErrorEnvelope
     from policyops_contracts.events import EventEnvelope, ProposalPresented
+    from policyops_contracts.evidence import EvidenceManifest
     from policyops_contracts.proposal import ActionProposal
     from policyops_contracts.retail import HANDOFF_MESSAGE, ExchangeDeliveredOrderItems, TransferToHumanAgents
     from policyops_contracts.seeds import DemoSeed
@@ -164,11 +165,28 @@ def build_examples() -> dict[str, bytes]:
     error = ErrorEnvelope(code=ErrorCode.CONSENT_AMBIGUOUS,
                           detail="Please reply yes to proceed, or say what to change.",
                           rule_id="consent.explicit_yes", correlation_id=UUID(int=1100), retryable=False)
+    junit, stdout = "c" * 64, ("commands/unit.stdout.txt", "commands/unit.stderr.txt")
+    evidence = EvidenceManifest.model_validate({
+        "run_id": "example-run-1", "task_id": "T05", "purpose": "Synthetic harness run with one failing step",
+        "seed": 20261104, "started_at": world.now, "finished_at": world.now + timedelta(minutes=3),
+        "code": {"git_head": "1" * 40, "git_tree": "2" * 40},
+        "environment": ({"name": "POLICYOPS_TEST_SEED", "value": "20261104"},),
+        "artifacts": ({"path": stdout[0], "role": "log", "sha256": "a" * 64, "size": 120},
+                      {"path": stdout[1], "role": "log", "sha256": "b" * 64, "size": 0},
+                      {"path": "reports/unit-junit.xml", "role": "report", "sha256": junit, "size": 2048}),
+        "commands": ({"step": "unit", "argv": ("pytest", "-q"), "exit_code": 1,
+                      "started_at": world.now + timedelta(seconds=10), "finished_at": world.now + timedelta(minutes=2),
+                      "outputs": stdout},),
+        "failures": ({"step": "unit", "kind": "nonzero_exit", "detail": "exited with code 1", "artifacts": stdout},),
+        "metrics": ({"name": "tests-passed", "value": "41", "unit": "tests",
+                     "derivation": "count of passed test cases in reports/unit-junit.xml", "sources": (junit,)},),
+    })
     documents = {
         "action-proposal.exchange": proposal, "proposal-presentation": presentation,
         "case-message.operator-entered-yes": reply, "customer-consent": consented.consent,
         "approval-decision": decided.decision, "run-event.proposal-presented": event,
-        "error.consent-ambiguous": error, "case-customer-binding": world.binding(),
+        "error.consent-ambiguous": error, "evidence-manifest.failed-run": evidence,
+        "case-customer-binding": world.binding(),
         "customer-authentication": session.authentication,
         "agent-step.transfer": ToolCallStep(call=TransferToHumanAgents(summary="Customer asked about a store "
                                                                              "credit program that is out of scope.")),

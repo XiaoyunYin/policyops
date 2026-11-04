@@ -59,7 +59,7 @@ def test_shared_contracts_behave_identically() -> None:
     class Probe(WireModel):
         count: int
 
-    assert CONTRACTS_SCHEMA_VERSION == "0.2.0"
+    assert CONTRACTS_SCHEMA_VERSION == "0.3.0"
     assert Probe.model_validate_json('{"count": 1}').count == 1
     for payload in ('{"count": "1"}', '{"count": 1, "extra": true}'):
         with pytest.raises(ValueError):

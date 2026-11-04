@@ -38,7 +38,7 @@ ignore = ["S603", "S607"]
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
 lines-after-imports = 2
-known-first-party = ["policyops", "policyops_contracts", "policyops_evals"]
+known-first-party = ["policyops", "policyops_contracts", "policyops_evals", "policyops_testing"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -52,7 +52,7 @@ files = [
     "tests",
 ]
 explicit_package_bases = true
-mypy_path = ["packages/policyops/src", "packages/policyops_contracts/src"]
+mypy_path = ["packages/policyops/src", "packages/policyops_contracts/src", "tests/support"]
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
@@ -62,6 +62,10 @@ warn_required_dynamic_aliases = true
 [tool.pytest]
 minversion = "9.1"
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider"]
+# tests/support holds the shared harness plugin (policyops_testing); `postgres` tests need Docker and run only when
+# selected explicitly: pytest -m postgres.
+pythonpath = ["tests/support"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider",
+           "-m", "not postgres"]
 xfail_strict = true
 filterwarnings = ["error"]

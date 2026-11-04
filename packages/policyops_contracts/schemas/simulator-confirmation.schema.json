@@ -1,5 +1,5 @@
 {
-  "$comment": "policyops_contracts 0.2.0; generated, do not edit",
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
   "additionalProperties": false,
   "description": "Constrained decision a simulated customer may emit about one displayed proposal.",
   "properties": {

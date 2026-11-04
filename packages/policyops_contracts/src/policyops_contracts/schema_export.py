@@ -27,6 +27,7 @@ from policyops_contracts.consent import (
 )
 from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
+from policyops_contracts.evidence import EvidenceManifest
 from policyops_contracts.money import Money
 from policyops_contracts.policy import PolicyRule
 from policyops_contracts.proposal import ActionProposal
@@ -43,6 +44,7 @@ MODELS: dict[str, type[BaseModel]] = {
     "customer-consent": CustomerConsent,
     "demo-seed": DemoSeed,
     "error": ErrorEnvelope,
+    "evidence-manifest": EvidenceManifest,
     "money": Money,
     "order-operation-history": OrderOperationHistory,
     "order-snapshot": OrderSnapshot,

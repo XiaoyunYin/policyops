@@ -14,7 +14,7 @@ class Probe(WireModel):
 def test_valid_message_round_trips() -> None:
     message = Probe.model_validate_json('{"count": 2, "label": "a"}')
     assert Probe.model_validate_json(message.model_dump_json()) == message
-    assert CONTRACTS_SCHEMA_VERSION == "0.2.0"
+    assert CONTRACTS_SCHEMA_VERSION == "0.3.0"
 
 
 @pytest.mark.parametrize(

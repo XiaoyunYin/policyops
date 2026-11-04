@@ -1,0 +1,9 @@
+#!/bin/sh
+# Publication guard first, then the pinned independent scanner. No exec: a
+# failure in either step blocks the commit, and both must run when the guard passes.
+set -eu
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(dirname -- "$hook_dir")
+if command -v python >/dev/null 2>&1; then py=python; else py=python3; fi
+"$py" -B "$root/scripts/check_publication.py"
+"$py" -B "$root/scripts/gitleaks_gate.py" staged

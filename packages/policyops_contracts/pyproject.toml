@@ -1,0 +1,11 @@
+[project]
+name = "policyops-contracts"
+version = "0.1.0"
+description = "Lean wire schemas and protocols shared by the PolicyOps application and evaluator."
+requires-python = ">=3.12,<3.13"
+# Keep this list minimal: no FastAPI, SQLAlchemy, LangGraph, provider SDKs or tau2.
+dependencies = ["pydantic>=2.12,<3"]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14"]
+build-backend = "uv_build"

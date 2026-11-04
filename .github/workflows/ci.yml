@@ -1,0 +1,158 @@
+# Offline default CI: no secrets, no model/provider calls, no paid evaluation.
+# Temporary files, caches, venvs and build output go to $RUNNER_TEMP/policyops,
+# outside the checkout; Python bytecode is disabled. Nothing is uploaded.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publication:
+    name: Publication guard and gitleaks history
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Route temporary files outside the checkout
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/policyops"
+          mkdir -p "$root/tmp"
+          {
+            echo "POLICYOPS_TEMP_DIR=$root"
+            echo "TEMP=$root/tmp"
+            echo "TMP=$root/tmp"
+            echo "TMPDIR=$root/tmp"
+            echo "PYTHONDONTWRITEBYTECODE=1"
+          } >> "$GITHUB_ENV"
+      - name: Publication guard (index and all history)
+        run: |
+          python3 -B scripts/check_publication.py
+          python3 -B scripts/check_publication.py --history
+      - name: Install checksum-verified gitleaks 8.30.1
+        run: python3 -B scripts/gitleaks_gate.py install
+      - name: gitleaks over all fetched history
+        run: python3 -B scripts/gitleaks_gate.py history
+
+  python:
+    name: Python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            py: python3
+            uv-checksum: c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
+          - os: windows-2025
+            py: python
+            uv-checksum: 0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Route temporary files outside the checkout
+        run: |
+          root="$RUNNER_TEMP/policyops"
+          mkdir -p "$root/tmp"
+          {
+            echo "POLICYOPS_TEMP_DIR=$root"
+            echo "TEMP=$root/tmp"
+            echo "TMP=$root/tmp"
+            echo "TMPDIR=$root/tmp"
+            echo "PYTHONDONTWRITEBYTECODE=1"
+          } >> "$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          checksum: ${{ matrix.uv-checksum }}
+          enable-cache: false
+      - name: Install checksum-verified gitleaks 8.30.1 (hook tests use it)
+        run: ${{ matrix.py }} -B scripts/gitleaks_gate.py install
+      - name: Application environment (frozen lock)
+        run: ${{ matrix.py }} -B scripts/devenv.py uv sync --frozen
+      - name: Lint
+        run: ${{ matrix.py }} -B scripts/devenv.py uv run --frozen ruff check .
+      - name: Type check
+        run: ${{ matrix.py }} -B scripts/devenv.py uv run --frozen mypy
+      - name: Tests
+        run: ${{ matrix.py }} -B scripts/devenv.py uv run --frozen pytest
+      - name: Evaluator environment (separate frozen lock)
+        run: ${{ matrix.py }} -B scripts/devenv.py uv sync --project evals --frozen
+      - name: Evaluator type check and tests
+        working-directory: evals
+        run: |
+          ${{ matrix.py }} -B ../scripts/devenv.py uv run --frozen mypy
+          ${{ matrix.py }} -B ../scripts/devenv.py uv run --frozen pytest
+      - name: No artifacts left in the checkout
+        run: ${{ matrix.py }} -B scripts/check_repo_artifacts.py
+
+  web:
+    name: Web (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            py: python3
+          - os: windows-2025
+            py: python
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Route temporary files outside the checkout
+        run: |
+          root="$RUNNER_TEMP/policyops"
+          mkdir -p "$root/tmp"
+          {
+            echo "POLICYOPS_TEMP_DIR=$root"
+            echo "TEMP=$root/tmp"
+            echo "TMP=$root/tmp"
+            echo "TMPDIR=$root/tmp"
+            echo "PYTHONDONTWRITEBYTECODE=1"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Install (frozen lock)
+        run: ${{ matrix.py }} -B ../../scripts/devenv.py npm ci
+      - name: Record the installed dependency tree (nothing else may exist)
+        working-directory: .
+        run: >-
+          ${{ matrix.py }} -B scripts/check_repo_artifacts.py
+          --write-baseline "$POLICYOPS_TEMP_DIR/reports/web-installed.txt" --installed apps/web/node_modules
+      - name: Lint, type check, test, build
+        run: |
+          ${{ matrix.py }} -B ../../scripts/devenv.py npm run lint
+          ${{ matrix.py }} -B ../../scripts/devenv.py npm run typecheck
+          ${{ matrix.py }} -B ../../scripts/devenv.py npm test
+          ${{ matrix.py }} -B ../../scripts/devenv.py npm run build
+      - name: Vitest user data stays under the temporary root
+        working-directory: .
+        run: ${{ matrix.py }} -B -m unittest discover -s tests/web -v
+      - name: No artifacts left in the checkout (including new files under node_modules)
+        working-directory: .
+        run: ${{ matrix.py }} -B scripts/check_repo_artifacts.py --baseline "$POLICYOPS_TEMP_DIR/reports/web-installed.txt"

@@ -1,0 +1,26 @@
+{
+  "_comment": "Container image pins (multi-arch index digests resolved from the registries on 2026-11-04). Compose/Dockerfiles must reference image@digest exactly; update tag, digest and verification together.",
+  "images": {
+    "postgres": {
+      "image": "pgvector/pgvector",
+      "tag": "0.8.7-pg17-trixie",
+      "digest": "sha256:01215e09bd4bd582d20230e025b6c971deeeffee49ceef1aae167e839cb62a7e",
+      "contents": "PostgreSQL 17.11 (PG_VERSION=17.11-1.pgdg13+2) with pgvector 0.8.7, Debian trixie, linux/amd64 and linux/arm64",
+      "source": "https://hub.docker.com/r/pgvector/pgvector"
+    },
+    "oidc": {
+      "image": "ghcr.io/dexidp/dex",
+      "tag": "v2.46.1",
+      "digest": "sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab",
+      "contents": "Dex v2.46.1 (release 2026-10-21) local demo issuer",
+      "source": "https://github.com/dexidp/dex/releases/tag/v2.46.1"
+    },
+    "proxy": {
+      "image": "caddy",
+      "tag": "2.11.7-alpine",
+      "digest": "sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5",
+      "contents": "Caddy 2.11.7 (release 2026-10-03), Alpine variant",
+      "source": "https://hub.docker.com/_/caddy"
+    }
+  }
+}

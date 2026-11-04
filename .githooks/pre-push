@@ -1,0 +1,9 @@
+#!/bin/sh
+# Publication guard over reachable history first, then the pinned scanner over
+# every local ref. No exec: the second step is mandatory and fails closed.
+set -eu
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(dirname -- "$hook_dir")
+if command -v python >/dev/null 2>&1; then py=python; else py=python3; fi
+"$py" -B "$root/scripts/check_publication.py" --history
+"$py" -B "$root/scripts/gitleaks_gate.py" history

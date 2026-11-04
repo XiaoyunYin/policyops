@@ -1,0 +1,15 @@
+# Independent secret scanner configuration for the pinned gitleaks 8.30.1.
+# Extends the built-in rules; there is deliberately no path allowlist. Tests
+# generate synthetic secrets at run time instead of committing fixtures.
+title = "PolicyOps gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "policyops-secret-assignment"
+description = "Non-empty PolicyOps secret, token, password or key assignment"
+regex = '''(?i)\bPOLICYOPS_[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY)\b["']?[ \t]*[:=][ \t]*["']?([^\s"'#]{12,})'''
+secretGroup = 1
+entropy = 3.0
+keywords = ["policyops_"]

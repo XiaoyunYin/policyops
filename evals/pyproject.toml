@@ -1,0 +1,61 @@
+# Evaluator and retail-simulator wrapper: a separate uv project and lock.
+# It may import policyops-contracts, never the policyops application package.
+[project]
+name = "policyops-evals"
+version = "0.1.0"
+description = "PolicyOps evaluator and retail-simulator wrapper around pinned tau2-bench."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "policyops-contracts",
+    # Exact upstream commit; knowledge extra only (no voice/live/shell extras).
+    "tau2[knowledge] @ git+https://github.com/sierra-research/tau2-bench@19f13ea3f5fba8b4c4d272d1353590f29dc53062",
+    # retail-simulator transport, persistence and migrations (used from T16).
+    "alembic>=1.18,<2",
+    "fastapi>=0.160,<0.170",
+    "httpx>=0.28,<0.29",
+    "psycopg[binary]>=3.3,<4",
+    "pydantic>=2.12,<3",
+    "sqlalchemy>=2.1,<2.2",
+    "uvicorn>=0.40,<0.60",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4,<3",
+    "pytest>=9.1,<10",
+    "ruff>=0.17,<0.18",
+]
+
+[tool.uv]
+required-version = ">=0.13.6,<0.14"
+exclude-newer = "2026-10-28T00:00:00Z"
+
+[tool.uv.sources]
+policyops-contracts = { path = "../packages/policyops_contracts", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14"]
+build-backend = "uv_build"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["tau2", "tau2.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest]
+minversion = "9.1"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider"]
+xfail_strict = true
+filterwarnings = ["error"]

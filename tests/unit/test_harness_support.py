@@ -38,6 +38,7 @@ from policyops_testing.postgres import (
     SESSION_OPTIONS,
     CleanupUncertain,
     OwnedPostgres,
+    PostgresUnavailable,
 )
 
 
@@ -713,3 +714,70 @@ def test_confirmed_absence_and_verified_removal(tmp_path: Path, monkeypatch: pyt
     assert server.container_id == ""
     assert [call[0] for call in running.calls] == ["ps", "inspect", "rm", "ps"]
     assert ("rm", "-f", "-v", CONTAINER) in running.calls
+
+
+class _PgpassDocker:
+    """Scripted Docker for _exec_with_pgpass: each step returns an exit code or raises; every call is recorded."""
+
+    def __init__(self, **outcomes: int | type[BaseException]) -> None:
+        self.outcomes = {"write": 0, "tool": 0, "rm": 0, "test": 1, **outcomes}
+        self.calls: list[tuple[tuple[str, ...], str | None]] = []
+
+    def __call__(self, *args: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        self.calls.append((args, stdin))
+        step = _pgpass_step(args)
+        outcome = self.outcomes[step]
+        if isinstance(outcome, type):
+            raise subprocess.TimeoutExpired(["docker", *args], timeout) if outcome is subprocess.TimeoutExpired \
+                else outcome("synthetic")
+        return subprocess.CompletedProcess(["docker", *args], outcome, "", "synthetic stderr")
+
+    def steps(self) -> list[str]:
+        return [_pgpass_step(args) for args, _ in self.calls]
+
+
+def _pgpass_step(args: tuple[str, ...]) -> str:
+    # ("exec", "-i", id, "sh", ...) writes; ("exec", id, "rm"|"test", ...) cleans up; ("exec", "-e", ...) runs the tool.
+    return "write" if args[1] == "-i" else args[2] if args[2] in ("rm", "test") else "tool"
+
+
+PGPASS_PASSWORD = "superuser-" + "SYNTHETIC0password"
+
+
+@pytest.mark.parametrize(("outcomes", "raised", "steps"), [
+    ({}, None, ["write", "tool", "rm", "test"]),
+    ({"write": subprocess.TimeoutExpired}, subprocess.TimeoutExpired, ["write", "rm", "test"]),
+    ({"write": 1}, PostgresUnavailable, ["write", "rm", "test"]),
+    ({"tool": 1}, PostgresUnavailable, ["write", "tool", "rm", "test"]),
+    ({"rm": 1}, CleanupUncertain, ["write", "tool", "rm"]),
+    ({"rm": subprocess.TimeoutExpired}, CleanupUncertain, ["write", "tool", "rm"]),
+    ({"rm": OSError}, CleanupUncertain, ["write", "tool", "rm"]),
+    ({"test": 0}, CleanupUncertain, ["write", "tool", "rm", "test"]),  # still exists after rm
+    ({"test": 125}, CleanupUncertain, ["write", "tool", "rm", "test"]),  # existence unknown
+    ({"write": subprocess.TimeoutExpired, "rm": 1}, CleanupUncertain, ["write", "rm"]),
+    ({"tool": 1, "test": 0}, CleanupUncertain, ["write", "tool", "rm", "test"]),
+], ids=["ok", "write-timeout", "write-fails", "tool-fails", "rm-fails", "rm-timeout", "rm-oserror", "still-present",
+        "check-unknown", "write-timeout-and-rm-fails", "tool-fails-and-still-present"])
+def test_pgpass_cleanup_is_always_attempted_and_confirmed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                         outcomes: dict[str, Any], raised: type[BaseException] | None,
+                                                         steps: list[str]) -> None:
+    """C1 finding F3: the transient credential file is removed and its absence confirmed on every path; an
+    unconfirmed removal is never reported as success, and a primary failure stays attached as context."""
+    docker = _PgpassDocker(**outcomes)
+    monkeypatch.setattr("policyops_testing.postgres._docker", docker)
+    server = OwnedPostgres(root=tmp_path, run_id="pgpass", image="unused", container_id=CONTAINER,
+                           passwords={"postgres": PGPASS_PASSWORD})
+    if raised is None:
+        server._exec_with_pgpass("pg_dump", "--version")
+    else:
+        with pytest.raises(raised) as error:
+            server._exec_with_pgpass("pg_dump", "--version")
+        assert PGPASS_PASSWORD not in str(error.value)
+        primary_failed = outcomes.get("write", 0) != 0 or outcomes.get("tool", 0) != 0
+        if raised is CleanupUncertain and primary_failed:
+            assert error.value.__context__ is not None and "already failed" in str(error.value)
+    assert docker.steps() == steps
+    paths = {args[-1] for args, _ in docker.calls if "rm" in args or "test" in args}
+    assert len(paths) == 1 and next(iter(paths)).startswith("/var/lib/postgresql/data/secrets/pgpass-")
+    assert all(PGPASS_PASSWORD not in " ".join(args) for args, _ in docker.calls)  # never in argv
+    assert [stdin for _, stdin in docker.calls if stdin] == [f"127.0.0.1:5432:*:postgres:{PGPASS_PASSWORD}\n"]

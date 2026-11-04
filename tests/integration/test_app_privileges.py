@@ -1,0 +1,163 @@
+"""The complete role/privilege matrix of a migrated application database, checked on the server itself.
+
+The expectation below is the specification (written out, not derived from the migration code): any extra grant,
+missing grant, PUBLIC privilege, default privilege, unforced RLS table or retail access fails.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from policyops.persistence.roles import ALL_ROLES, APP_MIGRATOR, APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME, RUNTIME_ROLES
+from policyops_testing.app_database import AppDatabase
+
+
+pytestmark = pytest.mark.postgres
+
+TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
+SI = {"SELECT", "INSERT"}
+
+# role -> table -> (table-level privileges, columns updatable through column grants)
+EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
+    APP_RUNTIME: {
+        "identity.workspaces": ({"SELECT"}, set()),
+        "identity.memberships": (SI, {"revoked_at", "version"}),
+        "app.cases": (SI, {"status", "updated_at", "version"}),
+        "app.case_messages": (SI, set()),
+        "app.documents": (SI, set()),
+        "app.document_versions": (SI, {"status", "effective_to"}),
+        "app.runs": (SI, {"state", "model_calls", "tool_calls", "updated_at", "version"}),
+        "app.run_events": (SI, set()),
+        "app.action_proposals": (SI, {"status", "presented_at"}),
+        "app.proposal_presentations": (SI, set()),
+        "app.customer_consents": (SI, set()),
+        "app.approval_decisions": (SI, set()),
+        "app.tool_executions": (SI, {"state", "attempts", "receipt", "updated_at", "version"}),
+        "app.jobs": (SI, {"state", "lease_owner", "lease_expires_at", "attempts", "available_at", "updated_at",
+                          "version"}),
+        "app.outbox_events": (SI, {"delivered_at"}),
+        "app.audit_events": (SI, set()),
+        "app.index_generations": (SI, {"status", "ready_at"}),
+        "app.chunks": (SI, set()),
+        "app.retrieval_traces": (SI, set()),
+        "app.citations": (SI, set()),
+        "app.usage_reservations": (SI, {"actual_usd", "state", "updated_at", "version"}),
+        "app.usage_events": (SI, set()),
+    },
+    AUTH_RUNTIME: {
+        "identity.workspaces": (SI, set()),
+        "identity.principals": (SI, set()),
+        "identity.memberships": (SI, {"revoked_at", "version"}),
+        "identity.sessions": (SI, {"revoked_at", "workspace_id"}),
+    },
+    EVAL_RUNTIME: {
+        "evaluation.evaluation_runs": (SI, {"status", "started_at", "finished_at", "total_cost_usd", "version"}),
+        "evaluation.evaluation_trials": (SI, set()),
+    },
+}
+SCHEMA_USAGE = {APP_RUNTIME: {"identity", "app", "checkpoints", "public"}, AUTH_RUNTIME: {"identity", "public"},
+                EVAL_RUNTIME: {"evaluation", "public"}}
+SCHEMAS = ("identity", "app", "evaluation", "checkpoints", "public")
+
+
+def _rows(database: AppDatabase, query: str, params: Any = None) -> list[tuple[Any, ...]]:
+    with database.superuser() as conn:
+        return list(conn.execute(query, params).fetchall())
+
+
+def _all_tables(database: AppDatabase) -> list[str]:
+    return [row[0] for row in _rows(database, "SELECT schemaname || '.' || tablename FROM pg_tables "
+                                    "WHERE schemaname = ANY(%s) ORDER BY 1", (list(SCHEMAS),))]
+
+
+def test_table_and_column_privileges_match_the_matrix_exactly(shared_db: AppDatabase) -> None:
+    tables = _all_tables(shared_db)
+    assert "public.policyops_app_alembic_version" in tables
+    problems = []
+    with shared_db.superuser() as conn:  # one catalog connection for the whole matrix
+        def check(query: str, params: tuple[str, ...]) -> bool:
+            row = conn.execute(query, params).fetchone()
+            return bool(row and row[0])
+
+        for table in tables:
+            columns = [row[0] for row in conn.execute("SELECT attname FROM pg_attribute WHERE attrelid = "
+                                                      "%s::regclass AND attnum > 0 AND NOT attisdropped", (table,))]
+            for role in RUNTIME_ROLES:
+                granted = {privilege for privilege in TABLE_PRIVILEGES
+                           if check("SELECT has_table_privilege(%s, %s, %s)", (role, table, privilege))}
+                updatable = {column for column in columns
+                             if check("SELECT has_column_privilege(%s, %s, %s, 'UPDATE')", (role, table, column))}
+                expected_table, expected_columns = EXPECTED[role].get(table, (set(), set()))
+                if (granted, updatable) != (expected_table, expected_columns):
+                    problems.append((role, table, sorted(granted), sorted(updatable)))
+    assert problems == []
+
+
+def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: AppDatabase) -> None:
+    public = _rows(shared_db, "SELECT table_schema, table_name, privilege_type FROM information_schema.table_privileges"
+                   " WHERE grantee = 'PUBLIC' AND table_schema = ANY(%s)", (list(SCHEMAS),))
+    assert public == []
+    assert _rows(shared_db, "SELECT count(*) FROM pg_default_acl") == [(0,)]
+    owners = _rows(shared_db, "SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = ANY(%s)",
+                   (list(SCHEMAS),))
+    assert owners == [(APP_MIGRATOR,)]
+    functions = _rows(shared_db, "SELECT p.oid::regprocedure::text, p.proacl::text FROM pg_proc p "
+                      "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' ORDER BY 1")
+    acl = dict(functions)
+    assert set(acl) == {"app.current_workspace()", "app.guard_action_proposal_update()"}
+    # Owner plus the app runtime only; a PUBLIC entry would appear as "=X/...".
+    assert acl["app.current_workspace()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR},{APP_RUNTIME}=X/{APP_MIGRATOR}}}"
+    assert acl["app.guard_action_proposal_update()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"
+
+
+def test_schema_usage_and_no_runtime_create_anywhere(shared_db: AppDatabase) -> None:
+    for role in RUNTIME_ROLES:
+        for schema in SCHEMAS:
+            usage, create = _rows(shared_db, "SELECT has_schema_privilege(%s, %s, 'USAGE'), "
+                                  "has_schema_privilege(%s, %s, 'CREATE')", (role, schema, role, schema))[0]
+            assert usage is (schema in SCHEMA_USAGE[role]), (role, schema)
+            assert create is False, (role, schema)
+        assert _rows(shared_db, "SELECT has_database_privilege(%s, current_database(), 'CREATE'), "
+                     "has_database_privilege(%s, current_database(), 'TEMP')", (role, role)) == [(False, False)]
+    for role in ALL_ROLES:
+        connect = _rows(shared_db, "SELECT has_database_privilege(%s, current_database(), 'CONNECT')", (role,))
+        assert connect == [(True,)], role
+
+
+def test_every_application_table_has_forced_row_level_security(shared_db: AppDatabase) -> None:
+    rows = _rows(shared_db, "SELECT c.oid::regclass::text, relrowsecurity, relforcerowsecurity FROM pg_class c "
+                 "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('identity', 'app') "
+                 "AND relkind = 'r'")
+    assert rows and all(enabled and forced for _, enabled, forced in rows), [r for r in rows if not (r[1] and r[2])]
+    # Evaluation tables are not tenant data; isolation there is by schema/role (the app runtime has no access).
+    assert _rows(shared_db, "SELECT bool_or(relrowsecurity) FROM pg_class c JOIN pg_namespace n "
+                 "ON n.oid = c.relnamespace WHERE n.nspname = 'evaluation' AND relkind = 'r'") == [(False,)]
+
+
+def test_application_roles_cannot_reach_a_retail_schema(shared_db: AppDatabase) -> None:
+    # A stand-in for the T16-owned schema; created and dropped by the test superuser inside one transaction.
+    with shared_db.server.connect("postgres", shared_db.name) as conn:
+        conn.execute("CREATE SCHEMA retail")
+        conn.execute("CREATE TABLE retail.snapshots (id int)")
+        for role in ALL_ROLES:
+            usage = conn.execute("SELECT has_schema_privilege(%s, 'retail', 'USAGE'), "
+                                 "has_table_privilege(%s, 'retail.snapshots', 'SELECT')", (role, role)).fetchone()
+            assert usage == (False, False), role
+        conn.rollback()
+    for role in RUNTIME_ROLES:
+        with shared_db.server.connect(role, shared_db.name) as conn:
+            for statement in ("CREATE SCHEMA retail", "CREATE TABLE app.extra (id int)",
+                              "CREATE TABLE public.extra (id int)", "CREATE TABLE checkpoints.extra (id int)"):
+                with pytest.raises(Exception, match="permission denied"):
+                    conn.execute(statement)
+                conn.rollback()
+
+
+def test_no_floating_point_or_rounding_numeric_columns(shared_db: AppDatabase) -> None:
+    columns = _rows(shared_db, "SELECT table_schema, table_name, column_name, data_type, numeric_precision, "
+                    "numeric_scale FROM information_schema.columns WHERE table_schema = ANY(%s)", (list(SCHEMAS),))
+    assert not [c for c in columns if c[3] in ("real", "double precision", "money")]
+    numerics = [c for c in columns if c[3] == "numeric"]
+    assert numerics and all(c[4] is None and c[5] is None for c in numerics), numerics  # unconstrained + CHECKs

@@ -65,6 +65,15 @@ class PublicationGuardTests(unittest.TestCase):
             self.stage(name)
         self.assertEqual(self.run_guard().returncode, 0)
 
+    def test_only_reviewed_docs_pages_pass(self) -> None:
+        self.stage("docs/database.md")
+        self.assertEqual(self.run_guard().returncode, 0)
+        for name in ("docs/notes.md", "docs/review-T06.md", "docs/sub/database.md"):
+            with self.subTest(name=name):
+                self.stage(name)
+                self.assertEqual(self.run_guard().returncode, 1)
+                self.git("rm", "--cached", "--", name)
+
     def test_environment_example_only_allowed_at_root(self) -> None:
         self.stage(".env.example", "OPENAI_API_KEY=\n")
         self.assertEqual(self.run_guard().returncode, 0)

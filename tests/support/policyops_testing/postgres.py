@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import time
@@ -47,6 +48,8 @@ OWNER_LABEL = "policyops.owner=policyops-tests"
 LOOPBACK = "127.0.0.1"
 CONNECT_ROLES = ("postgres", MIGRATOR, RUNTIME)
 CONNECT_DATABASES = ("postgres", DATABASE)
+# Names a test may register as additional owned roles/databases (validated identifiers, never connection strings).
+OWNED_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 # Pinned libpq startup options for every helper connection (replaces any ambient PGOPTIONS). Only a user-settable
 # parameter: pinning a superuser-only one such as log_statement would make runtime-role connections fail.
 SESSION_OPTIONS = "-c timezone=UTC"
@@ -101,8 +104,9 @@ def pinned_image() -> str:
     return f"{pins['image']}@{pins['digest']}"
 
 
-def _docker(*args: str, timeout: float = 120) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
+def _docker(*args: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False,
+                          input=stdin)
 
 
 def _tail(path: Path, lines: int = 20) -> str:
@@ -119,6 +123,7 @@ class OwnedPostgres:
     container_id: str = ""
     port: int = 0
     passwords: dict[str, str] = field(default_factory=dict)
+    databases: set[str] = field(default_factory=lambda: set(CONNECT_DATABASES))
     _allowance: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
 
     @property
@@ -282,17 +287,92 @@ class OwnedPostgres:
         return self._connect(role, dbname, self.passwords[role], autocommit=autocommit,
                              connect_timeout=connect_timeout)
 
+    def register_role(self, role: str) -> str:
+        """Generate (and register for redaction) a password for an additional role the caller will create on this
+        server. Only after this can `connect()` use the role; names are validated identifiers."""
+        if not OWNED_NAME.match(role) or role.startswith("pg_") or role in self.passwords:
+            raise ValueError(f"{role!r} cannot be registered as an owned role")
+        password = secrets.token_urlsafe(24)
+        redaction.register(password)
+        self.passwords[role] = password
+        return password
+
+    def register_database(self, database: str) -> None:
+        """Allow `connect()` to an additional database the caller creates on this server (validated identifier;
+        libpq would expand a dbname containing "=" or a URI into a connection string)."""
+        if not OWNED_NAME.match(database) or database.startswith("pg_") or database in ("template0", "template1"):
+            raise ValueError(f"{database!r} cannot be registered as an owned database")
+        self.databases.add(database)
+
+    def dump_and_restore(self, source: str, target: str) -> Path:
+        """pg_dump `source` (custom format) and pg_restore it into the existing, empty `target`, both inside the
+        owned container as the superuser. The dump file stays in the bind mount under the temporary root. The
+        password reaches a 0600 pgpass file through stdin (never argv or logs) and is removed afterwards."""
+        if source not in self.databases or target not in self.databases or source == target:
+            raise ValueError("dump and restore need two different registered databases")
+        dumps = self.root / "dumps"
+        dumps.mkdir(exist_ok=True)
+        if os.name != "nt":
+            dumps.chmod(0o777)
+        name = f"{source}-{secrets.token_hex(4)}.dump"
+        inside = f"{VOLUME}/dumps/{name}"
+        connection = ("--host=127.0.0.1", "--port=5432", "--username=postgres", "--no-password")
+        self._exec_with_pgpass("pg_dump", *connection, f"--dbname={source}", "--format=custom", f"--file={inside}")
+        self._exec_with_pgpass("pg_restore", *connection, f"--dbname={target}", "--exit-on-error",
+                               "--single-transaction", inside)
+        return dumps / name
+
+    def _exec_with_pgpass(self, *argv: str) -> None:
+        """Run a client tool in the container with a transient pgpass file. The password goes through stdin only.
+        Removal of the file is always attempted, including after a failed or timed-out write, and confirmed; if it
+        cannot be confirmed, CleanupUncertain is raised (naming only the path) even when the tool itself succeeded,
+        with any primary failure kept as the exception context."""
+        pgpass = f"{VOLUME}/secrets/pgpass-{secrets.token_hex(4)}"
+        primary: BaseException | None = None
+        try:
+            written = _docker("exec", "-i", self.container_id, "sh", "-c", 'umask 077 && cat > "$1"', "sh", pgpass,
+                              stdin=f"127.0.0.1:5432:*:postgres:{self.passwords['postgres']}\n", timeout=60)
+            if written.returncode != 0:
+                raise PostgresUnavailable(f"could not write the pgpass file: {redaction.redact_text(written.stderr)}")
+            done = _docker("exec", "-e", f"PGPASSFILE={pgpass}", "-e", "PGCONNECT_TIMEOUT=10", self.container_id,
+                           *argv, timeout=300)
+            if done.returncode != 0:
+                raise PostgresUnavailable(f"{argv[0]} failed: {redaction.redact_text(done.stderr.strip())[-800:]}")
+        except BaseException as exc:
+            primary = exc
+            raise
+        finally:
+            self._remove_pgpass(pgpass, primary)
+
+    def _remove_pgpass(self, pgpass: str, primary: BaseException | None) -> None:
+        problem = None
+        try:
+            removed = _docker("exec", self.container_id, "rm", "-f", pgpass, timeout=30)
+            if removed.returncode != 0:
+                problem = f"rm exited {removed.returncode}"
+            else:
+                present = _docker("exec", self.container_id, "test", "-e", pgpass, timeout=30)
+                if present.returncode == 0:
+                    problem = "the file still exists"
+                elif present.returncode != 1:
+                    problem = f"the existence check exited {present.returncode}"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            problem = f"cleanup could not run ({type(exc).__name__})"
+        if problem is not None:
+            after = f"; the operation had already failed with {type(primary).__name__}" if primary else ""
+            raise CleanupUncertain(f"transient credential file {pgpass} may remain: {problem}{after}")
+
     def try_password(self, role: str, password: str) -> None:
         """Negative-test helper: one connection attempt with a caller-chosen password, same fixed target."""
-        if role not in CONNECT_ROLES:
+        if role not in self.passwords:
             raise ValueError(f"{role!r} is not a role of this server")
         self._connect(role, DATABASE, password, autocommit=False, connect_timeout=5).close()
 
     def _connect(self, role: str, dbname: str, password: str, *, autocommit: bool,
                  connect_timeout: int) -> psycopg.Connection[Any]:
-        # A dbname containing "=" or a URI is expanded by libpq into a full connection string, so only the two
-        # known database names are accepted.
-        if dbname not in CONNECT_DATABASES:
+        # A dbname containing "=" or a URI is expanded by libpq into a full connection string, so only known
+        # database names (the two defaults plus explicitly registered owned ones) are accepted.
+        if dbname not in self.databases:
             raise ValueError(f"{dbname!r} is not a database of this server")
         if not isinstance(autocommit, bool):
             raise TypeError("autocommit must be a bool")

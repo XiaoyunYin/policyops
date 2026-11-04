@@ -26,6 +26,8 @@ PUBLIC_ROOTS = {"apps", "packages", "tests", "scripts", "evals", "infra", ".gith
 PUBLIC_DOCS = {
     "docs/architecture.md", "docs/evaluation.md", "docs/deployment.md",
     "docs/security.md", "docs/data-provenance.md",
+    # T06: public reference for the database role matrix, bootstrap/migration usage and restore/rollback limits.
+    "docs/database.md",
 }
 PRIVATE_NAMES = {
     "plan.md", "agents.md", "claude.md", "bullets.md",

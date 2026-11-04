@@ -1,0 +1,71 @@
+{
+  "counts_by_encoding": {
+    "cl100k_base": {
+      "banking_corpus_joined": 181320,
+      "banking_documents": {
+        "max": 1955,
+        "mean": 258.65,
+        "median": 202.0,
+        "min": 68,
+        "total": 180538
+      },
+      "retail_policy": 1401
+    },
+    "o200k_base": {
+      "banking_corpus_joined": 179847,
+      "banking_documents": {
+        "max": 1953,
+        "mean": 256.54,
+        "median": 201.0,
+        "min": 68,
+        "total": 179065
+      },
+      "retail_policy": 1402
+    }
+  },
+  "extraction": {
+    "banking_corpus_format": "documents in sorted file-stem order joined by \\n\\n---\\n\\n; upstream uses unsorted directory order",
+    "banking_corpus_sha256": "da4ee29377ab95a7d2b92b1e591759c38c128b6113af564b7b7fd0468dc77a3a",
+    "banking_document_format": "## <title>\\n\\n<content> (upstream format_full_knowledge_base)",
+    "banking_documents": 698,
+    "rendered_document_sha256_list_digest": "762ad8e0c6c7016c8d5d361fe39fb73574a361754fadfa39262287e002312679",
+    "retail_policy": "data/tau2/domains/retail/policy.md bytes, decoded as UTF-8, unmodified",
+    "retail_policy_sha256": "2c9652afbce57d6e087768d37cda64d31c53d50b3e3225cfdb791bac66466467"
+  },
+  "interpretation": "cl100k_base is the tokenizer installed tiktoken maps to text-embedding-3-small, so those counts are exact embedding-input counts for this extracted text. o200k_base counts are tokenizer-specific measurements only; they are not gpt-6-luna or claude-haiku-5-5 counts, and prompt framing, tool schemas and message overhead are excluded.",
+  "manifest_sha256": "ea769ca3c89d75eace17a1cfff6e8ee6c965bbbdd4d1fb745312a5c1cedbce84",
+  "model_counting": {
+    "claude-haiku-5-5": "provider endpoint POST /v1/messages/count_tokens (request-level estimate; requires Anthropic credentials); not run by this offline command",
+    "gpt-6-luna": "provider endpoint POST /v1/responses/input_tokens (openai SDK responses.input_tokens.count); requires an OpenAI API key; not run by this command and not substituted by o200k_base",
+    "text-embedding-3-small": "local tokenizer: tiktoken model mapping (exact tokenizer for embedding input)"
+  },
+  "schema": "policyops.corpus-tokens/v1",
+  "sizes": {
+    "banking_corpus_characters": 860874,
+    "banking_corpus_utf8_bytes": 861972,
+    "banking_document_files_bytes": 932122,
+    "banking_documents_with_non_ascii": 214,
+    "retail_policy_bytes": 6699,
+    "retail_policy_characters": 6699
+  },
+  "source_commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062",
+  "tokenizer": {
+    "installed_model_mapping": {
+      "claude-haiku-5-5": null,
+      "gpt-6-luna": null,
+      "text-embedding-3-small": "cl100k_base"
+    },
+    "library": "tiktoken",
+    "version": "0.14.0",
+    "vocabulary_files": {
+      "cl100k_base": {
+        "sha256": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
+        "url": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+      },
+      "o200k_base": {
+        "sha256": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+        "url": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
+      }
+    }
+  }
+}

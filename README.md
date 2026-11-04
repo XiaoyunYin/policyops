@@ -2,7 +2,7 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: development foundation (locked environments, CI, publication safeguards). Application features and benchmark results are not implemented yet.**
+**Status: development foundation (locked environments, CI, publication safeguards) and pinned public-data acquisition with reviewed split manifests. Application features and benchmark results are not implemented yet.**
 
 ## Intended architecture
 
@@ -103,8 +103,18 @@ From the repository root, `python -B -m unittest discover -s tests/web -v` runs 
 
 `.github/workflows/ci.yml` runs on Ubuntu and Windows without secrets or model API keys: publication guard plus gitleaks over full history, both Python environments (frozen sync, lint, strict type checks, tests) and the web checks. Its temporary root is `$RUNNER_TEMP/policyops`, outside the checkout, and each job finishes with `scripts/check_repo_artifacts.py`, which lists every untracked or ignored path individually (including inside ignored directories) and fails on files left in the checkout. The web job records the tree `npm ci` installed (failing if the install wrote anywhere else) and afterwards fails on any new path, including new files under `node_modules/`. Actions are pinned to commit SHAs. Container image pins (PostgreSQL 17 with pgvector, Dex, Caddy) are recorded by digest in `infra/images.json`; Compose and Dockerfiles are not implemented yet.
 
-Not implemented yet: `policyops data fetch`, `policyops eval`, `docker compose up` and any provider or paid evaluation command. `.env.example` records proposed configuration only; real credentials belong in an ignored `.env` file or a deployment secret store.
+Not implemented yet: `policyops eval`, `docker compose up` and any provider or paid evaluation command. Public-data acquisition is the evaluator-owned `policyops-evals data` command (next section), not part of the application. `.env.example` records proposed configuration only; real credentials belong in an ignored `.env` file or a deployment secret store.
 
 ## Data and licensing
 
-No upstream dataset or implementation has been copied into this repository; the evaluator environment installs tau2-bench as a pinned dependency. The original [τ-bench license](https://github.com/sierra-research/tau-bench/blob/main/LICENSE) and the [τ²-bench repository license](https://github.com/sierra-research/tau2-bench/blob/19f13ea3f5fba8b4c4d272d1353590f29dc53062/LICENSE) are MIT. Any later import must retain applicable notices, record its revision and hashes, and check for additional file-level terms. PolicyOps's own distribution license will be selected before publication.
+No upstream dataset or implementation has been copied into this repository. The evaluator environment installs tau2-bench at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062` as a pinned dependency, and `policyops-evals data fetch` acquires that commit's public data into a directory outside the checkout:
+
+```powershell
+python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data fetch --dest D:\path\outside\tau2-fetch     # network
+python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data verify --acquired D:\path\outside\tau2-fetch # offline
+python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data check-manifests                              # offline, no data
+```
+
+The fetch re-hashes every Git object, and verification rebuilds the pinned root tree from the actual file bytes. `evals/manifests/tau2-19f13ea3/` holds only reviewed metadata: hashes, task IDs, counts, the 64-dev/50-held-out retail split (held-out = upstream `retail_50`), the grouped 39/58 banking-knowledge split, a per-file rights audit and tokenizer-specific corpus counts. [docs/data-provenance.md](docs/data-provenance.md) documents the method, results and remaining uncertainty. Held-out tasks are refused for demos, smoke runs and tuning. Hidden task fields never cross the evaluator's runtime projection. The τ²-bench repository license is MIT ([notice](THIRD_PARTY_NOTICES.md)), as is the original [τ-bench license](https://github.com/sierra-research/tau-bench/blob/main/LICENSE). That root license is the only explicit grant found; it does not establish the provenance of every data file. PolicyOps's own distribution license will be selected before publication.
+
+`scripts/devenv.py` also enables Python UTF-8 mode, because upstream reads JSON without an explicit encoding. It passes `core.autocrlf=false` to child Git processes, because a CRLF checkout of tau2 changes upstream's code fingerprints. The evaluator therefore has its own versioned uv cache and virtual environment (`cache/uv-evals-raw-v1`, `venvs/evals-raw-v1`); the application keeps `cache/uv` and `venvs/app`. Older evaluator cache and environment directories are left untouched and unused.

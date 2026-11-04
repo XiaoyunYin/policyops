@@ -879,6 +879,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "sqlalchemy" },
     { name = "tau2", extra = ["knowledge"] },
+    { name = "tiktoken" },
     { name = "uvicorn" },
 ]
 
@@ -899,6 +900,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "sqlalchemy", specifier = ">=2.1,<2.2" },
     { name = "tau2", extras = ["knowledge"], git = "https://github.com/sierra-research/tau2-bench?rev=19f13ea3f5fba8b4c4d272d1353590f29dc53062" },
+    { name = "tiktoken", specifier = ">=0.14,<0.15" },
     { name = "uvicorn", specifier = ">=0.40,<0.60" },
 ]
 

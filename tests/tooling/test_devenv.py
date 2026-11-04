@@ -17,6 +17,8 @@ from unittest import mock
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "devenv.py"
 REPO = SCRIPT.parents[1]
 EVALS = REPO / "evals"
+# Virtual environment directory per selected project (the evaluator's is versioned).
+VENV_NAMES = {"app": "app", "evals": "evals-raw-v1"}
 _spec = importlib.util.spec_from_file_location("policyops_devenv", SCRIPT)
 assert _spec is not None and _spec.loader is not None
 devenv = importlib.util.module_from_spec(_spec)
@@ -56,9 +58,34 @@ class DevenvTests(unittest.TestCase):
         self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
         self.assertEqual(env["PYTHON_DOTENV_DISABLED"], "1")
         self.assertEqual(env["LITELLM_LOCAL_MODEL_COST_MAP"], "True")
+        self.assertEqual(env["PYTHONUTF8"], "1")
         self.assertEqual(env["UV_PYTHON_INSTALL_REGISTRY"], "0")
         self.assertEqual(env["UV_PYTHON_INSTALL_BIN"], "0")
         self.assertEqual(Path(env["UV_PROJECT"]), REPO)
+
+    def test_evaluator_uses_its_own_versioned_cache_and_venv(self) -> None:
+        app = self.env_for(["uv", "sync", "--frozen"])
+        evals = self.env_for(["uv", "sync", "--project", "evals", "--frozen"])
+        self.assertEqual(Path(app["UV_CACHE_DIR"]), self.root / "cache" / "uv")
+        self.assertEqual(Path(app["UV_PROJECT_ENVIRONMENT"]), self.root / "venvs" / "app")
+        self.assertEqual(Path(evals["UV_CACHE_DIR"]), self.root / "cache" / "uv-evals-raw-v1")
+        self.assertEqual(Path(evals["UV_PROJECT_ENVIRONMENT"]), self.root / "venvs" / "evals-raw-v1")
+        self.assertEqual((evals["GIT_CONFIG_KEY_0"], evals["PYTHONUTF8"]), ("core.autocrlf", "1"))
+
+    def test_git_children_never_convert_line_endings(self) -> None:
+        env = self.env_for(["uv", "sync", "--frozen"])
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual((env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]), ("core.autocrlf", "false"))
+
+    def test_git_config_overrides_append_to_existing_entries(self) -> None:
+        self.base.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="user.name", GIT_CONFIG_VALUE_0="x")
+        env = self.env_for(["uv", "sync", "--frozen"])
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "user.name")
+        self.assertEqual((env["GIT_CONFIG_KEY_1"], env["GIT_CONFIG_VALUE_1"]), ("core.autocrlf", "false"))
+        self.base["GIT_CONFIG_COUNT"] = "many"
+        with self.assertRaises(devenv.EnvironmentErrorReport):
+            self.env_for(["uv", "sync", "--frozen"])
 
     def test_inherited_cache_settings_are_overridden(self) -> None:
         self.base["UV_CACHE_DIR"] = str(REPO / ".cache")
@@ -96,10 +123,10 @@ class DevenvTests(unittest.TestCase):
         for argv, expected in cases.items():
             with self.subTest(argv=argv):
                 env = self.env_for(list(argv))
-                self.assertEqual(Path(env["UV_PROJECT_ENVIRONMENT"]).name, expected)
+                self.assertEqual(Path(env["UV_PROJECT_ENVIRONMENT"]).name, VENV_NAMES[expected])
                 self.assertEqual(Path(env["UV_PROJECT"]), EVALS if expected == "evals" else REPO)
         from_evals_cwd = self.env_for(["uv", "run", "pytest"], cwd=EVALS)
-        self.assertEqual(Path(from_evals_cwd["UV_PROJECT_ENVIRONMENT"]).name, "evals")
+        self.assertEqual(Path(from_evals_cwd["UV_PROJECT_ENVIRONMENT"]).name, "evals-raw-v1")
         back_to_root = self.env_for(["uv", "sync", "--project", ".."], cwd=EVALS)
         self.assertEqual(Path(back_to_root["UV_PROJECT_ENVIRONMENT"]).name, "app")
 
@@ -216,7 +243,7 @@ class RealUvSelectionTests(unittest.TestCase):
         for args, cwd, variables, expected in cases:
             with self.subTest(args=args, cwd=cwd.name, variables=variables):
                 env = devenv.build_environment({**self.base, **variables}, ["uv", *args], cwd)
-                self.assertEqual(Path(env["UV_PROJECT_ENVIRONMENT"]).name, expected)
+                self.assertEqual(Path(env["UV_PROJECT_ENVIRONMENT"]).name, VENV_NAMES[expected])
                 env["UV_PROJECT_ENVIRONMENT"] = str(self.never_created)
                 result = subprocess.run([self.uv, *args], cwd=cwd, env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)

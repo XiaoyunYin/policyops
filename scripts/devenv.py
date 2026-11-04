@@ -121,6 +121,34 @@ def project_root(target: Path) -> Path:
     raise EnvironmentErrorReport(f"command targets {target}, outside this repository")
 
 
+# Evaluator cache/venv generation (cache/uv-evals-raw-v1, venvs/evals-raw-v1).
+# It holds only installs made with the byte-preserving Git setting below. The
+# older shared cache/uv and venvs/evals are left untouched (never migrated or
+# deleted), so an earlier CRLF checkout of tau2 cannot be reused.
+EVALS_NAMESPACE = "raw-v1"
+
+# Git settings for child processes (uv's git dependency checkouts). With Git for
+# Windows' core.autocrlf=true, uv's checkout of tau2 rewrote LF to CRLF, so the
+# installed files no longer matched the pinned commit's bytes.
+GIT_CHILD_CONFIG = {"core.autocrlf": "false"}
+
+
+def git_config_overrides(base: Mapping[str, str], settings: Mapping[str, str]) -> dict[str, str]:
+    """Append settings as GIT_CONFIG_KEY_n/VALUE_n entries, keeping any the caller already set."""
+    try:
+        count = int(base.get("GIT_CONFIG_COUNT", "0") or "0")
+    except ValueError as exc:
+        raise EnvironmentErrorReport("GIT_CONFIG_COUNT is not an integer") from exc
+    if count < 0:
+        raise EnvironmentErrorReport("GIT_CONFIG_COUNT is negative")
+    result = {}
+    for offset, (key, value) in enumerate(settings.items()):
+        result[f"GIT_CONFIG_KEY_{count + offset}"] = key
+        result[f"GIT_CONFIG_VALUE_{count + offset}"] = value
+    result["GIT_CONFIG_COUNT"] = str(count + len(settings))
+    return result
+
+
 def build_environment(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -> dict[str, str]:
     root = temp_root(base)
     project = project_root(uv_target(base, argv, cwd))
@@ -129,11 +157,11 @@ def build_environment(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -
         "TEMP": tmp,
         "TMP": tmp,
         "TMPDIR": tmp,
-        "UV_CACHE_DIR": root / "cache" / "uv",
+        "UV_CACHE_DIR": root / "cache" / (f"uv-evals-{EVALS_NAMESPACE}" if project == EVALS else "uv"),
         "UV_PYTHON_INSTALL_DIR": root / "tools" / "uv-python",
         # A matched pair: uv may only sync this project's lock into this venv.
         "UV_PROJECT": project,
-        "UV_PROJECT_ENVIRONMENT": root / "venvs" / ("evals" if project == EVALS else "app"),
+        "UV_PROJECT_ENVIRONMENT": root / "venvs" / (f"evals-{EVALS_NAMESPACE}" if project == EVALS else "app"),
         "RUFF_CACHE_DIR": root / "cache" / "ruff",
         "MYPY_CACHE_DIR": root / "cache" / "mypy",
         "COVERAGE_FILE": root / "reports" / "coverage" / ".coverage",
@@ -162,7 +190,11 @@ def build_environment(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -
         PYTHON_DOTENV_DISABLED="1",
         # litellm otherwise downloads a remote pricing map during import.
         LITELLM_LOCAL_MODEL_COST_MAP="True",
+        # Python UTF-8 mode: upstream tau2 opens its JSON data without an explicit
+        # encoding, which on a non-UTF-8 Windows locale silently drops tasks.
+        PYTHONUTF8="1",
     )
+    env.update(git_config_overrides(base, GIT_CHILD_CONFIG))
     for name in ("TEMP", "UV_CACHE_DIR", "COVERAGE_FILE", "npm_config_cache", "LOCALAPPDATA"):
         target = Path(env[name])
         (target.parent if name == "COVERAGE_FILE" else target).mkdir(parents=True, exist_ok=True)

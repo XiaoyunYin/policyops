@@ -1,0 +1,209 @@
+{
+  "commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062",
+  "dev": {
+    "count": 64,
+    "initial_state_present": 0,
+    "nl_assertion_in_reward_basis_but_no_assertions": {
+      "count": 38,
+      "task_ids": [
+        "0",
+        "1",
+        "5",
+        "7",
+        "9",
+        "10",
+        "12",
+        "15",
+        "20",
+        "27",
+        "31",
+        "35",
+        "41",
+        "48",
+        "51",
+        "55",
+        "57",
+        "61",
+        "69",
+        "72",
+        "73",
+        "75",
+        "77",
+        "81",
+        "82",
+        "84",
+        "87",
+        "88",
+        "90",
+        "91",
+        "92",
+        "93",
+        "94",
+        "96",
+        "98",
+        "99",
+        "100",
+        "101"
+      ]
+    },
+    "nl_assertions_empty_or_null": 40,
+    "nl_assertions_nonempty": 24,
+    "reference_action_count": {
+      "max": 13,
+      "mean": 4.5938,
+      "median": 4.0,
+      "min": 0
+    },
+    "reference_tools_used": {
+      "calculate": 6,
+      "cancel_pending_order": 15,
+      "exchange_delivered_order_items": 20,
+      "find_user_id_by_email": 9,
+      "find_user_id_by_name_zip": 31,
+      "get_order_details": 86,
+      "get_product_details": 33,
+      "get_user_details": 29,
+      "modify_pending_order_address": 13,
+      "modify_pending_order_items": 21,
+      "modify_user_address": 6,
+      "return_delivered_order_items": 23,
+      "transfer_to_human_agents": 2
+    },
+    "reward_basis": {
+      "DB": 2,
+      "DB+NL_ASSERTION": 62
+    },
+    "upstream_issue_annotations": 3
+  },
+  "dev_holdout_scenario_similarity": {
+    "dev_tasks_with_nearest_holdout_at_or_above": {
+      "0.5": 20,
+      "0.7": 12,
+      "0.9": 2
+    },
+    "max_nearest": 0.913,
+    "median_nearest": 0.22635,
+    "method": "Jaccard similarity of casefolded, whitespace-normalized character 5-gram sets of user_scenario.instructions; nearest holdout scenario (registry or reviewed English replacement) per dev task",
+    "pairs_at_or_above_0.7": [
+      {
+        "dev": "62",
+        "holdout": "63",
+        "jaccard": 0.913
+      },
+      {
+        "dev": "82",
+        "holdout": "83",
+        "jaccard": 0.9037
+      },
+      {
+        "dev": "46",
+        "holdout": "47",
+        "jaccard": 0.8902
+      },
+      {
+        "dev": "7",
+        "holdout": "6",
+        "jaccard": 0.8853
+      },
+      {
+        "dev": "31",
+        "holdout": "32",
+        "jaccard": 0.869
+      },
+      {
+        "dev": "67",
+        "holdout": "68",
+        "jaccard": 0.8449
+      },
+      {
+        "dev": "10",
+        "holdout": "11",
+        "jaccard": 0.8165
+      },
+      {
+        "dev": "5",
+        "holdout": "6",
+        "jaccard": 0.7942
+      },
+      {
+        "dev": "72",
+        "holdout": "71",
+        "jaccard": 0.7939
+      },
+      {
+        "dev": "101",
+        "holdout": "102",
+        "jaccard": 0.7858
+      },
+      {
+        "dev": "37",
+        "holdout": "36",
+        "jaccard": 0.7581
+      },
+      {
+        "dev": "12",
+        "holdout": "13",
+        "jaccard": 0.7298
+      }
+    ],
+    "within_dev_pairs_at_or_above_0.7": 9
+  },
+  "english_text_binding_replacements": {
+    "consequence": "under the text-v1 English binding, held-out tasks use reviewed user scenarios; dev tasks keep the unreviewed registry scenarios from tasks.json",
+    "evaluation_criteria_identical": 50,
+    "fields_differing_from_tasks_json": {
+      "user_scenario": 50
+    },
+    "path": "data/tau2/multilingual/en/retail_tasks_en.json",
+    "replaced_dev_tasks": 0,
+    "replaced_task_ids_equal_holdout": true,
+    "replaced_tasks": 50
+  },
+  "holdout": {
+    "count": 50,
+    "fields_read": [
+      "id",
+      "evaluation_criteria.reward_basis",
+      "presence of evaluation_criteria.nl_assertions",
+      "initial_state presence",
+      "issues",
+      "user_scenario.instructions (similarity only)",
+      "whole-record equality with the English replacement (field names only)"
+    ],
+    "initial_state_present": 0,
+    "nl_assertions_empty_or_null": 34,
+    "nl_assertions_nonempty": 16,
+    "reward_basis": {
+      "DB+NL_ASSERTION": 50
+    },
+    "upstream_issue_annotations": 0
+  },
+  "manifest_sha256": "6582a7e511e1be8996f7d98ec467235ccc47bd2b91cc826b335fa6b2c89fdac3",
+  "schema": "policyops.retail-audit/v1",
+  "upstream_issue_annotations": [
+    {
+      "created_at": "2026-01-16",
+      "issue_id": "issue_2b74ee61",
+      "linked_trajectory_present": true,
+      "split": "dev",
+      "status": "open",
+      "task_id": "4"
+    },
+    {
+      "created_at": "2026-01-16",
+      "issue_id": "issue_770466c1",
+      "linked_trajectory_present": true,
+      "split": "dev",
+      "status": "open",
+      "task_id": "5"
+    },
+    {
+      "created_at": "2026-01-16",
+      "issue_id": "issue_9a37c151",
+      "linked_trajectory_present": true,
+      "split": "dev",
+      "status": "open",
+      "task_id": "7"
+    }
+  ]
+}

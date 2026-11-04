@@ -1,0 +1,585 @@
+{
+  "banking_loader_labels": {
+    "compared_with": "required_documents parsed from SourceTree-verified tasks/ files",
+    "labels_digest": "ff222f1386008e5566632df546b3a15361867af26a9fdf1107a06ed5227f08e8",
+    "loader": "tau2.task_subsets.store.load_frame('banking_knowledge') -> registry tasks loader",
+    "per_task_ordered_equal": true,
+    "tasks": 97
+  },
+  "commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062",
+  "dev_reference_replay": {
+    "action_error_classes": {
+      "find_user_id_by_email:ValueError": 4,
+      "find_user_id_by_name_zip:ValueError": 2,
+      "get_order_details:ValueError": 2,
+      "get_product_details:ValueError": 3
+    },
+    "determinism": "equality of the final database hash across the two replays only; tool outputs and error sequences are not compared",
+    "nondeterministic_tasks": [],
+    "per_task": [
+      {
+        "actions": 5,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "cfcbf157c8456c46",
+        "task_id": "0"
+      },
+      {
+        "actions": 5,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "4348a81f68da1346",
+        "task_id": "1"
+      },
+      {
+        "actions": 11,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 1,
+        "final_db_hash_prefix": "e1824210eb10f16b",
+        "task_id": "2"
+      },
+      {
+        "actions": 12,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 1,
+        "final_db_hash_prefix": "737534d1e1401ebe",
+        "task_id": "3"
+      },
+      {
+        "actions": 13,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 1,
+        "final_db_hash_prefix": "8ede2b1bca45adc7",
+        "task_id": "4"
+      },
+      {
+        "actions": 5,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "41cd2e0423add47a",
+        "task_id": "5"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "bbfd382316c1c911",
+        "task_id": "7"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "829cb2eb4ff7fe3c",
+        "task_id": "9"
+      },
+      {
+        "actions": 5,
+        "db_changed": false,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "3513b5df14dbc91c",
+        "task_id": "10"
+      },
+      {
+        "actions": 5,
+        "db_changed": false,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "3513b5df14dbc91c",
+        "task_id": "12"
+      },
+      {
+        "actions": 7,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "39538db77a2952a0",
+        "task_id": "15"
+      },
+      {
+        "actions": 10,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "6c966cc35b3e2b7e",
+        "task_id": "20"
+      },
+      {
+        "actions": 0,
+        "db_changed": false,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "3513b5df14dbc91c",
+        "task_id": "24"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "50cf49ee90274453",
+        "task_id": "27"
+      },
+      {
+        "actions": 11,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "12bb7d21b4a7f06c",
+        "task_id": "28"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "73cec6282f25ea5f",
+        "task_id": "29"
+      },
+      {
+        "actions": 12,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "ca42bfef3e30d5bf",
+        "task_id": "31"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "20022611f64011c7",
+        "task_id": "33"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "ed4d21fb7c10ebe9",
+        "task_id": "34"
+      },
+      {
+        "actions": 7,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 1,
+        "final_db_hash_prefix": "7702c7afaaca0a85",
+        "task_id": "35"
+      },
+      {
+        "actions": 4,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 1,
+        "final_db_hash_prefix": "ec205500ee4b6f97",
+        "task_id": "37"
+      },
+      {
+        "actions": 10,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "7d13996a8d558427",
+        "task_id": "41"
+      },
+      {
+        "actions": 5,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "71c65fbd01722d3d",
+        "task_id": "43"
+      },
+      {
+        "actions": 5,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "0a76c86e78749f9e",
+        "task_id": "44"
+      },
+      {
+        "actions": 5,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "2d6d81898bd2bbf6",
+        "task_id": "45"
+      },
+      {
+        "actions": 7,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 2,
+        "final_db_hash_prefix": "d2d50cca3ca15a2b",
+        "task_id": "46"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "27dd0c92cd5febf2",
+        "task_id": "48"
+      },
+      {
+        "actions": 6,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "3b630c8d9e0d86e8",
+        "task_id": "51"
+      },
+      {
+        "actions": 12,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 1,
+        "final_db_hash_prefix": "9d3131eb82fed049",
+        "task_id": "54"
+      },
+      {
+        "actions": 13,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 1,
+        "final_db_hash_prefix": "a67fd47183c52219",
+        "task_id": "55"
+      },
+      {
+        "actions": 0,
+        "db_changed": false,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "3513b5df14dbc91c",
+        "task_id": "57"
+      },
+      {
+        "actions": 4,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "fac18e301300fa45",
+        "task_id": "60"
+      },
+      {
+        "actions": 5,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "c6a39348af053ba6",
+        "task_id": "61"
+      },
+      {
+        "actions": 5,
+        "db_changed": false,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "3513b5df14dbc91c",
+        "task_id": "62"
+      },
+      {
+        "actions": 5,
+        "db_changed": false,
+        "deterministic": true,
+        "errors": 2,
+        "final_db_hash_prefix": "3513b5df14dbc91c",
+        "task_id": "67"
+      },
+      {
+        "actions": 4,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "60bc3bbb3ea52a39",
+        "task_id": "69"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "a2c565cf58c8fa37",
+        "task_id": "72"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "ed57fb7f580e63eb",
+        "task_id": "73"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "bf006f7fded622a2",
+        "task_id": "75"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "2b9abb203ee21b34",
+        "task_id": "76"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "260e4ed76e9c7927",
+        "task_id": "77"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "c68f0dd4259b23fc",
+        "task_id": "81"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "c19ff10611eba81a",
+        "task_id": "82"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "af8eb453780ad0a5",
+        "task_id": "84"
+      },
+      {
+        "actions": 4,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "fdf880db2e80b741",
+        "task_id": "87"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "311884cf8aeddebe",
+        "task_id": "88"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "410e8a60ed945639",
+        "task_id": "90"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "8def94164f8bfc9c",
+        "task_id": "91"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "35678f67e20a81c3",
+        "task_id": "92"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "c4e916eb0a29cc0f",
+        "task_id": "93"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "ebad307e00097232",
+        "task_id": "94"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "9652a28e5d67c5f5",
+        "task_id": "95"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "e049a5e4be908fa4",
+        "task_id": "96"
+      },
+      {
+        "actions": 3,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "04ffd0a353382210",
+        "task_id": "98"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "9b1b93fb51bfe110",
+        "task_id": "99"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "7b587b06822fa40f",
+        "task_id": "100"
+      },
+      {
+        "actions": 3,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "e7b79042a037b509",
+        "task_id": "101"
+      },
+      {
+        "actions": 4,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "c11660525727f28e",
+        "task_id": "103"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "7889a7adff1998d3",
+        "task_id": "106"
+      },
+      {
+        "actions": 1,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "214f9085ee003ba8",
+        "task_id": "108"
+      },
+      {
+        "actions": 3,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "b62c4517343aa2e6",
+        "task_id": "109"
+      },
+      {
+        "actions": 3,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "cdc3169601655034",
+        "task_id": "110"
+      },
+      {
+        "actions": 3,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "a5bca5777efb3d92",
+        "task_id": "111"
+      },
+      {
+        "actions": 2,
+        "db_changed": true,
+        "deterministic": true,
+        "errors": 0,
+        "final_db_hash_prefix": "bb08bcb84eb1396e",
+        "task_id": "113"
+      }
+    ],
+    "scope": "dev retail tasks only; upstream registry tasks; fresh environment per replay; each replayed twice",
+    "tasks": 64,
+    "tasks_with_action_errors": [
+      "2",
+      "3",
+      "4",
+      "35",
+      "37",
+      "46",
+      "54",
+      "55",
+      "67"
+    ],
+    "tasks_without_db_change": [
+      "10",
+      "12",
+      "24",
+      "57",
+      "62",
+      "67"
+    ]
+  },
+  "draws": {
+    "banking_knowledge_97": {
+      "frame_digest": "a7caa78199fd9386c47ab06075e1281558210c5f4d30f474086a51da0184464d",
+      "frame_size": 97,
+      "reproduced_by": "tau2.task_subsets.store.verify_subset (raises on any drift)",
+      "selected": 97
+    },
+    "retail_50": {
+      "frame_digest": "f05763b3fe863611f18a82c95cb3cf72c3243b3e95d8e40e88c046861fa88213",
+      "frame_size": 114,
+      "reproduced_by": "tau2.task_subsets.store.verify_subset (raises on any drift)",
+      "selected": 50
+    }
+  },
+  "english_retail_text_binding": {
+    "binding_revision": "e73f190f6820db05b0baa8472505f4676d3c40114bae0fe93f5fbd56d8321bf3",
+    "recomputed_by": "tau2.runner.presets.binding_revision(load_cell_language('en', 'retail', 'text'))"
+  },
+  "installed_package": {
+    "all_match_record_and_commit": true,
+    "assurance": "SHA-256 of every installed tau2/ file's actual bytes equals its RECORD entry and the pinned commit's src/tau2/ blob; benchmark data is not part of the wheel",
+    "commit_src_tau2_files_not_installed": 0,
+    "direct_url_commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062",
+    "dist_info_license_sha256": "e67c5aa0074dfcaefd3c3a1aedb94cb539234aecd15d5a972574e3200e6252fe",
+    "dist_info_license_text_equals_root_license_ignoring_line_endings": true,
+    "distribution": "tau2 2.0.0",
+    "installed_files_hashed": 434
+  },
+  "manifest_sha256": "08c396e4ea5666adb20cd8947199c57b50f1676e69616152775beccc9662694b",
+  "schema": "policyops.upstream-verification/v1"
+}

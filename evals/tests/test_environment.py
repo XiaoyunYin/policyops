@@ -28,6 +28,16 @@ def test_tau2_installed_from_exact_pinned_commit() -> None:
     assert direct_url["vcs_info"]["commit_id"] == TAU2_COMMIT
 
 
+def test_installed_tau2_sources_keep_upstream_line_endings() -> None:
+    # The pinned commit's src/tau2 files contain no CR bytes. Git for Windows'
+    # core.autocrlf=true once made uv's checkout install CRLF copies, which changed
+    # upstream's runtime_rules digest and the English retail binding revision.
+    files = [file for file in metadata.distribution("tau2").files or [] if file.suffix == ".py"]
+    assert files
+    converted = [str(file) for file in files if b"\r" in Path(str(file.locate())).read_bytes()]
+    assert converted == []
+
+
 def test_knowledge_extra_only() -> None:
     for module in ("rank_bm25", "openai"):
         assert util.find_spec(module) is not None, module

@@ -1,0 +1,730 @@
+{
+  "aggregate_tasks_json": {
+    "aggregate_label_statistics": {
+      "distinct_required_ids": 215,
+      "most_frequent_document": {
+        "id": "doc_bank_accounts_bank_accounts_(general)_009",
+        "tasks": 44
+      },
+      "required_per_task": {
+        "max": 30,
+        "mean": 9.7835,
+        "median": 9,
+        "min": 1
+      },
+      "tasks": 97,
+      "tasks_requiring_more_than_5": 70,
+      "unmatched_ids": []
+    },
+    "differing_fields": {
+      "task_027": [
+        "required_documents"
+      ],
+      "task_046": [
+        "required_documents"
+      ],
+      "task_048": [
+        "description",
+        "evaluation_criteria",
+        "required_documents",
+        "user_scenario"
+      ],
+      "task_053": [
+        "user_tools"
+      ],
+      "task_056": [
+        "description",
+        "required_documents"
+      ],
+      "task_061": [
+        "user_scenario"
+      ],
+      "task_062": [
+        "evaluation_criteria",
+        "user_scenario"
+      ],
+      "task_081": [
+        "required_documents"
+      ],
+      "task_083": [
+        "required_documents"
+      ],
+      "task_084": [
+        "evaluation_criteria"
+      ],
+      "task_085": [
+        "user_scenario"
+      ],
+      "task_088": [
+        "required_documents"
+      ],
+      "task_102": [
+        "evaluation_criteria",
+        "user_scenario"
+      ]
+    },
+    "ids_only_in_aggregate": [],
+    "ids_only_in_canonical": [
+      "doc_business_savings_accounts_silver_plus_saver_002",
+      "doc_business_savings_accounts_silver_plus_saver_003",
+      "doc_checking_accounts_purple_account_007"
+    ],
+    "path": "data/tau2/domains/banking_knowledge/tasks.json",
+    "read_by_upstream_code": false,
+    "required_documents_differ_for": [
+      "task_027",
+      "task_046",
+      "task_048",
+      "task_056",
+      "task_081",
+      "task_083",
+      "task_088"
+    ],
+    "tasks_differing": 13
+  },
+  "assignment": {
+    "dev_fraction": 0.4,
+    "method": "groups ordered by sha256('<seed>|banking_knowledge|<group id>'); a group joins dev while the dev task count stays <= target",
+    "seed": 42,
+    "target_dev_tasks": 39
+  },
+  "document_overlap": {
+    "never_required": 480,
+    "note": "the corpus is shared by design; labels and answers are not",
+    "required_by_both": 83,
+    "required_by_dev_only": 53,
+    "required_by_test_only": 82
+  },
+  "domain": "banking_knowledge",
+  "frame": {
+    "digest": "a7caa78199fd9386c47ab06075e1281558210c5f4d30f474086a51da0184464d",
+    "order": "sorted task file names",
+    "size": 97,
+    "task_ids": [
+      "task_001",
+      "task_002",
+      "task_003",
+      "task_004",
+      "task_005",
+      "task_006",
+      "task_007",
+      "task_008",
+      "task_010",
+      "task_012",
+      "task_014",
+      "task_015",
+      "task_016",
+      "task_017",
+      "task_018",
+      "task_019",
+      "task_020",
+      "task_021",
+      "task_022",
+      "task_023",
+      "task_024",
+      "task_025",
+      "task_026",
+      "task_027",
+      "task_028",
+      "task_029",
+      "task_031",
+      "task_032",
+      "task_033",
+      "task_034",
+      "task_035",
+      "task_036",
+      "task_037",
+      "task_038",
+      "task_039",
+      "task_040",
+      "task_041",
+      "task_043",
+      "task_044",
+      "task_045",
+      "task_046",
+      "task_047",
+      "task_048",
+      "task_049",
+      "task_050",
+      "task_051",
+      "task_052",
+      "task_053",
+      "task_054",
+      "task_055",
+      "task_056",
+      "task_057",
+      "task_058",
+      "task_059",
+      "task_060",
+      "task_061",
+      "task_062",
+      "task_063",
+      "task_064",
+      "task_065",
+      "task_066",
+      "task_067",
+      "task_068",
+      "task_069",
+      "task_070",
+      "task_071",
+      "task_072",
+      "task_073",
+      "task_074",
+      "task_075",
+      "task_076",
+      "task_077",
+      "task_078",
+      "task_079",
+      "task_080",
+      "task_081",
+      "task_082",
+      "task_083",
+      "task_084",
+      "task_085",
+      "task_086",
+      "task_087",
+      "task_088",
+      "task_089",
+      "task_090",
+      "task_091",
+      "task_092",
+      "task_093",
+      "task_094",
+      "task_095",
+      "task_096",
+      "task_097",
+      "task_098",
+      "task_099",
+      "task_100",
+      "task_101",
+      "task_102"
+    ]
+  },
+  "grouping": {
+    "group_sizes": {
+      "1": 20,
+      "2": 11,
+      "3": 2,
+      "5": 4,
+      "7": 3,
+      "8": 1
+    },
+    "groups": 41,
+    "label_jaccard_threshold": 0.5,
+    "members": [
+      {
+        "group": "task_001",
+        "split": "test",
+        "task_ids": [
+          "task_001",
+          "task_002",
+          "task_003",
+          "task_006",
+          "task_008"
+        ]
+      },
+      {
+        "group": "task_004",
+        "split": "dev",
+        "task_ids": [
+          "task_004",
+          "task_012"
+        ]
+      },
+      {
+        "group": "task_005",
+        "split": "test",
+        "task_ids": [
+          "task_005"
+        ]
+      },
+      {
+        "group": "task_007",
+        "split": "dev",
+        "task_ids": [
+          "task_007"
+        ]
+      },
+      {
+        "group": "task_010",
+        "split": "test",
+        "task_ids": [
+          "task_010",
+          "task_016"
+        ]
+      },
+      {
+        "group": "task_014",
+        "split": "test",
+        "task_ids": [
+          "task_014"
+        ]
+      },
+      {
+        "group": "task_015",
+        "split": "dev",
+        "task_ids": [
+          "task_015"
+        ]
+      },
+      {
+        "group": "task_017",
+        "split": "test",
+        "task_ids": [
+          "task_017",
+          "task_018",
+          "task_019",
+          "task_020",
+          "task_026",
+          "task_027",
+          "task_028",
+          "task_029"
+        ]
+      },
+      {
+        "group": "task_021",
+        "split": "dev",
+        "task_ids": [
+          "task_021"
+        ]
+      },
+      {
+        "group": "task_022",
+        "split": "test",
+        "task_ids": [
+          "task_022"
+        ]
+      },
+      {
+        "group": "task_023",
+        "split": "dev",
+        "task_ids": [
+          "task_023"
+        ]
+      },
+      {
+        "group": "task_024",
+        "split": "test",
+        "task_ids": [
+          "task_024",
+          "task_025"
+        ]
+      },
+      {
+        "group": "task_031",
+        "split": "test",
+        "task_ids": [
+          "task_031",
+          "task_036",
+          "task_037",
+          "task_038",
+          "task_039",
+          "task_040",
+          "task_041"
+        ]
+      },
+      {
+        "group": "task_032",
+        "split": "test",
+        "task_ids": [
+          "task_032"
+        ]
+      },
+      {
+        "group": "task_033",
+        "split": "dev",
+        "task_ids": [
+          "task_033"
+        ]
+      },
+      {
+        "group": "task_034",
+        "split": "dev",
+        "task_ids": [
+          "task_034"
+        ]
+      },
+      {
+        "group": "task_035",
+        "split": "test",
+        "task_ids": [
+          "task_035"
+        ]
+      },
+      {
+        "group": "task_043",
+        "split": "dev",
+        "task_ids": [
+          "task_043",
+          "task_044",
+          "task_045",
+          "task_046",
+          "task_047",
+          "task_048",
+          "task_049"
+        ]
+      },
+      {
+        "group": "task_050",
+        "split": "dev",
+        "task_ids": [
+          "task_050",
+          "task_051",
+          "task_052",
+          "task_053",
+          "task_054"
+        ]
+      },
+      {
+        "group": "task_055",
+        "split": "test",
+        "task_ids": [
+          "task_055"
+        ]
+      },
+      {
+        "group": "task_056",
+        "split": "test",
+        "task_ids": [
+          "task_056"
+        ]
+      },
+      {
+        "group": "task_057",
+        "split": "test",
+        "task_ids": [
+          "task_057"
+        ]
+      },
+      {
+        "group": "task_058",
+        "split": "dev",
+        "task_ids": [
+          "task_058",
+          "task_059"
+        ]
+      },
+      {
+        "group": "task_060",
+        "split": "test",
+        "task_ids": [
+          "task_060",
+          "task_061"
+        ]
+      },
+      {
+        "group": "task_062",
+        "split": "test",
+        "task_ids": [
+          "task_062"
+        ]
+      },
+      {
+        "group": "task_063",
+        "split": "test",
+        "task_ids": [
+          "task_063",
+          "task_064",
+          "task_065",
+          "task_066",
+          "task_067",
+          "task_068",
+          "task_069"
+        ]
+      },
+      {
+        "group": "task_070",
+        "split": "test",
+        "task_ids": [
+          "task_070",
+          "task_071"
+        ]
+      },
+      {
+        "group": "task_072",
+        "split": "test",
+        "task_ids": [
+          "task_072",
+          "task_073",
+          "task_074"
+        ]
+      },
+      {
+        "group": "task_075",
+        "split": "test",
+        "task_ids": [
+          "task_075",
+          "task_076"
+        ]
+      },
+      {
+        "group": "task_077",
+        "split": "dev",
+        "task_ids": [
+          "task_077",
+          "task_078",
+          "task_079"
+        ]
+      },
+      {
+        "group": "task_080",
+        "split": "test",
+        "task_ids": [
+          "task_080",
+          "task_081"
+        ]
+      },
+      {
+        "group": "task_082",
+        "split": "dev",
+        "task_ids": [
+          "task_082",
+          "task_083",
+          "task_084",
+          "task_085",
+          "task_086"
+        ]
+      },
+      {
+        "group": "task_087",
+        "split": "test",
+        "task_ids": [
+          "task_087",
+          "task_088",
+          "task_090",
+          "task_091",
+          "task_092"
+        ]
+      },
+      {
+        "group": "task_089",
+        "split": "dev",
+        "task_ids": [
+          "task_089"
+        ]
+      },
+      {
+        "group": "task_093",
+        "split": "dev",
+        "task_ids": [
+          "task_093"
+        ]
+      },
+      {
+        "group": "task_094",
+        "split": "dev",
+        "task_ids": [
+          "task_094",
+          "task_095"
+        ]
+      },
+      {
+        "group": "task_096",
+        "split": "dev",
+        "task_ids": [
+          "task_096"
+        ]
+      },
+      {
+        "group": "task_097",
+        "split": "dev",
+        "task_ids": [
+          "task_097"
+        ]
+      },
+      {
+        "group": "task_098",
+        "split": "dev",
+        "task_ids": [
+          "task_098"
+        ]
+      },
+      {
+        "group": "task_099",
+        "split": "dev",
+        "task_ids": [
+          "task_099",
+          "task_100"
+        ]
+      },
+      {
+        "group": "task_101",
+        "split": "test",
+        "task_ids": [
+          "task_101",
+          "task_102"
+        ]
+      }
+    ],
+    "scenario_5gram_jaccard_threshold": 0.5
+  },
+  "labels": {
+    "distinct_required_ids": 218,
+    "document_files": 698,
+    "document_id_equals_file_stem": 698,
+    "eligible_tasks": 97,
+    "kind": "task-level required document IDs for the whole multi-turn trajectory; not per-turn or per-chunk relevance",
+    "most_frequent_document": {
+      "id": "doc_bank_accounts_bank_accounts_(general)_009",
+      "tasks": 44
+    },
+    "required_per_task": {
+      "max": 30,
+      "mean": 9.8866,
+      "median": 10,
+      "min": 1
+    },
+    "tasks": 97,
+    "tasks_requiring_more_than_5": 70,
+    "unmatched_ids": []
+  },
+  "manifest_sha256": "95dd03e3e474899de8b78b50c633047a6f71cbf2d3e0c88a0937ca928c141182",
+  "schema": "policyops.banking-split/v1",
+  "source": {
+    "canonical_tasks": "data/tau2/domains/banking_knowledge/tasks/task_*.json (upstream get_tasks loader)",
+    "census_sha256": "945deb8d7f6b6cf6cfd9ed44d87df81b55812f23b1cc454ddab4d477d508c76b",
+    "commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062",
+    "document_files_sha256": "7ebf38432135c61ee5af4b8209aca9defaf873c1134e0f829605c155ff70c407",
+    "task_files_sha256": "590a68313bc0c4fa78da95e8665c3d4c1aa1d4b02b3771c017ef99d8ee43f923"
+  },
+  "splits": {
+    "dev": {
+      "count": 39,
+      "digest": "ef7edc87b2579e1e6a05bb1c3d91705362ead73535c12f2020d74c1ee64c47e3",
+      "groups": 19,
+      "profile": {
+        "distinct_required_ids": 136,
+        "required_per_task_max": 25,
+        "required_per_task_mean": 9.1282,
+        "reward_basis": {
+          "ACTION": 5,
+          "DB": 34
+        },
+        "tasks": 39,
+        "tasks_requiring_more_than_5": 29,
+        "tasks_with_user_tools": 32
+      },
+      "task_ids": [
+        "task_004",
+        "task_007",
+        "task_012",
+        "task_015",
+        "task_021",
+        "task_023",
+        "task_033",
+        "task_034",
+        "task_043",
+        "task_044",
+        "task_045",
+        "task_046",
+        "task_047",
+        "task_048",
+        "task_049",
+        "task_050",
+        "task_051",
+        "task_052",
+        "task_053",
+        "task_054",
+        "task_058",
+        "task_059",
+        "task_077",
+        "task_078",
+        "task_079",
+        "task_082",
+        "task_083",
+        "task_084",
+        "task_085",
+        "task_086",
+        "task_089",
+        "task_093",
+        "task_094",
+        "task_095",
+        "task_096",
+        "task_097",
+        "task_098",
+        "task_099",
+        "task_100"
+      ],
+      "use": "retrieval development and tuning"
+    },
+    "test": {
+      "count": 58,
+      "digest": "571dd02f1df878f838f6b56e76b5e41289677b431970f3e5c6337126104f1441",
+      "groups": 22,
+      "profile": {
+        "distinct_required_ids": 165,
+        "required_per_task_max": 30,
+        "required_per_task_mean": 10.3966,
+        "reward_basis": {
+          "ACTION": 4,
+          "DB": 53,
+          "DB+NL_ASSERTION": 1
+        },
+        "tasks": 58,
+        "tasks_requiring_more_than_5": 41,
+        "tasks_with_user_tools": 49
+      },
+      "task_ids": [
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_005",
+        "task_006",
+        "task_008",
+        "task_010",
+        "task_014",
+        "task_016",
+        "task_017",
+        "task_018",
+        "task_019",
+        "task_020",
+        "task_022",
+        "task_024",
+        "task_025",
+        "task_026",
+        "task_027",
+        "task_028",
+        "task_029",
+        "task_031",
+        "task_032",
+        "task_035",
+        "task_036",
+        "task_037",
+        "task_038",
+        "task_039",
+        "task_040",
+        "task_041",
+        "task_055",
+        "task_056",
+        "task_057",
+        "task_060",
+        "task_061",
+        "task_062",
+        "task_063",
+        "task_064",
+        "task_065",
+        "task_066",
+        "task_067",
+        "task_068",
+        "task_069",
+        "task_070",
+        "task_071",
+        "task_072",
+        "task_073",
+        "task_074",
+        "task_075",
+        "task_076",
+        "task_080",
+        "task_081",
+        "task_087",
+        "task_088",
+        "task_090",
+        "task_091",
+        "task_092",
+        "task_101",
+        "task_102"
+      ],
+      "use": "held-out retrieval evaluation; untouched for tuning"
+    }
+  }
+}

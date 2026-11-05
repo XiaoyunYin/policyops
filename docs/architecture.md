@@ -199,6 +199,115 @@ parsed document with only local references, an explicit Redocly configuration (n
 tokens), a minimal environment and closed proxies. The tests check real HTTP responses against the document and
 compile real bodies against the generated types.
 
+## Runs, leased jobs and event streaming
+
+Packages: `policyops.runtime` (lease clock, runtime specs, worker, outbox dispatcher), `policyops.persistence.runs`,
+`policyops.services.runs` and `policyops.api.runs`.
+
+| Route | Action | Notes |
+|---|---|---|
+| `POST /cases/{id}/runs` | start run | body `{"mode": "workbench"}`; `Idempotency-Key` and strong case `If-Match`; 202 with `Location` and `ETag` |
+| `GET /runs/{id}` | view case | `ETag` is the run version |
+| `POST /runs/{id}/cancel` | cancel run | `Idempotency-Key`; no version precondition |
+| `GET /runs/{id}/events` | view case | server-sent events; `Last-Event-ID` or `?after=` |
+
+- **Start.** It takes the T08 idempotent write path (replay of the original 202, 409 for a changed intent). Then,
+  under the case lock, it rechecks the current role and the case version, and allows at most one active workbench
+  run per case (`409 api.run_active`, also enforced by a partial unique index). It creates, in one transaction:
+  - the run, bound to the case version, the initiating principal and the frozen server runtime spec (its real
+    graph, prompt and config digests);
+  - its first event and outbox intent;
+  - its execute job;
+  - an audit row.
+
+  Mode, digests, times and fences are all server-owned.
+- **No runtime is installed yet.** The production runtime catalog is empty until T21 installs an investigation
+  runtime. Starting a run therefore answers `503 runtime.unconfigured` before anything is written, and a job that
+  is already queued with an unknown spec fails visibly (see dead letters below). Deterministic scripted
+  executors exist only in the test support package; they and the fixed test clock are refused outside the test
+  environment (`build_runs_runtime`, `build_worker`, `build_dispatcher`). No model or provider is ever called.
+- **Time authority.** Leases, deadlines and run/job/event times come from PostgreSQL `clock_timestamp()`. It is read
+  after the locks a decision depends on: `now()` is the transaction start, and would still accept a lease that
+  expired while the transaction waited for a lock. A test proves this boundary.
+- **Lock order.** Everywhere: idempotency key → case → run → job → outbox rows. A heartbeat takes only the job lock.
+  No transaction spans an executor call, a sleep, an SSE yield or a human wait.
+- **Discovery and claims.** The worker discovers candidate jobs (due queued jobs and expired leases) as the narrow
+  `policyops_worker_discovery` role, which reads only scheduling metadata. It then claims as the app runtime in the
+  job's workspace, with `SKIP LOCKED` on the run and then the job. Before any work it rechecks, in that order:
+  - the job kind (only `run.execute`) and that the run is in an executable state (`queued` or `running`; paused
+    states need a later, authorized resume path);
+  - the deadlines and the remaining attempts;
+  - the spec matching all three digests;
+  - the initiator's current START_RUN permission, checked at every claim (each attempt). An ended browser
+    session does not stop authorized background work. A revoked membership stops the next claim, but it does
+    not interrupt an executor already running under a claim; cancellation and the lease fences do that.
+- **Fencing.** A claim sets a new stable `claim_id` and increments the run's `generation`; heartbeats extend the
+  lease without changing either. Every worker write (event, state, finish, release) locks the run and then the job,
+  and verifies all of the following, failing closed otherwise (`Fenced`):
+  - the claim ID and owner;
+  - the generation;
+  - an unexpired lease (so an expired claim that nobody has reclaimed yet cannot write either);
+  - both deadlines;
+  - a non-terminal state.
+
+  Cancellation and reclaiming change the generation, which fences out any earlier claim.
+- **Dead letters and retries.** Attempts are counted at claim, so a killed worker's attempt counts. Typed codes:
+  `executor_unavailable`, `initiator_not_authorized`, `max_attempts`, `deadline_exceeded`, `run_not_runnable`
+  and `unsupported_job_kind`; `run_cancelled` and `run_failed` mark finished jobs.
+  - Transient outcomes are released with bounded exponential backoff.
+  - When no retry slot is left before the deadline, the job is dead-lettered instead of being scheduled at it.
+  - A failed run gets an `error.raised` event with an error code and rule ID.
+  - Logs carry codes, IDs and exception type names, never exception text.
+- **Cancel** is a desired-state action. Under the run, then job, locks, it moves an active run to `cancelled`,
+  increments the generation, finishes the job, and appends the event, outbox intent and audit row together. A
+  terminal run is returned unchanged with no event. Nothing remote exists to undo here (T19 adds reconciliation).
+- **Events and outbox.**
+  - **Allocation.** Sequences come from the run's durable `event_highwater` under the run lock, never
+    `MAX(sequence) + 1`, so a retired sequence is never reissued.
+  - **Retention floor.** `event_retention_floor` is the last retired sequence (0 = none). There is no automatic
+    purge, and the runtime cannot move the floor.
+  - **Outbox.** Each event writes an outbox intent in the same transaction. The dispatcher publishes the intents
+    for one workspace with a single `pg_notify('policyops_run_events', '')` and sets `delivered_at` in the same
+    transaction. `delivered_at` therefore means "publication committed", not "a client received it", and
+    identical wake-ups coalesce.
+  - **Payload.** The notification payload is empty, because every session of the same database can LISTEN.
+    Polling the durable events is the correctness path.
+  - **Other topics.** Rows of other topics are left undelivered and cannot starve discovery.
+- **Stored events** are decoded only when their schema version is supported and their payload is a valid typed
+  event of the stored type. Anything else is streamed in its place as `event: unsupported`, carrying only its
+  identifiers; its content is never relabelled or completed.
+- **Event stream (SSE).**
+  - **Frames.** `id: <sequence>`, `event: <type>`, `data: <EventEnvelope JSON>`. Control frames (`: heartbeat`,
+    `event: resync`, `event: reconnect`) carry no `id`.
+  - **Position.** `Last-Event-ID` takes precedence over `?after=`, and only the selected value is validated:
+    digits only, 0 allowed.
+  - **Refused before any headers are sent:** malformed (`422 api.invalid_event_position`), ahead of the high-water
+    mark (`422 api.event_position_ahead`), below the floor (`409 api.event_gap_resync_required`), or a foreign run
+    (404).
+  - **Each poll** rechecks the session and current membership, then reads one bounded batch in a short
+    transaction. A revocation ends the stream with no further data.
+  - **End.** The stream ends after a terminal run's last event, or at the maximum lifetime with `reconnect`. The
+    lifetime is checked before every event, so a full batch or a slow reader cannot extend it.
+  - **Delivery deadline.** Independently, the outermost `StreamDeadline` middleware cuts the whole response off at
+    `max_lifetime + delivery_grace`, including a send stalled by a client that stopped reading. No further frame is
+    sent, so no ID is invented, and the client reconnects from its last received ID.
+
+Limits:
+- The executor is a deterministic test executor; there is no investigation runtime.
+- Workers are in-process objects. One real-process test kills an OS worker and reclaims its lease, but there is no
+  packaged worker entrypoint or deployment (T38).
+- Cross-database clock skew does not apply, because the database clock is the only authority.
+- A job kind that some worker does not support is dead-lettered by that worker, so new kinds must ship only after
+  every worker supports them.
+- **Stream cancellation and in-flight polls.** When the stream is cancelled (the delivery deadline, a disconnect),
+  a session check or database poll that is already running (including the initial authorization and preflight
+  snapshot before any headers are sent) is abandoned, not interrupted. Its worker thread
+  finishes the query, ends its short transaction and returns the connection to the pool. Until then it holds that
+  connection and a thread. The application sets no statement timeout of its own, so how long that takes depends on
+  the database. The HTTP response itself still ends at the deadline.
+- **What the deadline covers.** The delivery deadline and the stalled-send behaviour were tested at the ASGI level
+  (including the composed app over real PostgreSQL), not with a stalled physical socket or behind a reverse proxy.
+
 ## Dev calibration allowlist and demo seeds
 
 `evals/manifests/tau2-19f13ea3/retail-calibration.json` is rebuilt from the committed T03 manifests by

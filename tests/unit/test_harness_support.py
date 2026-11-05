@@ -1,6 +1,7 @@
 """Fake provider, clocks, seeds, redaction and evidence recording."""
 
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from decimal import Decimal
 import hashlib
@@ -785,21 +786,134 @@ def test_pgpass_cleanup_is_always_attempted_and_confirmed(tmp_path: Path, monkey
 
 # -- Dex fixture secret cleanup (T07 review F1) ----------------------------------------------------------------
 
-def _dex_without_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, run_fails: bool = False) -> Any:
-    from policyops_testing import dex as dex_module
+@dataclass
+class FakeDocker:
+    """Docker as the Dex fixture sees it: a registry of containers by ID, with labels and names."""
 
-    def docker(*args: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    run_error: str = "synthetic run failure"
+    run_fails: bool = False
+    run_creates: bool = False          # a failed run still created this run's container (a partial create)
+    rm_fails: bool = False
+    inspect_error: str | None = None   # a name lookup that fails for another reason than "no such container"
+    containers: dict[str, dict[str, str]] = field(default_factory=dict)
+    removed: list[str] = field(default_factory=list)
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def add(self, name: str, owner: str = "", run: str = "") -> str:
+        container_id = f"{len(self.containers) + 1:064x}"
+        self.containers[container_id] = {"name": f"/{name}", "owner": owner or "<no value>", "run": run or "<no value>"}
+        return container_id
+
+    def by_name(self, name: str) -> str | None:
+        return next((cid for cid, c in self.containers.items() if c["name"] == f"/{name}"), None)
+
+    def __call__(self, *args: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        self.calls.append(args)
+
+        def done(code: int = 0, out: str = "", err: str = "") -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(["docker", *args], code, out, err)
+
         if args[:2] == ("image", "inspect"):
-            return subprocess.CompletedProcess(["docker", *args], 0, "", "")
-        if args[0] == "run" and run_fails:
-            return subprocess.CompletedProcess(["docker", *args], 125, "", "synthetic run failure")
+            return done()
+        if args[0] == "run" and self.run_fails:
+            name = args[args.index("--name") + 1]
+            run_label = next(a for a in args if a.startswith("policyops.run="))
+            if self.run_creates and self.by_name(name) is None:
+                self.add(name, "policyops-tests", run_label.split("=", 1)[1])
+            return done(125, err=self.run_error)
+        if args[:2] == ("container", "inspect"):
+            if self.inspect_error is not None:
+                return done(1, err=self.inspect_error)
+            cid = self.by_name(args[-1])
+            if cid is None:
+                return done(1, err=f"Error: No such container: {args[-1]}")
+            c = self.containers[cid]
+            return done(out=f"{cid} {c['owner']} {c['run']} {c['name']}\n")
+        if args[:2] == ("ps", "-a"):
+            wanted = args[-1].split("=", 1)[1]
+            return done(out="\n".join(cid for cid in self.containers if cid == wanted))
+        if args[0] == "inspect" and args[1] == "-f":
+            labelled = self.containers.get(args[-1])
+            if labelled is None:
+                return done(1, err="No such object")
+            return done(out=f"{labelled['owner']} {labelled['run']} {labelled['name']}")
+        if args[:3] == ("rm", "-f", "-v"):
+            if not self.rm_fails:
+                self.containers.pop(args[3], None)
+                self.removed.append(args[3])
+            return done(1 if self.rm_fails else 0)
         raise AssertionError(f"unexpected docker call {args[:2]}")
 
-    monkeypatch.setattr(dex_module, "_docker", docker)
+
+def _dex_without_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, run_fails: bool = False,
+                        **behaviour: Any) -> Any:
+    from policyops_testing import dex as dex_module
+    from policyops_testing import postgres as postgres_module
+
+    fake = FakeDocker(run_fails=run_fails, **behaviour)
+    monkeypatch.setattr(dex_module, "_docker", fake)
+    monkeypatch.setattr(postgres_module, "_docker", fake)  # `_observe` / `_container_exists` (the guarded removal)
     root = tmp_path / "dex"
     root.mkdir()
-    return dex_module.OwnedDex(root=root, run_id="cleanup", redirect_uri="http://127.0.0.1:8000/cb",
-                               image="unused")
+    server = dex_module.OwnedDex(root=root, run_id="cleanup", redirect_uri="http://127.0.0.1:8000/cb",
+                                 image="unused")
+    server.fake = fake  # type: ignore[attr-defined]
+    return server
+
+
+@pytest.mark.parametrize("wording", ["Bind for 127.0.0.1:1234 failed: port is already allocated",
+                                     "failed to bind host port 127.0.0.1:1234/tcp: address already in use"])
+def test_a_dex_port_collision_is_retried_and_each_owned_partial_create_removed_by_id(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wording: str) -> None:
+    """Both Docker wordings of a lost port race (Linux, Docker Desktop on Windows) are retried; the container each
+    failed run created for this run is removed by its ID through the guarded removal."""
+    from policyops_testing.dex import DexUnavailable
+
+    server = _dex_without_docker(tmp_path, monkeypatch, run_fails=True, run_error=wording, run_creates=True)
+    with pytest.raises(DexUnavailable, match="no free loopback port"):
+        server.start()
+    assert len(server.fake.removed) == 3 and server.fake.containers == {}
+    assert not any(call[:2] == ("rm", "-f") and server.name in call for call in server.fake.calls)  # never by name
+
+
+def test_a_failed_run_that_created_nothing_removes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from policyops_testing.dex import DexUnavailable
+
+    server = _dex_without_docker(tmp_path, monkeypatch, run_fails=True)
+    with pytest.raises(DexUnavailable, match="synthetic run failure"):
+        server.start()
+    assert server.fake.removed == []
+
+
+@pytest.mark.parametrize(("owner", "run"), [("", ""), ("someone-else", "cleanup"), ("policyops-tests", "other-run")])
+def test_a_foreign_or_mismatched_container_under_our_name_is_never_removed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owner: str, run: str) -> None:
+    from policyops_testing.dex import DexUnavailable
+
+    server = _dex_without_docker(tmp_path, monkeypatch, run_fails=True,
+                                 run_error="Conflict. The container name is already in use")
+    foreign = server.fake.add(server.name, owner, run)
+    with pytest.raises(DexUnavailable, match="not this run's"):
+        server.start()
+    assert foreign in server.fake.containers and server.fake.removed == []
+    assert not any(call[0] == "rm" for call in server.fake.calls)
+
+
+def test_failed_cleanup_of_an_owned_partial_create_is_reported(tmp_path: Path,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    from policyops_testing.dex import DexUnavailable
+    from policyops_testing.postgres import CleanupUncertain
+
+    server = _dex_without_docker(tmp_path, monkeypatch, run_fails=True, run_creates=True, rm_fails=True)
+    with pytest.raises(DexUnavailable, match="was not removed"):
+        server.start()
+    assert len(server.fake.containers) == 1  # reported, not assumed gone
+    (tmp_path / "second").mkdir()
+    unclear = _dex_without_docker(tmp_path / "second", monkeypatch, run_fails=True,
+                                  inspect_error="Cannot connect to the Docker daemon")
+    with pytest.raises(CleanupUncertain, match="cannot inspect"):
+        unclear.start()
+    assert unclear.fake.removed == []
 
 
 def test_a_failed_dex_secret_write_leaves_no_secret_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -246,11 +246,14 @@ def create_run(connection: Connection, run: NewRun) -> None:
 
 def append_run_event(connection: Connection, *, event_id: UUID, workspace_id: UUID, run_id: UUID, event_type: str,
                      schema_version: str, payload_json: str, occurred_at: datetime) -> int:
-    if _one(connection, "SELECT id FROM app.runs WHERE id = :id FOR UPDATE", {"id": run_id}) is None:
+    """Append with the next sequence from the run's durable high-water mark (revision 0005). Advancing it takes the
+    run row lock, which serializes appends; MAX(sequence) + 1 is never used, so a purged event's sequence cannot be
+    reissued."""
+    row = _one(connection, "UPDATE app.runs SET event_highwater = event_highwater + 1 WHERE id = :id "
+               "RETURNING event_highwater", {"id": run_id})
+    if row is None:
         raise NotFound(f"run {run_id}")
-    sequence = connection.execute(text("SELECT coalesce(max(sequence), 0) + 1 FROM app.run_events "
-                                       "WHERE workspace_id = :w AND run_id = :r"),
-                                  {"w": workspace_id, "r": run_id}).scalar_one()
+    sequence = row["event_highwater"]
     connection.execute(text(
         "INSERT INTO app.run_events (id, workspace_id, run_id, sequence, event_type, schema_version, payload, "
         "occurred_at) VALUES (:id, :w, :r, :sequence, :type, :schema, CAST(:payload AS jsonb), :at)"),

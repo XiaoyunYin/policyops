@@ -10,6 +10,10 @@ Cluster-level roles (shared by every application database on one server):
 * `policyops_auth_runtime`: the trusted authentication-service role (PLAN D1). Pre-workspace identity, session and
   membership lookups and provisioning in the `identity` schema only; no business, evaluation or retail grants.
 * `policyops_eval_runtime`: evaluation recording in the `evaluation` schema only.
+* `policyops_worker_discovery` (T09): finds work across workspaces for the worker and outbox dispatcher. Column
+  SELECT on job and outbox scheduling metadata only (IDs, workspace, state and times), through its own read-only
+  policies; no payloads, identity or session data, no writes. Claiming and all work then happen as the app
+  runtime in the discovered workspace's scope.
 
 All runtime roles are NOINHERIT, so a mistaken membership grant cannot silently add privileges.
 Retail roles and the retail schema belong to T16 and are never created or granted here.
@@ -29,7 +33,8 @@ APP_MIGRATOR: Final = "policyops_app_migrator"
 APP_RUNTIME: Final = "policyops_app_runtime"
 AUTH_RUNTIME: Final = "policyops_auth_runtime"
 EVAL_RUNTIME: Final = "policyops_eval_runtime"
-RUNTIME_ROLES: Final = (APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME)
+WORKER_DISCOVERY: Final = "policyops_worker_discovery"
+RUNTIME_ROLES: Final = (APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME, WORKER_DISCOVERY)
 ALL_ROLES: Final = (APP_MIGRATOR, *RUNTIME_ROLES)
 
 SCRAM_ITERATIONS: Final = 4096  # PostgreSQL's default scram_iterations

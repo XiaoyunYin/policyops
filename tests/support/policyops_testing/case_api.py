@@ -21,10 +21,15 @@ from pydantic import SecretStr
 
 from policyops.api.app import build_auth_runtime, create_app
 from policyops.api.auth import AuthRuntime
+from policyops.api.runs import StreamSettings, build_runs_runtime
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import transaction
 from policyops.persistence.records import Membership, Workspace
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
+from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, WORKER_DISCOVERY
+from policyops.runtime.clock import DatabaseLeaseClock, FixedLeaseClock, LeaseClock
+from policyops.runtime.outbox import OutboxDispatcher, build_dispatcher
+from policyops.runtime.spec import UNCONFIGURED, RuntimeCatalog
+from policyops.runtime.worker import Worker, build_worker
 from policyops.settings import AuthSettings
 from policyops_contracts.clock import FixedClock
 from policyops_testing import openapi_check
@@ -148,6 +153,32 @@ class CaseApi:
     def case(self, browser: TestClient, case_id: Any) -> Reply:
         return self.get(browser, f"/api/v1/cases/{case_id}", "/api/v1/cases/{case_id}")
 
+    # -- runs (T09) -----------------------------------------------------------------------------------------
+
+    def start_run(self, browser: TestClient, case_id: Any, if_match: str | None, *, key: str | None = None,
+                  json: Any = None) -> Reply:
+        return self.call(browser, "POST", f"/api/v1/cases/{case_id}/runs", "/api/v1/cases/{case_id}/runs",
+                         json={"mode": "workbench"} if json is None else json, key=key or new_key(),
+                         if_match=if_match)
+
+    def run(self, browser: TestClient, run_id: Any) -> Reply:
+        return self.get(browser, f"/api/v1/runs/{run_id}", "/api/v1/runs/{run_id}")
+
+    def cancel_run(self, browser: TestClient, run_id: Any, *, key: str | None = None) -> Reply:
+        return self.call(browser, "POST", f"/api/v1/runs/{run_id}/cancel", "/api/v1/runs/{run_id}/cancel",
+                         key=key or new_key())
+
+    def worker(self, catalog: RuntimeCatalog, *, database_clock: bool = False, **options: Any) -> Worker:
+        clock: LeaseClock = DatabaseLeaseClock() if database_clock else FixedLeaseClock(self.clock)
+        return build_worker(env=SETTINGS.env, app_engine=self.runtime.app_engine,
+                            discovery_engine=self.db.engine(WORKER_DISCOVERY, pool_size=4), clock=clock,
+                            catalog=catalog, **options)
+
+    def dispatcher(self, *, database_clock: bool = False) -> OutboxDispatcher:
+        clock: LeaseClock = DatabaseLeaseClock() if database_clock else FixedLeaseClock(self.clock)
+        return build_dispatcher(env=SETTINGS.env, app_engine=self.runtime.app_engine,
+                                discovery_engine=self.db.engine(WORKER_DISCOVERY, pool_size=4), clock=clock)
+
     # -- inspection (superuser; bypasses RLS) ---------------------------------------------------------------
 
     def scalar(self, sql: str, *params: Any) -> Any:
@@ -164,14 +195,23 @@ def new_key() -> str:
     return f"key-{uuid4().hex}"
 
 
-def build(db: AppDatabase, *, pool_size: int = 12,
-          wrap: Callable[[Any], Any] | None = None) -> CaseApi:
+def build(db: AppDatabase, *, pool_size: int = 12, wrap: Callable[[Any], Any] | None = None,
+          catalog: RuntimeCatalog | None = None, database_clock: bool = False,
+          stream: StreamSettings | None = None) -> CaseApi:
+    """The served app. With `catalog`, the run API uses it (test-only specs are allowed: env is "test") and the
+    controlled clock as lease clock, or the database clock with `database_clock`; without it, the production
+    default (database clock, no installed runtime)."""
     clock = FixedClock(START)
     fake = FakeIssuer(redirect_uri=SETTINGS.redirect_uri)
+    app_engine = db.engine(APP_RUNTIME, pool_size=pool_size)
     runtime = build_auth_runtime(SETTINGS, auth_engine=db.engine(AUTH_RUNTIME, pool_size=pool_size),
-                                 app_engine=db.engine(APP_RUNTIME, pool_size=pool_size), clock=clock,
-                                 oidc_transport=fake.transport)
-    app = create_app(runtime)
+                                 app_engine=app_engine, clock=clock, oidc_transport=fake.transport)
+    runs = None
+    if catalog is not None or stream is not None:
+        lease_clock: LeaseClock = DatabaseLeaseClock() if database_clock else FixedLeaseClock(clock)
+        runs = build_runs_runtime(env=SETTINGS.env, app_engine=app_engine, ledger_clock=clock, clock=lease_clock,
+                                  catalog=catalog or UNCONFIGURED, stream=stream)
+    app = create_app(runtime, runs)
     return CaseApi(db, clock, fake, runtime, wrap(app) if wrap else app)
 
 

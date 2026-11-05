@@ -135,6 +135,9 @@ def check_response(response: Reply, method: str, template: str) -> str:
     if content is None:
         if response.content:
             raise SchemaMismatch(f"{method} {template} {response.status_code}: undocumented body")
+    elif "text/event-stream" in content:
+        if not str(response.headers.get("content-type", "")).startswith("text/event-stream"):
+            raise SchemaMismatch(f"{method} {template} {response.status_code}: not text/event-stream")
     else:
         if response.headers.get("content-type") != "application/json":
             raise SchemaMismatch(f"{method} {template} {response.status_code}: not application/json")

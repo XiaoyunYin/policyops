@@ -6,7 +6,7 @@ The database stores records and enforces relational invariants. The [authenticat
 
 ## Roles
 
-Bootstrap creates four cluster roles. All of them are `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, the runtime roles are also `NOINHERIT`, and none may be a member of another role.
+Bootstrap creates five cluster roles. All of them are `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, the runtime roles are also `NOINHERIT`, and none may be a member of another role.
 
 | Role | Purpose | Access |
 |---|---|---|
@@ -14,6 +14,7 @@ Bootstrap creates four cluster roles. All of them are `NOSUPERUSER NOCREATEDB NO
 | `policyops_app_runtime` | API and worker | Tenant tables in `app`, plus its current workspace and memberships in `identity`; `USAGE` on `checkpoints` |
 | `policyops_auth_runtime` | Trusted authentication service | `identity` only: workspaces, principals, memberships, sessions, login requests |
 | `policyops_eval_runtime` | Evaluation recording | `evaluation` only |
+| `policyops_worker_discovery` | Finds work for the worker and outbox dispatcher (T09) | Column `SELECT` on job (`id, workspace_id, state, available_at, lease_expires_at, deadline_at`) and outbox (`id, workspace_id, topic, created_at, delivered_at`) scheduling metadata through read-only policies; no payloads, identity or session data, and no writes. Claims and work then run as the app runtime |
 
 - **Auth role.** Pre-workspace identity lookups (principal by issuer and subject, a principal's memberships across workspaces) need rows that no workspace scope can select. A separate, narrowly granted auth role does this, rather than a `SECURITY DEFINER` function. It sees all identity rows by design: that service is the trusted boundary, and it has no business, evaluation or retail access.
 - **Passwords.** These are sent to the server as SCRAM-SHA-256 verifiers computed on the client. The plaintext never reaches the server, its logs or `pg_stat_activity`. A test checks that the verifier is byte-identical to one PostgreSQL computes itself.
@@ -64,6 +65,12 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
   - The database compares stored digest and sequence fields between rows. It does not recompute a hash from a message body: the typed repository computes `text_sha256` when it appends a message, and the SQL check on that column validates only its format.
 - **One per proposal version.** Each proposal version has at most one presentation, one consent and one terminal decision.
 - **Optimistic versions.** Versions are integers ≥ 1, and updates check the expected version (`StaleVersion`).
+- **Runs and jobs (`0005`).**
+  - One active workbench run per case, by a partial unique index.
+  - `0 ≤ event_retention_floor ≤ event_highwater`; sequences are allocated from the high-water mark.
+  - A job is leased exactly when it has a claim ID (and an owner and expiry).
+  - The runtime can update the run generation and high-water mark, but not the floor.
+  - Run-operation ledger rows link to their run through `(workspace_id, case_id, run_id)`.
 - **Idempotency keys.** The database makes these keys unique: tool executions (`operation_id`), jobs and outbox entries (dedupe keys), and usage events (provider request IDs). The repositories add payload comparison where they exist; reusing a key with a different payload raises `IdempotencyConflict` and keeps the original, never last-writer-wins.
   - Tool executions compare the approval and the argument digest.
   - Jobs compare an immutable request fingerprint: the SHA-256 of every requested field except the row ID and creation time. It is stored in `request_sha256`, which the runtime cannot update. The same request therefore still replays after a worker has changed the job's state, attempts or `available_at`.
@@ -80,17 +87,18 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Migrations
 
-The chain lives in `persistence/migrations/` and has four revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), and `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
+The chain lives in `persistence/migrations/` and has five revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index), and `0005` (run initiator, fencing generation, event high-water mark and retention floor, job claim IDs and error codes, run ledger operations, the discovery role's grants). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
 
 - **Precondition.** `upgrade` and `downgrade` need a connection with no open transaction. Otherwise Alembic would run all revisions inside the caller's transaction, so they raise `MigrationPreconditionError` before doing anything, and never commit or roll back the caller's work. `current` leaves no transaction behind.
 - **Upgrade.** Each revision runs in its own transaction. A failing revision rolls back completely and the version stays at the previous revision. A test makes revision `0002` fail midway and checks that.
 - **Previous-revision upgrade.** A database at `0001` with imported synthetic data upgrades to head with every existing row unchanged.
 - **Authentication upgrade.** Revision `0003` also upgrades a populated `0002` database. Existing sessions receive NULL idle/CSRF fields and require a new login; the auth service rejects them. New login requests have a bounded expiry and single-use consumption state, with access restricted to the auth role.
+- **Run upgrade.** Revision `0005` upgrades a populated `0004` database in place. It backfills each run's event high-water mark from its stored events and leaves legacy runs without an initiator, and the worker refuses to run those. The backfill lifts FORCE RLS inside the revision's transaction and restores it. Data that violates the new rules (two active workbench runs on one case, or a leased job, which predates claim IDs) refuses the upgrade without being rewritten. The revision needs the discovery role, so run bootstrap first.
 - **Case API upgrade.** Revision `0004` upgrades a populated `0003` database in place. It adds a `(workspace_id, case_id, id)` unique key on messages for the ledger's message link, the ledger table and the queue index; it changes no existing row.
 - **Downgrade.**
   - Dropping a revision's tables or columns loses their data, so a downgrade can be lossy.
-  - It is refused (`DataLossRefused`) while the affected tables hold rows, unless `allow_data_loss=True` is passed explicitly. For `0003`, either login-request or session rows trigger refusal; an explicitly allowed downgrade drops the added session fields while retaining session rows. For `0004`, ledger rows trigger refusal (dropping them would break replay of committed writes); without them the downgrade removes exactly the ledger, the index and the message key.
-  - The refusal rolls back the check's temporary `NO FORCE ROW LEVEL SECURITY`.
+  - It is refused (`DataLossRefused`) while the affected tables hold rows, unless `allow_data_loss=True` is passed explicitly. For `0003`, either login-request or session rows trigger refusal; an explicitly allowed downgrade drops the added session fields while retaining session rows. For `0004`, ledger rows trigger refusal (dropping them would break replay of committed writes); without them the downgrade removes exactly the ledger, the index and the message key. For `0005`, runs or jobs trigger refusal (their fencing, initiator and high-water fields would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the `run.start` / `run.cancel` ledger rows, because the restored `0004` operation CHECK cannot hold them; case-ledger rows are kept. Their replays are lost: a later retry with such a key is treated as a new request. Re-upgrading to `0005` afterwards backfills each run's high-water mark from its remaining events, but cannot restore the generation (0 again), the initiator (NULL, so the worker will not execute those runs) or the deleted ledger rows.
+  - The check lifts `FORCE ROW LEVEL SECURITY` temporarily, because the migrator sees no tenant rows otherwise. It then restores each table's previous state, both when it refuses (the rollback) and when it passes. Before T09 a passing check left the table unforced, which in practice meant `identity.sessions` after an empty `0003` downgrade. A regression test covers forced and unforced tables.
 - **Restore.** A restore is a separate operation, not a downgrade. A tested path dumps with `pg_dump -Fc` and restores with `pg_restore --single-transaction` into a separate, freshly provisioned database, as the superuser. It preserves:
   - row counts;
   - constraints, policies and forced RLS;

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import itertools
 import json
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -27,6 +28,7 @@ from policyops.domain.case_status import TRANSITIONS, CaseStatus, TransitionRefu
 from policyops.persistence import idempotency as idem
 from policyops.services.cases import CaseCursor, decode_cursor, encode_cursor
 from policyops.settings import AuthSettings
+from policyops_contracts.clock import FixedClock
 from policyops_testing.openapi_check import DOCUMENT_PATH
 
 
@@ -159,7 +161,9 @@ def test_committed_openapi_document_matches_a_fresh_export() -> None:
 
 
 def test_export_uses_the_served_route_composition_without_runtime_values() -> None:
-    runtime = AuthRuntime(settings=SETTINGS, service=cast(Any, None), app_engine=cast(Any, None))
+    # Wiring reads only the service's clock (for the default runs runtime); nothing connects or is called.
+    service = cast(Any, SimpleNamespace(clock=FixedClock(datetime(2026, 1, 1, tzinfo=UTC))))
+    runtime = AuthRuntime(settings=SETTINGS, service=service, app_engine=cast(Any, None))
     served = create_app(runtime)
     assert document(served) == document(schema_app())  # the served app documents exactly the exported routes
     assert all(path.startswith(API_PREFIX) for path in json.loads(export())["paths"])
@@ -174,7 +178,7 @@ def test_every_operation_documents_its_enforced_requirements() -> None:
         for method, operation in item.items():
             statuses = set(operation["responses"])
             assert {"400", "413", "500"} <= statuses, (method, path)
-            for status in statuses - {"200", "201", "204", "302", "303"}:
+            for status in statuses - {"200", "201", "202", "204", "302", "303"}:
                 assert operation["responses"][status]["content"]["application/json"]["schema"] == {
                     "$ref": "#/components/schemas/ErrorEnvelope"}, (method, path, status)
             if operation.get("parameters") or "requestBody" in operation:

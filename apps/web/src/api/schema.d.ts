@@ -124,6 +124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Run */
+        post: operations["start_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -150,6 +167,57 @@ export interface paths {
         };
         /** Me */
         get: operations["me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Run */
+        post: operations["cancel_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run Events */
+        get: operations["run_events"];
         put?: never;
         post?: never;
         delete?: never;
@@ -363,6 +431,58 @@ export interface components {
          * @enum {string}
          */
         Role: "analyst" | "reviewer" | "admin" | "auditor";
+        /** RunView */
+        RunView: {
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /** Case Version */
+            case_version: number;
+            /** Config Sha256 */
+            config_sha256: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Deadline At
+             * Format: date-time
+             */
+            deadline_at: string;
+            /** Event Highwater */
+            event_highwater: number;
+            /** Graph Sha256 */
+            graph_sha256: string;
+            /** Initiated By */
+            initiated_by: string | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "workbench" | "evaluation";
+            /** Prompt Sha256 */
+            prompt_sha256: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "waiting_input" | "waiting_approval" | "reconciling" | "succeeded" | "failed" | "cancelled" | "budget_exceeded";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
         /** SelectWorkspaceIn */
         SelectWorkspaceIn: {
             /**
@@ -370,6 +490,14 @@ export interface components {
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /** StartRunIn */
+        StartRunIn: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "workbench";
         };
         /** StatusIn */
         StatusIn: {
@@ -473,7 +601,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The identity provider is unavailable. */
+            /** @description A required service is unavailable: the identity provider, or (run start) no run runtime is installed. */
             503: {
                 headers: {
                     /** @description Session, CSRF or login-binding cookies. */
@@ -544,7 +672,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description The identity provider is unavailable. */
+            /** @description A required service is unavailable: the identity provider, or (run start) no run runtime is installed. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -843,7 +971,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Conflict: stale version, refused status transition, or Idempotency-Key reused for another request. */
+            /** @description Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1037,7 +1165,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Conflict: stale version, refused status transition, or Idempotency-Key reused for another request. */
+            /** @description Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1241,7 +1369,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Conflict: stale version, refused status transition, or Idempotency-Key reused for another request. */
+            /** @description Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1279,6 +1407,133 @@ export interface operations {
             };
             /** @description Unexpected failure (no internals are disclosed). */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    start_run: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key, unique per intended write. A retry with the same key and request replays the original response; the same key with a different request is a 409. */
+                "Idempotency-Key": string;
+                /** @description The strong ETag of the case version this change is based on, for example "3". */
+                "If-Match": string;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunIn"];
+            };
+        };
+        responses: {
+            /** @description Queued (or the replayed original). */
+            202: {
+                headers: {
+                    /** @description Strong ETag of the case version. */
+                    ETag?: string;
+                    /** @description Present and "true" when this is a replay of the original response. */
+                    "Idempotent-Replayed"?: "true";
+                    /** @description URL of the run. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunView"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A required precondition (If-Match) is missing. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A required service is unavailable: the identity provider, or (run start) no run runtime is installed. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1373,6 +1628,294 @@ export interface operations {
             };
             /** @description The request body is larger than 64 KiB. */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run. */
+            200: {
+                headers: {
+                    /** @description Strong ETag of the case version. */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunView"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancel_run: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key, unique per intended write. A retry with the same key and request replays the original response; the same key with a different request is a 409. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run after the request (or the replayed original); a terminal run is unchanged. */
+            200: {
+                headers: {
+                    /** @description Strong ETag of the case version. */
+                    ETag?: string;
+                    /** @description Present and "true" when this is a replay of the original response. */
+                    "Idempotent-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunView"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    run_events: {
+        parameters: {
+            query?: {
+                /** @description Initial position (digits; 0 = from the start). Ignored when Last-Event-ID is sent; only the selected position is validated. */
+                after?: string | null;
+            };
+            header?: {
+                /** @description Reconnect position (the last received event id); takes precedence over `after`. */
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server-sent events: `id: <sequence>`, `event: <payload type>`, `data: <EventEnvelope JSON>` per event (`event: unsupported` with only identifiers for a stored event this version cannot decode); control frames (`: heartbeat`, `event: resync`, `event: reconnect`) have no id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

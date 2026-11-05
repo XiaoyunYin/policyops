@@ -28,7 +28,7 @@ def test_role_passwords_are_never_shown_and_are_validated() -> None:
         RolePassword(APP_RUNTIME, "short")
     with pytest.raises(ValueError, match="not an application role"):
         RolePassword("postgres", SYNTHETIC)
-    assert len(ALL_ROLES) == len(set(ALL_ROLES)) == 4
+    assert len(ALL_ROLES) == len(set(ALL_ROLES)) == 5
 
 
 def test_scram_verifier_format_and_inputs() -> None:
@@ -80,7 +80,7 @@ def test_migrations_avoid_forbidden_constructs(pattern: str) -> None:
 
 
 def test_revisions_are_sequential_and_documented() -> None:
-    assert migrate.revisions() == ["0001", "0002", "0003", "0004"] and migrate.head() == "0004"
+    assert migrate.revisions() == ["0001", "0002", "0003", "0004", "0005"] and migrate.head() == "0005"
     for path in sorted((migrate.MIGRATIONS / "versions").glob("*.py")):
         text = path.read_text(encoding="utf-8")
         assert text.startswith('"""') and "def downgrade() -> None:" in text and "refuse_data_loss" in text, path.name

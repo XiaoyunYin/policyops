@@ -10,7 +10,8 @@ Concurrency: `lock` takes a transaction-scoped advisory lock on the key's scope 
 key), so concurrent requests with the same key serialize. The first commits its mutation and the stored response
 together; later ones then find that record and replay it. A failed or rolled-back attempt stores nothing, so the
 key stays usable. Only successful responses are stored, and they are never updated or expired here. Each record
-links to its case, and a message write to the message of that case, by composite workspace foreign keys.
+links to its case, a message write to the message of that case, and a run write to the run of that case (revision
+0005), by composite workspace foreign keys.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from policyops_contracts.base import WireModel
 from policyops_contracts.scalars import MessageText, PositiveVersion, Sha256Hex, UtcDatetime
 
 
-Operation = Literal["case.create", "case.status", "case.message"]
+Operation = Literal["case.create", "case.status", "case.message", "run.start", "run.cancel"]
 IdempotencyKey = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9._~-]{8,128}$")]
 
 
@@ -54,7 +55,21 @@ class MessageIntent(WireModel):
     text: MessageText
 
 
-Intent = CreateCaseIntent | StatusIntent | MessageIntent
+class StartRunIntent(WireModel):
+    schema_version: Literal["policyops.idempotency-intent/v1"] = "policyops.idempotency-intent/v1"
+    operation: Literal["run.start"] = "run.start"
+    case_id: UUID
+    expected_version: PositiveVersion
+    mode: Literal["workbench"]
+
+
+class CancelRunIntent(WireModel):
+    schema_version: Literal["policyops.idempotency-intent/v1"] = "policyops.idempotency-intent/v1"
+    operation: Literal["run.cancel"] = "run.cancel"
+    run_id: UUID
+
+
+Intent = CreateCaseIntent | StatusIntent | MessageIntent | StartRunIntent | CancelRunIntent
 
 
 def intent_sha256(intent: Intent) -> str:
@@ -66,6 +81,7 @@ class StoredResponse(WireModel):
     request_sha256: Sha256Hex
     case_id: UUID
     message_id: UUID | None
+    run_id: UUID | None
     status: Annotated[int, Field(ge=200, le=299)]
     body_json: str
     etag: str | None
@@ -79,6 +95,7 @@ class NewRecord(WireModel):
     request_sha256: Sha256Hex
     case_id: UUID
     message_id: UUID | None
+    run_id: UUID | None
     status: Annotated[int, Field(ge=200, le=299)]
     body_json: str
     etag: str | None
@@ -93,20 +110,23 @@ def lock(connection: Connection, *, workspace_id: UUID, principal_id: UUID, oper
 
 def find(connection: Connection, *, principal_id: UUID, operation: Operation, key: str) -> StoredResponse | None:
     row = connection.execute(text(
-        "SELECT request_sha256, case_id, message_id, response_status, response_body::text AS body, response_etag "
+        "SELECT request_sha256, case_id, message_id, run_id, response_status, response_body::text AS body, "
+        "response_etag "
         "FROM app.request_idempotency WHERE principal_id = :p AND operation = :op AND idempotency_key = :k"),
         {"p": principal_id, "op": operation, "k": key}).mappings().first()
     if row is None:
         return None
     return StoredResponse(request_sha256=row["request_sha256"], case_id=row["case_id"], message_id=row["message_id"],
-                          status=row["response_status"], body_json=row["body"], etag=row["response_etag"])
+                          run_id=row["run_id"], status=row["response_status"], body_json=row["body"],
+                          etag=row["response_etag"])
 
 
 def store(connection: Connection, record: NewRecord) -> None:
     connection.execute(text(
         "INSERT INTO app.request_idempotency (workspace_id, principal_id, operation, idempotency_key, request_sha256, "
-        "case_id, message_id, response_status, response_body, response_etag, created_at) VALUES (:workspace_id, "
-        ":principal_id, :operation, :idempotency_key, :request_sha256, :case_id, :message_id, :status, "
+        "case_id, message_id, run_id, response_status, response_body, response_etag, created_at) VALUES "
+        "(:workspace_id, :principal_id, :operation, :idempotency_key, :request_sha256, :case_id, :message_id, :run_id, "
+        ":status, "
         "CAST(:body_json AS jsonb), :etag, :created_at)"), record.model_dump())
 
 

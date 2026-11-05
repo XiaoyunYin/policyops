@@ -10,7 +10,15 @@ from typing import Any
 
 import pytest
 
-from policyops.persistence.roles import ALL_ROLES, APP_MIGRATOR, APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME, RUNTIME_ROLES
+from policyops.persistence.roles import (
+    ALL_ROLES,
+    APP_MIGRATOR,
+    APP_RUNTIME,
+    AUTH_RUNTIME,
+    EVAL_RUNTIME,
+    RUNTIME_ROLES,
+    WORKER_DISCOVERY,
+)
 from policyops_testing.app_database import AppDatabase
 
 
@@ -28,7 +36,8 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.case_messages": (SI, set()),
         "app.documents": (SI, set()),
         "app.document_versions": (SI, {"status", "effective_to"}),
-        "app.runs": (SI, {"state", "model_calls", "tool_calls", "updated_at", "version"}),
+        "app.runs": (SI, {"state", "model_calls", "tool_calls", "updated_at", "version", "generation",
+                          "event_highwater"}),
         "app.run_events": (SI, set()),
         "app.action_proposals": (SI, {"status", "presented_at"}),
         "app.proposal_presentations": (SI, set()),
@@ -36,7 +45,7 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.approval_decisions": (SI, set()),
         "app.tool_executions": (SI, {"state", "attempts", "receipt", "updated_at", "version"}),
         "app.jobs": (SI, {"state", "lease_owner", "lease_expires_at", "attempts", "available_at", "updated_at",
-                          "version"}),
+                          "version", "claim_id", "last_error_code"}),
         "app.outbox_events": (SI, {"delivered_at"}),
         "app.audit_events": (SI, set()),
         "app.index_generations": (SI, {"status", "ready_at"}),
@@ -58,9 +67,17 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "evaluation.evaluation_runs": (SI, {"status", "started_at", "finished_at", "total_cost_usd", "version"}),
         "evaluation.evaluation_trials": (SI, set()),
     },
+    WORKER_DISCOVERY: {},  # no table-level privilege at all; column SELECT only (below)
+}
+# role -> table -> columns readable through column-level SELECT grants without a table-level SELECT (T09).
+COLUMN_SELECT: dict[str, dict[str, set[str]]] = {
+    WORKER_DISCOVERY: {
+        "app.jobs": {"id", "workspace_id", "state", "available_at", "lease_expires_at", "deadline_at"},
+        "app.outbox_events": {"id", "workspace_id", "topic", "created_at", "delivered_at"},
+    },
 }
 SCHEMA_USAGE = {APP_RUNTIME: {"identity", "app", "checkpoints", "public"}, AUTH_RUNTIME: {"identity", "public"},
-                EVAL_RUNTIME: {"evaluation", "public"}}
+                EVAL_RUNTIME: {"evaluation", "public"}, WORKER_DISCOVERY: {"app", "public"}}
 SCHEMAS = ("identity", "app", "evaluation", "checkpoints", "public")
 
 
@@ -91,9 +108,13 @@ def test_table_and_column_privileges_match_the_matrix_exactly(shared_db: AppData
                            if check("SELECT has_table_privilege(%s, %s, %s)", (role, table, privilege))}
                 updatable = {column for column in columns
                              if check("SELECT has_column_privilege(%s, %s, %s, 'UPDATE')", (role, table, column))}
+                selectable = set() if "SELECT" in granted else {
+                    column for column in columns
+                    if check("SELECT has_column_privilege(%s, %s, %s, 'SELECT')", (role, table, column))}
                 expected_table, expected_columns = EXPECTED[role].get(table, (set(), set()))
-                if (granted, updatable) != (expected_table, expected_columns):
-                    problems.append((role, table, sorted(granted), sorted(updatable)))
+                expected_select = COLUMN_SELECT.get(role, {}).get(table, set())
+                if (granted, updatable, selectable) != (expected_table, expected_columns, expected_select):
+                    problems.append((role, table, sorted(granted), sorted(updatable), sorted(selectable)))
     assert problems == []
 
 

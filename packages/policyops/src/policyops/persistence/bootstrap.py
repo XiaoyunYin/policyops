@@ -3,7 +3,7 @@
 This is the only step that needs a superuser. It is idempotent and has three parts, usable separately (a restore
 target needs only the database part before `pg_restore`):
 
-1. `provision_roles`: create or re-assert the four application roles with their attributes and passwords
+1. `provision_roles`: create or re-assert the five application roles with their attributes and passwords
    (sent as SCRAM verifiers, never plaintext).
 2. `provision_database`: create the database owned by the migrator, revoke PUBLIC access and grant CONNECT to the
    runtime roles.

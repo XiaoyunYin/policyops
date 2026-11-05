@@ -11,7 +11,7 @@ meaning changes; consumers reject versions they do not know.
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from policyops_contracts.base import WireModel
 from policyops_contracts.errors import ErrorCode
@@ -114,3 +114,12 @@ class EventEnvelope(WireModel):
     event_version: Literal[1] = 1
     occurred_at: UtcDatetime
     payload: EventPayload
+
+    @field_validator("event_version", mode="before")
+    @classmethod
+    def _integer_version(cls, value: object) -> object:
+        # Literal matching would accept true and 1.0 for 1 (measured even in strict mode): only an integer is a
+        # version. This enforces the intended contract; valid integer 1 is unchanged on the wire.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("event_version must be an integer")
+        return value

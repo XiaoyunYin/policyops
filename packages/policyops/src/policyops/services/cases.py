@@ -1,16 +1,9 @@
 """Case and message operations behind the HTTP API (T08): reads, and three idempotent writes.
 
-Every write runs in one short transaction in the authorized workspace's scope:
-
-1. lock the idempotency key's scope. After that (possibly contended) wait, recheck the principal's current role
-   for the action and, for writes naming a case, that the case is visible in this workspace (404 otherwise), so a
-   revoked member gets no replay and a foreign case ID stays hidden;
-2. look the key up. The same intent replays the ORIGINAL stored response (status, body, ETag), whatever happened
-   to the case since; a different intent for the key conflicts (409). This happens before any version check, so
-   a retried, already-committed write with its old precondition replays instead of failing as stale;
-3. otherwise lock the case row (status and message writes), recheck the role again after that wait, check the
-   strong `If-Match` version, mutate, append one actor-attributed audit row and store the response.
-   All of it commits or rolls back together; failures store nothing, so the key can be retried.
+Every write takes the shared idempotent path (`policyops.services.writes.idempotent_write`: key lock, role recheck,
+case visibility, replay or 409, then the mutation and the stored response in one transaction). Status and message
+writes then lock the case row, recheck the role again after that wait, check the strong `If-Match` version, mutate
+and append one actor-attributed audit row.
 
 A status change to the current status is a no-op: no version change and no audit row (the response is still
 recorded for the key). Appending a message advances the case version under the same lock as sequence allocation.
@@ -24,20 +17,20 @@ import binascii
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-import json
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 from sqlalchemy import Connection, Engine
 
-from policyops.auth.service import AuthError, Authorized, forbidden
+from policyops.auth.service import AuthError, Authorized
 from policyops.domain.case_status import CaseStatus, TransitionRefused, plan_transition
-from policyops.domain.roles import Action, Role, is_allowed
+from policyops.domain.roles import Action
 from policyops.persistence import idempotency as idem
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import workspace_transaction
-from policyops.persistence.records import AuditEvent, CaseRecord, NewCase
+from policyops.persistence.records import CaseRecord, NewCase
+from policyops.services.writes import WriteResult, audit, idempotent_write, not_found, recheck
 from policyops_contracts.base import WireModel
 from policyops_contracts.clock import Clock
 from policyops_contracts.consent import CaseMessage, MessageSource
@@ -57,10 +50,6 @@ SOURCE_ACTION: dict[str, Action] = {"staff_note": Action.POST_STAFF_NOTE,
 
 def etag(version: int) -> str:
     return f'"{version}"'
-
-
-def not_found(what: str = "case") -> AuthError:
-    return AuthError(404, ErrorCode.NOT_FOUND, f"No such {what}.", f"api.{what}_not_found")
 
 
 def invalid(detail: str, rule_id: str) -> AuthError:
@@ -115,16 +104,6 @@ def message_view(message: CaseMessage) -> MessageView:
     return MessageView(message_id=message.message_id, case_id=message.scope.case_id, sequence=message.sequence,
                        source=message.source, entered_by=message.entered_by, text=message.text,
                        text_sha256=message.text_sha256, created_at=message.created_at)
-
-
-@dataclass(frozen=True)
-class WriteResult:
-    status: int
-    body: dict[str, Any]
-    etag: str | None
-    case_id: UUID
-    message_id: UUID | None
-    replayed: bool
 
 
 # -- cursors (untrusted pagination data, never an authorization token) ---------------------------------------
@@ -202,43 +181,20 @@ class CaseService:
 
     def _write(self, authorized: Authorized, *, key: str, intent: idem.Intent, action: Action,
                target_case: UUID | None, mutate: Callable[[Connection], WriteResult]) -> WriteResult:
-        operation, digest = intent.operation, idem.intent_sha256(intent)
-        principal = authorized.session.principal_id
-        with workspace_transaction(self.app_engine, authorized.workspace_id) as connection:
-            idem.lock(connection, workspace_id=authorized.workspace_id, principal_id=principal,
-                      operation=operation, key=key)
-            self._recheck(connection, authorized, action)  # after waiting for the key lock; before any replay
-            if target_case is not None and repo.get_case(connection, target_case) is None:
-                raise not_found()
-            stored = idem.find(connection, principal_id=principal, operation=operation, key=key)
-            if stored is not None:
-                if stored.request_sha256 != digest:
-                    raise AuthError(409, ErrorCode.CONFLICT, "This Idempotency-Key was used for a different "
-                                    "request.", "api.idempotency_mismatch")
-                return WriteResult(status=stored.status, body=idem.body(stored), etag=stored.etag,
-                                   case_id=stored.case_id, message_id=stored.message_id, replayed=True)
-            result = mutate(connection)
-            idem.store(connection, idem.NewRecord(
-                workspace_id=authorized.workspace_id, principal_id=principal, operation=operation,
-                idempotency_key=key, request_sha256=digest, case_id=result.case_id, message_id=result.message_id,
-                status=result.status, body_json=json.dumps(result.body, sort_keys=True), etag=result.etag,
-                created_at=self.clock.now()))
-        return result
+        def visible(connection: Connection) -> bool:
+            return repo.get_case(connection, target_case) is not None  # type: ignore[arg-type]
+
+        return idempotent_write(self.app_engine, authorized, key=key, intent=intent, action=action,
+                                visible=visible if target_case is not None else None, missing="case",
+                                mutate=mutate, now=lambda _connection: self.clock.now())
 
     def _recheck(self, connection: Connection, authorized: Authorized, action: Action) -> None:
-        roles = frozenset(Role(name) for name in repo.scoped_roles(connection, authorized.session.principal_id))
-        if not roles:
-            raise forbidden("You are not a member of this workspace.", "auth.membership")
-        if not is_allowed(roles, action):
-            raise forbidden("Your role does not allow this action.", "auth.role")
+        recheck(connection, authorized, action)
 
     def _audit(self, connection: Connection, authorized: Authorized, *, action: str, target_type: str,
                target_id: UUID, before: str | None, after: str | None) -> None:
-        repo.append_audit(connection, AuditEvent(
-            id=uuid4(), workspace_id=authorized.workspace_id, actor_kind="principal",
-            actor_principal_id=authorized.session.principal_id, action=action, target_type=target_type,
-            target_id=target_id, before_sha256=before, after_sha256=after, correlation_id=uuid4(),
-            occurred_at=self.clock.now()))
+        audit(connection, authorized, action=action, target_type=target_type, target_id=target_id, before=before,
+              after=after, occurred_at=self.clock.now())
 
     def create_case(self, authorized: Authorized, *, key: str) -> WriteResult:
         def mutate(connection: Connection) -> WriteResult:

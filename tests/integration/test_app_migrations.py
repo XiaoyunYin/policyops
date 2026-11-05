@@ -138,6 +138,8 @@ def test_lossy_downgrade_is_refused_unless_explicitly_allowed(new_app_database: 
             provider_request_id="req-1", uncached_input_tokens=10, cache_read_tokens=0, cache_write_tokens=0,
             output_tokens=5, reasoning_tokens=0, price_revision="synthetic-1", cost_status="known",
             cost_usd=Decimal("0.000000000000000001"), created_at=world.now))
+    # The synthetic world's run carries 0005's fencing/high-water fields, so leaving 0005 is an explicit, accepted loss.
+    database.downgrade("0004", allow_data_loss=True)
     database.downgrade(second)  # later revisions hold no rows here; each downgrade step commits on its own
     with pytest.raises(DataLossRefused, match=r"app\.usage_events"):
         database.downgrade(first)
@@ -322,7 +324,7 @@ def test_0004_upgrades_populated_data_and_guards_the_response_ledger(new_app_dat
     Downgrading is refused while ledger rows exist; without them it removes exactly what 0004 added."""
     import psycopg
 
-    *_, third, fourth = migrate.revisions()
+    _, _, third, fourth, *_ = migrate.revisions()
     database = new_app_database("idempotency_upgrade", revision=third)
     import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
     world = World()
@@ -382,5 +384,5 @@ def test_0004_upgrades_populated_data_and_guards_the_response_ledger(new_app_dat
         assert conn.execute("SELECT count(*) FROM pg_constraint WHERE conname = 'case_messages_case_unique'"
                             ).fetchone() == (0,)
     assert database.current() == third and _counts(database)["app.case_messages"] == before["app.case_messages"]
-    database.upgrade()
+    database.upgrade(fourth)
     assert database.current() == fourth

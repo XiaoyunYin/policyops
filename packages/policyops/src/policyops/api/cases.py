@@ -49,10 +49,10 @@ from policyops.services.cases import (
     MessagePage,
     MessagePosted,
     StaffMessageSource,
-    WriteResult,
     etag,
     invalid,
 )
+from policyops.services.writes import WriteResult
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.scalars import MessageText
 

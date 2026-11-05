@@ -423,6 +423,120 @@
         "title": "Role",
         "type": "string"
       },
+      "RunView": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "format": "uuid",
+            "title": "Case Id",
+            "type": "string"
+          },
+          "case_version": {
+            "maximum": 9007199254740992.0,
+            "minimum": 1.0,
+            "title": "Case Version",
+            "type": "integer"
+          },
+          "config_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Config Sha256",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deadline_at": {
+            "format": "date-time",
+            "title": "Deadline At",
+            "type": "string"
+          },
+          "event_highwater": {
+            "title": "Event Highwater",
+            "type": "integer"
+          },
+          "graph_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Graph Sha256",
+            "type": "string"
+          },
+          "initiated_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initiated By"
+          },
+          "mode": {
+            "enum": [
+              "workbench",
+              "evaluation"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "prompt_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Prompt Sha256",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_input",
+              "waiting_approval",
+              "reconciling",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "budget_exceeded"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "maximum": 9007199254740992.0,
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "case_id",
+          "case_version",
+          "mode",
+          "state",
+          "initiated_by",
+          "graph_sha256",
+          "prompt_sha256",
+          "config_sha256",
+          "event_highwater",
+          "created_at",
+          "updated_at",
+          "deadline_at",
+          "version"
+        ],
+        "title": "RunView",
+        "type": "object"
+      },
       "SelectWorkspaceIn": {
         "additionalProperties": false,
         "properties": {
@@ -436,6 +550,21 @@
           "workspace_id"
         ],
         "title": "SelectWorkspaceIn",
+        "type": "object"
+      },
+      "StartRunIn": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "const": "workbench",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "StartRunIn",
         "type": "object"
       },
       "StatusIn": {
@@ -650,7 +779,7 @@
                 }
               }
             },
-            "description": "The identity provider is unavailable.",
+            "description": "A required service is unavailable: the identity provider, or (run start) no run runtime is installed.",
             "headers": {
               "Set-Cookie": {
                 "description": "Session, CSRF or login-binding cookies.",
@@ -745,7 +874,7 @@
                 }
               }
             },
-            "description": "The identity provider is unavailable."
+            "description": "A required service is unavailable: the identity provider, or (run start) no run runtime is installed."
           }
         },
         "summary": "Login"
@@ -1157,7 +1286,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, or Idempotency-Key reused for another request."
+            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -1431,7 +1560,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, or Idempotency-Key reused for another request."
+            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -1731,7 +1860,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, or Idempotency-Key reused for another request."
+            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -1781,6 +1910,195 @@
           }
         ],
         "summary": "Post Message"
+      }
+    },
+    "/api/v1/cases/{case_id}/runs": {
+      "post": {
+        "operationId": "start_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Client-chosen key, unique per intended write. A retry with the same key and request replays the original response; the same key with a different request is a 409.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9._~-]{8,128}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The strong ETag of the case version this change is based on, for example \"3\".",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "pattern": "^\"[1-9][0-9]{0,15}\"$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            },
+            "description": "Queued (or the replayed original).",
+            "headers": {
+              "ETag": {
+                "description": "Strong ETag of the case version.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Idempotent-Replayed": {
+                "description": "Present and \"true\" when this is a replay of the original response.",
+                "schema": {
+                  "enum": [
+                    "true"
+                  ],
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "URL of the run.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "A required precondition (If-Match) is missing."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "A required service is unavailable: the identity provider, or (run start) no run runtime is installed."
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ],
+        "summary": "Start Run"
       }
     },
     "/api/v1/health/live": {
@@ -1892,6 +2210,405 @@
           }
         ],
         "summary": "Me"
+      }
+    },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            },
+            "description": "The run.",
+            "headers": {
+              "ETag": {
+                "description": "Strong ETag of the case version.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Get Run"
+      }
+    },
+    "/api/v1/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Client-chosen key, unique per intended write. A retry with the same key and request replays the original response; the same key with a different request is a 409.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9._~-]{8,128}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            },
+            "description": "The run after the request (or the replayed original); a terminal run is unchanged.",
+            "headers": {
+              "ETag": {
+                "description": "Strong ETag of the case version.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Idempotent-Replayed": {
+                "description": "Present and \"true\" when this is a replay of the original response.",
+                "schema": {
+                  "enum": [
+                    "true"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          }
+        },
+        "security": [
+          {
+            "csrf": [],
+            "session": []
+          }
+        ],
+        "summary": "Cancel Run"
+      }
+    },
+    "/api/v1/runs/{run_id}/events": {
+      "get": {
+        "operationId": "run_events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Initial position (digits; 0 = from the start). Ignored when Last-Event-ID is sent; only the selected position is validated.",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Initial position (digits; 0 = from the start). Ignored when Last-Event-ID is sent; only the selected position is validated.",
+              "title": "After"
+            }
+          },
+          {
+            "description": "Reconnect position (the last received event id); takes precedence over `after`.",
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "pattern": "^[0-9]{1,19}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-sent events: `id: <sequence>`, `event: <payload type>`, `data: <EventEnvelope JSON>` per event (`event: unsupported` with only identifiers for a stored event this version cannot decode); control frames (`: heartbeat`, `event: resync`, `event: reconnect`) have no id."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Run Events"
       }
     },
     "/api/v1/workspace/members": {

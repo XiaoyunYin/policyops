@@ -302,10 +302,15 @@ CONSTRAINT_CASES = [
     ("cases_version_positive", "UPDATE app.cases SET version = 0 WHERE id = :c"),
     ("runs_state_values", "UPDATE app.runs SET state = 'paused' WHERE id = :r"),
     ("runs_model_calls_bounds", "UPDATE app.runs SET model_calls = -1 WHERE id = :r"),
+    # A leased job with a claim (0005) but no lease owner/expiry: only the lease rule is violated.
     ("jobs_lease_state", "INSERT INTO app.jobs (id, workspace_id, run_id, dedupe_key, request_sha256, kind, "
-     "run_generation, state, max_attempts, available_at, deadline_at, created_at, updated_at) VALUES "
-     "(gen_random_uuid(), :w, :r, gen_random_uuid()::text, repeat('a', 64), 'x', 0, 'leased', 1, now(), "
-     "now() + interval '1 hour', now(), now())"),
+     "run_generation, state, claim_id, max_attempts, available_at, deadline_at, created_at, updated_at) VALUES "
+     "(gen_random_uuid(), :w, :r, gen_random_uuid()::text, repeat('a', 64), 'x', 0, 'leased', gen_random_uuid(), 1, "
+     "now(), now() + interval '1 hour', now(), now())"),
+    ("jobs_claim_state", "INSERT INTO app.jobs (id, workspace_id, run_id, dedupe_key, request_sha256, kind, "
+     "run_generation, state, lease_owner, lease_expires_at, max_attempts, available_at, deadline_at, created_at, "
+     "updated_at) VALUES (gen_random_uuid(), :w, :r, gen_random_uuid()::text, repeat('a', 64), 'x', 0, 'leased', "
+     "gen_random_uuid(), now() + interval '1 minute', 1, now(), now() + interval '1 hour', now(), now())"),
     ("usage_events_reasoning_within_output", "INSERT INTO app.usage_events (id, workspace_id, actor, provider, "
      "model, provider_request_id, uncached_input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, "
      "reasoning_tokens, price_revision, cost_status, cost_usd, created_at) VALUES (gen_random_uuid(), :w, 'agent', "

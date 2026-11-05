@@ -118,10 +118,29 @@ class OwnedDex:
             if run.returncode == 0:
                 self.container_id = run.stdout.strip()
                 return
-            if "port is already allocated" not in run.stderr:
+            self._remove_failed_create()  # a failed run can leave this run's created container behind
+            # The free port can be taken between choosing and binding it; Docker reports that in two wordings
+            # (Linux: "port is already allocated"; Docker Desktop on Windows: "address already in use").
+            if not any(text in run.stderr for text in ("port is already allocated", "address already in use")):
                 raise DexUnavailable(f"docker run failed: {redaction.redact_text(run.stderr.strip())[-500:]}")
-            _docker("rm", "-f", self.name)  # the failed create left a named container of ours behind
         raise DexUnavailable("no free loopback port after 3 attempts")
+
+    def _remove_failed_create(self) -> None:
+        """A failed `docker run` may still have created the named container. It is removed only if it is exactly
+        this run's (the owner label, this run's label and this name), by its ID through the guarded `_remove`. A
+        foreign or mismatched container under the name (for example the cause of a name conflict) is never
+        touched, and a state that cannot be determined is reported, not assumed."""
+        found = _observe("container", "inspect", "-f", '{{.Id}} {{index .Config.Labels "policyops.owner"}} '
+                         '{{index .Config.Labels "policyops.run"}} {{.Name}}', self.name)
+        if found.returncode != 0:
+            if "No such container" in found.stderr or "No such object" in found.stderr:
+                return  # the failed run created nothing
+            raise CleanupUncertain(f"cannot inspect a container named {self.name}: {found.stderr.strip()[:300]}")
+        fields = found.stdout.split()
+        if len(fields) != 4 or fields[1:] != ["policyops-tests", self.run_id, f"/{self.name}"]:
+            raise DexUnavailable(f"refusing to remove the container named {self.name}: it is not this run's")
+        self.container_id = fields[0]
+        self._remove()
 
     def _remove_secret_files(self) -> None:
         """Remove every owned secret path (generated inputs and the rendered config) and confirm; never silent."""

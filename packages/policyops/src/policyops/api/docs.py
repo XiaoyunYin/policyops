@@ -26,13 +26,14 @@ ERROR_DESCRIPTIONS = {
     401: "No valid session (sign in again).",
     403: "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused.",
     404: "Not found in the selected workspace.",
-    409: "Conflict: stale version, refused status transition, or Idempotency-Key reused for another request.",
+    409: "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an "
+         "already active run, or an event position that is no longer retained.",
     413: "The request body is larger than 64 KiB.",
     422: "The request is not valid: malformed JSON, or a body, path, query or header value that fails "
          "validation (no input is echoed).",
     428: "A required precondition (If-Match) is missing.",
     500: "Unexpected failure (no internals are disclosed).",
-    503: "The identity provider is unavailable.",
+    503: "A required service is unavailable: the identity provider, or (run start) no run runtime is installed.",
 }
 
 IDEMPOTENCY_KEY: dict[str, Any] = {
@@ -69,12 +70,19 @@ SECURITY_SCHEMES: dict[str, Any] = {
 
 def operation(*, session: bool = False, csrf: bool = False, headers: Iterable[dict[str, Any]] = (),
               errors: Iterable[int] = (), success: dict[int, dict[str, Any]] | None = None,
-              error_headers: dict[int, dict[str, Any]] | None = None) -> dict[str, Any]:
+              error_headers: dict[int, dict[str, Any]] | None = None, streaming: bool = False) -> dict[str, Any]:
     """Route-decorator keyword arguments (`responses`, `openapi_extra`) documenting enforced requirements;
-    `error_headers` names response headers some error statuses carry (such as a cookie being cleared)."""
+    `error_headers` names response headers some error statuses carry (such as a cookie being cleared).
+
+    FastAPI documents a `model` under the route's own media type. A `streaming` route (text/event-stream) still
+    answers errors as JSON envelopes, so its errors reference the `ErrorEnvelope` component explicitly."""
     responses: dict[int | str, dict[str, Any]] = {status: dict(entry) for status, entry in (success or {}).items()}
     for status in sorted({*errors, *ALWAYS}):
-        responses[status] = {"model": ErrorEnvelope, "description": ERROR_DESCRIPTIONS[status]}
+        if streaming:
+            responses[status] = {"description": ERROR_DESCRIPTIONS[status], "content": {"application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}}}
+        else:
+            responses[status] = {"model": ErrorEnvelope, "description": ERROR_DESCRIPTIONS[status]}
         if status in (error_headers or {}):
             responses[status]["headers"] = (error_headers or {})[status]
     extra: dict[str, Any] = {}

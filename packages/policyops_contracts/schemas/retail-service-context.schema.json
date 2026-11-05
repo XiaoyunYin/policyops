@@ -1,0 +1,106 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "The signed transport context of one request (HMAC-SHA256 over its canonical JSON). It binds this exact request\n(method, path, the complete body digest), the case scope and a fresh nonce; it is service identity, never staff\napproval or customer consent.",
+  "properties": {
+    "aud": {
+      "const": "retail-simulator",
+      "title": "Aud",
+      "type": "string"
+    },
+    "body_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Body Sha256",
+      "type": "string"
+    },
+    "case_id": {
+      "format": "uuid",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "customer_id": {
+      "maxLength": 64,
+      "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+      "title": "Customer Id",
+      "type": "string"
+    },
+    "exp": {
+      "maximum": 1099511627776,
+      "minimum": 0,
+      "title": "Exp",
+      "type": "integer"
+    },
+    "fixture_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Fixture Sha256",
+      "type": "string"
+    },
+    "iat": {
+      "maximum": 1099511627776,
+      "minimum": 0,
+      "title": "Iat",
+      "type": "integer"
+    },
+    "iss": {
+      "const": "policyops-gateway",
+      "title": "Iss",
+      "type": "string"
+    },
+    "jti": {
+      "format": "uuid",
+      "title": "Jti",
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "GET",
+        "POST",
+        "PUT"
+      ],
+      "title": "Method",
+      "type": "string"
+    },
+    "path": {
+      "maxLength": 200,
+      "pattern": "^/v1/cases/[0-9a-f-]{36}(?:/[a-z]+(?:/[0-9a-f-]{36}(?:/fence)?)?)?$",
+      "title": "Path",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "read",
+        "write"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "tenant_id": {
+      "format": "uuid",
+      "title": "Tenant Id",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.retail-auth/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "v",
+    "iss",
+    "aud",
+    "tenant_id",
+    "case_id",
+    "customer_id",
+    "fixture_sha256",
+    "scope",
+    "method",
+    "path",
+    "body_sha256",
+    "iat",
+    "exp",
+    "jti"
+  ],
+  "title": "ServiceContext",
+  "type": "object"
+}

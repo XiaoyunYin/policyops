@@ -1,0 +1,235 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "Calculate": {
+      "additionalProperties": false,
+      "properties": {
+        "expression": {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[0-9+\\-*/(). ]+$",
+          "title": "Expression",
+          "type": "string"
+        },
+        "tool": {
+          "const": "calculate",
+          "default": "calculate",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "title": "Calculate",
+      "type": "object"
+    },
+    "FindUserIdByEmail": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "maxLength": 254,
+          "pattern": "^[^@\\s]{1,64}@[^@\\s]{1,189}\\.[A-Za-z]{2,}$",
+          "title": "Email",
+          "type": "string"
+        },
+        "tool": {
+          "const": "find_user_id_by_email",
+          "default": "find_user_id_by_email",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "email"
+      ],
+      "title": "FindUserIdByEmail",
+      "type": "object"
+    },
+    "FindUserIdByNameZip": {
+      "additionalProperties": false,
+      "properties": {
+        "first_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "First Name",
+          "type": "string"
+        },
+        "last_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Last Name",
+          "type": "string"
+        },
+        "tool": {
+          "const": "find_user_id_by_name_zip",
+          "default": "find_user_id_by_name_zip",
+          "title": "Tool",
+          "type": "string"
+        },
+        "zip": {
+          "pattern": "^\\d{5}$",
+          "title": "Zip",
+          "type": "string"
+        }
+      },
+      "required": [
+        "first_name",
+        "last_name",
+        "zip"
+      ],
+      "title": "FindUserIdByNameZip",
+      "type": "object"
+    },
+    "GetItemDetails": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "tool": {
+          "const": "get_item_details",
+          "default": "get_item_details",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id"
+      ],
+      "title": "GetItemDetails",
+      "type": "object"
+    },
+    "GetOrderDetails": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "tool": {
+          "const": "get_order_details",
+          "default": "get_order_details",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id"
+      ],
+      "title": "GetOrderDetails",
+      "type": "object"
+    },
+    "GetProductDetails": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Product Id",
+          "type": "string"
+        },
+        "tool": {
+          "const": "get_product_details",
+          "default": "get_product_details",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "product_id"
+      ],
+      "title": "GetProductDetails",
+      "type": "object"
+    },
+    "GetUserDetails": {
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "const": "get_user_details",
+          "default": "get_user_details",
+          "title": "Tool",
+          "type": "string"
+        },
+        "user_id": {
+          "maxLength": 64,
+          "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id"
+      ],
+      "title": "GetUserDetails",
+      "type": "object"
+    },
+    "ListAllProductTypes": {
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "const": "list_all_product_types",
+          "default": "list_all_product_types",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "title": "ListAllProductTypes",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "call": {
+      "discriminator": {
+        "mapping": {
+          "calculate": "#/$defs/Calculate",
+          "find_user_id_by_email": "#/$defs/FindUserIdByEmail",
+          "find_user_id_by_name_zip": "#/$defs/FindUserIdByNameZip",
+          "get_item_details": "#/$defs/GetItemDetails",
+          "get_order_details": "#/$defs/GetOrderDetails",
+          "get_product_details": "#/$defs/GetProductDetails",
+          "get_user_details": "#/$defs/GetUserDetails",
+          "list_all_product_types": "#/$defs/ListAllProductTypes"
+        },
+        "propertyName": "tool"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FindUserIdByEmail"
+        },
+        {
+          "$ref": "#/$defs/FindUserIdByNameZip"
+        },
+        {
+          "$ref": "#/$defs/GetUserDetails"
+        },
+        {
+          "$ref": "#/$defs/GetOrderDetails"
+        },
+        {
+          "$ref": "#/$defs/GetProductDetails"
+        },
+        {
+          "$ref": "#/$defs/GetItemDetails"
+        },
+        {
+          "$ref": "#/$defs/ListAllProductTypes"
+        },
+        {
+          "$ref": "#/$defs/Calculate"
+        }
+      ],
+      "title": "Call"
+    }
+  },
+  "required": [
+    "call"
+  ],
+  "title": "ReadRequest",
+  "type": "object"
+}

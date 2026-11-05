@@ -255,15 +255,23 @@ def test_body_within_the_limit_reaches_the_app_as_one_message() -> None:
     assert sent[0]["status"] == 204 and pulled == 3
 
 
+# Payload markers use letters outside hexadecimal, so they can never occur by chance in the response's generated
+# correlation UUID (a digit marker such as b"123" could, and made this test intermittently fail).
+OVERFLOW_MARKERS = (b"QZXWVU", b"TSRQP")
+
+
 @pytest.mark.parametrize("chunks", [
-    [part(b"12345678901", False)],
-    [part(b"123456", True), part(b"78901", True), part(b"never read", False)],
+    [part(b"QZXWVUTSRQP", False)],
+    [part(b"QZXWVU", True), part(b"TSRQP", True), part(b"never read", False)],
 ])
 def test_overflow_is_refused_without_reading_further_or_calling_the_app(chunks: list[dict[str, Any]]) -> None:
     inner = Inner()
     sent, pulled = _drive(BodyLimit(inner, max_bytes=10), [], chunks)
     assert not inner.called and sent[0]["status"] == 413 and pulled == min(len(chunks), 2)
-    assert b"123" not in b"".join(m.get("body", b"") for m in sent)
+    body = b"".join(m.get("body", b"") for m in sent)
+    # No request bytes echoed in the response: even a 3-byte prefix of either marker (non-hex letters, so never
+    # part of the generated correlation UUID) must be absent.
+    assert not any(marker[:3] in body for marker in OVERFLOW_MARKERS)
 
 
 @pytest.mark.parametrize(("headers", "status"), [

@@ -115,6 +115,47 @@ class World:
         return outcome.session
 
 
+def _retail_service_examples(world: World) -> dict[str, Any]:
+    """A fictional retail-simulator mutation, its committed result and a lookup of an absent operation (T16)."""
+    from policyops_contracts.money import Money
+    from policyops_contracts.retail import ItemChangeLine, ItemsEffect, ModifyPendingOrderItems, ResourceVersion
+    from policyops_contracts.retail_service import (
+        LookupResult,
+        MutationRequest,
+        OperationResult,
+        Receipt,
+        operation_fingerprint,
+    )
+
+    method = "credit_card_0000001"
+    call = ModifyPendingOrderItems(order_id=world.order_id, item_ids=(world.item_a,), new_item_ids=(world.item_c,),
+                                   payment_method_id=method)
+    effect = ItemsEffect(kind="modify_pending_order_items", order_id=world.order_id, changes=(ItemChangeLine(
+        item_id=world.item_a, new_item_id=world.item_c, product_id=world.product,
+        price_before=Money(amount_minor=1999), price_after=Money(amount_minor=3000)),),
+        price_difference=Money(amount_minor=1001), payment_method_id=method, status_before="pending",
+        status_after="pending (item modified)")
+    request = MutationRequest(call=call, expected_effect=effect, intent_sha256="d" * 64, expected_versions=(
+        ResourceVersion(kind="order", resource_id=world.order_id, version=1),
+        ResourceVersion(kind="user", resource_id=world.user_id, version=1),
+        ResourceVersion(kind="product", resource_id=world.product, version=1)))
+    operation = UUID(int=1200)
+    sha = operation_fingerprint(tenant_id=UUID(int=1), case_id=UUID(int=2), customer_id=world.user_id,
+                                fixture_sha256="0" * 64, operation_id=operation, request=request)
+    receipt = Receipt(operation_id=str(operation), operation_sha256=sha, tool=call.tool, actual_effect=effect,
+                      case_version_before=1, case_version_after=2,
+                      resource_versions_after=(ResourceVersion(kind="order", resource_id=world.order_id, version=2),
+                                               ResourceVersion(kind="product", resource_id=world.product,
+                                                               version=1),
+                                               ResourceVersion(kind="user", resource_id=world.user_id, version=1)),
+                      state_sha256_after="e" * 64, committed_at=world.now)
+    return {"retail-service-mutation-request.modify-items": request,
+            "retail-service-operation-result.committed": OperationResult(
+                operation_id=str(operation), operation_sha256=sha, outcome="committed", receipt=receipt,
+                replayed=False),
+            "retail-service-lookup-result.unknown": LookupResult(state="unknown")}
+
+
 def build_examples() -> dict[str, bytes]:
     """Canonical JSON documents for one fictional exchange flow, plus small standalone examples."""
     from policyops.domain.approval_rules import Decided, decide
@@ -193,6 +234,7 @@ def build_examples() -> dict[str, bytes]:
         "agent-step.handoff": MessageStep(text=HANDOFF_MESSAGE),
         "demo-seed": DemoSeed(seed_id="retail-demo-9999", label="Retail demo 9999", domain="retail",
                               upstream_task_id="9999", kind="mutation", allowlist_sha256="0" * 64),
+        **_retail_service_examples(world),
     }
     return {f"{name}.json": (json.dumps(json.loads(model.model_dump_json()), indent=2, sort_keys=True) + "\n").encode()
             for name, model in sorted(documents.items()) if model is not None}

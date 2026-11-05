@@ -1,0 +1,17 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "Make an absent operation permanently not executed. `operation_sha256` is the expected *original* operation\nfingerprint; a later original with that fingerprint replays the fence, any other conflicts.",
+  "properties": {
+    "operation_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Operation Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation_sha256"
+  ],
+  "title": "FenceRequest",
+  "type": "object"
+}

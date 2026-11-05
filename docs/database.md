@@ -157,3 +157,26 @@ and restores the exact FORCE flags. For `0006`, rows in any budget scope or usag
 - **Data migrations.** Future data migrations must set a workspace scope or add an explicit, reviewed policy, because the migrator sees no tenant rows.
 - **Not yet built.** Authorization decisions, membership checks on use, ingestion and retrieval queries are later tasks; the budget ledger has no provider adapter calling it yet (T11/T21). The schema supports them but does not perform them.
 - **Linux.** The POSIX/Linux run of the PostgreSQL tests (the CI `postgres` job) has not been executed.
+
+
+## Retail schema
+
+The `retail` schema belongs to T16 and has its own Alembic chain (`evals/migrations/retail`, version table
+`retail.alembic_version`) and roles, provisioned by `policyops-retail-simulator bootstrap` on a superuser
+connection: `retail_migrator` owns the schema, `retail_runtime` has only the grants below. Both are NOSUPERUSER,
+NOBYPASSRLS and members of nothing; PUBLIC has no access to `retail`, the application roles have none, and the
+retail roles have none outside it (`bootstrap.check_isolation` checks both directions).
+
+| Revision | Table | Runtime grants | Notes |
+|---|---|---|---|
+| `r0001` | `case_states` | SELECT, INSERT, UPDATE (version, state, state_sha256, updated_at) | tenant, case, customer and fixture identity are immutable |
+| `r0001` | `case_resources` | SELECT, INSERT, UPDATE (version) | the customer's user and orders |
+| `r0002` | `operations` | SELECT, INSERT | one immutable terminal row per accepted operation; a receipt iff committed |
+| `r0002` | `token_uses` | SELECT, INSERT, DELETE (expired rows only, by policy) | single-use service nonces |
+| `r0002` | `fault_plans` | SELECT, INSERT, UPDATE (remaining), DELETE | test faults |
+
+Every table forces row-level security on `retail.tenant_id`/`retail.case_id` (transaction-local settings); with
+neither set nothing is visible. The two revisions are dependency-separated initial revisions, not a record of
+production releases. A downgrade is refused while a revision's tables hold rows (the guard lifts FORCE for its own
+count); recovery uses a consistent backup of state, resources and operations together. The service refuses to run
+on a schema that is not at the head revision.

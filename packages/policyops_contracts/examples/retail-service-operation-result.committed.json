@@ -1,0 +1,59 @@
+{
+  "operation_id": "00000000-0000-0000-0000-0000000004b0",
+  "operation_sha256": "7aab3b4ca8fe567bf7eb1e97f84f97143bbda578eabe613c99baed2f8396e8b1",
+  "outcome": "committed",
+  "receipt": {
+    "actual_effect": {
+      "changes": [
+        {
+          "item_id": "1000000001",
+          "new_item_id": "1000000003",
+          "price_after": {
+            "amount_minor": 3000,
+            "currency": "USD"
+          },
+          "price_before": {
+            "amount_minor": 1999,
+            "currency": "USD"
+          },
+          "product_id": "9000000001"
+        }
+      ],
+      "kind": "modify_pending_order_items",
+      "one_time_action": true,
+      "order_id": "#W0000001",
+      "payment_method_id": "credit_card_0000001",
+      "price_difference": {
+        "amount_minor": 1001,
+        "currency": "USD"
+      },
+      "status_after": "pending (item modified)",
+      "status_before": "pending"
+    },
+    "case_version_after": 2,
+    "case_version_before": 1,
+    "committed_at": "2026-01-01T12:00:00Z",
+    "operation_id": "00000000-0000-0000-0000-0000000004b0",
+    "operation_sha256": "7aab3b4ca8fe567bf7eb1e97f84f97143bbda578eabe613c99baed2f8396e8b1",
+    "resource_versions_after": [
+      {
+        "kind": "order",
+        "resource_id": "#W0000001",
+        "version": 2
+      },
+      {
+        "kind": "product",
+        "resource_id": "9000000001",
+        "version": 1
+      },
+      {
+        "kind": "user",
+        "resource_id": "example_user_0001",
+        "version": 1
+      }
+    ],
+    "state_sha256_after": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "tool": "modify_pending_order_items"
+  },
+  "replayed": false
+}

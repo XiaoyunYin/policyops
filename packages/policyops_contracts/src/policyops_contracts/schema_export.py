@@ -32,6 +32,17 @@ from policyops_contracts.money import Money
 from policyops_contracts.policy import PolicyRule
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail import OrderOperationHistory, OrderSnapshot, ToolCall, UserSnapshot, VariantSnapshot
+from policyops_contracts.retail_service import (
+    CaseInitialization,
+    CaseState,
+    FenceRequest,
+    LookupResult,
+    MutationRequest,
+    OperationResult,
+    ReadRequest,
+    ReadResult,
+    ServiceContext,
+)
 from policyops_contracts.seeds import CaseCustomerBinding, CustomerAuthentication, DemoSeed
 
 
@@ -54,6 +65,16 @@ MODELS: dict[str, type[BaseModel]] = {
     "simulator-confirmation": SimulatorConfirmationEvent,
     "user-snapshot": UserSnapshot,
     "variant-snapshot": VariantSnapshot,
+    # The retail-simulator RPC (T16): internal service protocol, versioned with the shared contract.
+    "retail-service-case-initialization": CaseInitialization,
+    "retail-service-case-state": CaseState,
+    "retail-service-context": ServiceContext,
+    "retail-service-fence-request": FenceRequest,
+    "retail-service-lookup-result": LookupResult,
+    "retail-service-mutation-request": MutationRequest,
+    "retail-service-operation-result": OperationResult,
+    "retail-service-read-request": ReadRequest,
+    "retail-service-read-result": ReadResult,
 }
 ADAPTERS: dict[str, TypeAdapter[object]] = {
     "agent-step": TypeAdapter(AgentStep),

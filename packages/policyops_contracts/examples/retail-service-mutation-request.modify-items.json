@@ -1,0 +1,58 @@
+{
+  "call": {
+    "item_ids": [
+      "1000000001"
+    ],
+    "new_item_ids": [
+      "1000000003"
+    ],
+    "order_id": "#W0000001",
+    "payment_method_id": "credit_card_0000001",
+    "tool": "modify_pending_order_items"
+  },
+  "expected_effect": {
+    "changes": [
+      {
+        "item_id": "1000000001",
+        "new_item_id": "1000000003",
+        "price_after": {
+          "amount_minor": 3000,
+          "currency": "USD"
+        },
+        "price_before": {
+          "amount_minor": 1999,
+          "currency": "USD"
+        },
+        "product_id": "9000000001"
+      }
+    ],
+    "kind": "modify_pending_order_items",
+    "one_time_action": true,
+    "order_id": "#W0000001",
+    "payment_method_id": "credit_card_0000001",
+    "price_difference": {
+      "amount_minor": 1001,
+      "currency": "USD"
+    },
+    "status_after": "pending (item modified)",
+    "status_before": "pending"
+  },
+  "expected_versions": [
+    {
+      "kind": "order",
+      "resource_id": "#W0000001",
+      "version": 1
+    },
+    {
+      "kind": "user",
+      "resource_id": "example_user_0001",
+      "version": 1
+    },
+    {
+      "kind": "product",
+      "resource_id": "9000000001",
+      "version": 1
+    }
+  ],
+  "intent_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

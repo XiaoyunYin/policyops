@@ -1,0 +1,30 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "Create the case's isolated state once. Repeating the same body is a replay; anything else conflicts.",
+  "properties": {
+    "customer_id": {
+      "maxLength": 64,
+      "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+      "title": "Customer Id",
+      "type": "string"
+    },
+    "fixture_id": {
+      "const": "tau2-retail-19f13ea3",
+      "title": "Fixture Id",
+      "type": "string"
+    },
+    "fixture_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Fixture Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "fixture_id",
+    "fixture_sha256",
+    "customer_id"
+  ],
+  "title": "CaseInitialization",
+  "type": "object"
+}

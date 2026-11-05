@@ -510,3 +510,69 @@ domain, task ID, split and purpose.
 for each seed and writes it outside the repository; it is never committed. The binding comes from the reference
 identity lookup or the owner of the resources the reference actions name, using read-only upstream calls on the
 pinned DB. It currently yields 44 bindings; tasks 24 and 57 name no customer and are reported unavailable.
+
+
+## Retail simulator
+
+`evals/src/policyops_evals/retail_sim` is the evals-owned `retail-simulator` service (T16). The application never
+imports it; `policyops.adapters.retail_client` talks to it over HTTP, and the shared RPC models live in
+`policyops_contracts.retail_service` (exported with the other schemas).
+
+**Fixture and upstream.** A fixture root holds exactly the reviewed `data/tau2/domains/retail/db.json` and `LICENSE`,
+copied from a verified checkout and checked against `evals/manifests/tau2-19f13ea3/source.json`. `TAU2_DATA_DIR`
+points there, so no task, split or held-out file is present. The service uses `RetailDB` and `RetailTools`
+directly. Importing the `tau2` package also loads its runner, registry, agent and voice modules (import time only),
+and the one import-time `audioop` deprecation warning is ignored by message; nothing else is constructed or run.
+
+**State.** Each case has one isolated copy of the full upstream database (`retail-state/v1`: canonical JSON of the
+upstream model; float repr round-trips exactly; capped at 8 MiB), bound once to a fixture identity and the case's
+customer. The case `version` is a serial; the customer's user and orders have their own positive integer versions;
+the catalog is immutable within the fixture and has version 1.
+
+**Scope.** Writes and reads must stay within the bound customer: another customer's order, user or payment method is
+answered as not found whether it exists or not, and user lookups return only the bound customer. The catalog is
+shared. The service checks service identity, scope, versions and the exact effect; it does not decide approval or
+consent, which stay with the application's services.
+
+**One write.** Under the case row lock (`FOR UPDATE`), and in this order:
+1. look up the operation ID (a stored outcome with the same fingerprint replays; another fingerprint conflicts);
+2. scope, then the order and user versions (stale is a terminal `version_conflict`), then exact coverage of every
+   resource the tool reads, catalog included;
+3. run the upstream tool on a freshly decoded candidate;
+4. project the *actual* effect from the before and after states, tool by tool (below), converting every changed
+   amount with exact money (no epsilon or rounding);
+5. compare it with the approved expected effect, and commit the new state, versions, a terminal row and an immutable
+   receipt in one transaction, or record one terminal negative row and change nothing else.
+The signed context's expiry is checked again at the write, so a request that expired while waiting applies nothing.
+No network or model call happens inside the transaction. CPU is bounded structurally (the fixed fixture, 64 KiB
+bodies, at most 50 items, the bounded calculator grammar), not preempted: database timeouts do not interrupt Python.
+
+**Effect projection.** The whole state is diffed and every changed path must belong to the tool:
+- `modify_pending_order_items`: each target position must carry *its own* variant's item ID, price and options (the
+  pinned upstream reuses the last variant for every position; such a candidate is refused even when the aggregate
+  payment matches); one payment or refund line of the exact difference; the gift-card balance delta.
+- `exchange_delivered_order_items`: only the request metadata changes (sorted old and new items, the method, the exact
+  difference); items, payments and balances must not. Pairing comes from the approved call.
+- `return_delivered_order_items`: sorted items and the refund method; upstream records no refund amount.
+- cancel, address and payment changes: the status, refund or payment lines and balance deltas, exactly.
+
+**Identity.** The operation fingerprint (`policyops.retail-operation/v1`) covers tenant, case, customer, fixture,
+operation ID, call, expected effect, the expected versions (order-independent) and the caller's `intent_sha256`. The
+signed transport context (`policyops.retail-auth/v1`, HMAC-SHA256) covers method, path, the complete body digest,
+scope, tenant, case, customer, fixture, a lifetime of at most 60 s and a single-use nonce; these are not part of the
+fingerprint, so a retry with a fresh context is the same operation. A fence names the *original* fingerprint.
+
+**Outcomes.** `committed` (with a receipt); `upstream_rejected`, `effect_mismatch`, `money_unrepresentable`,
+`version_conflict` and `fenced` change nothing else and are terminal. A lookup returns a stored outcome or `unknown`;
+only `POST .../fence` makes absence definitive. A malformed, unauthenticated or uncovered request mints no row. A lost
+response, a timeout or a 5xx is `unknown` to the client, which never retries a write itself.
+
+**Reads.** Read results carry bounded, typed details rather than raw upstream objects: each variant's sorted
+options with its product name, ordered items with names and options, fulfillments, the cancel reason, a recorded
+exchange or return *request* (an exchange request records the quoted difference as exact money; neither moves money
+or items), and for the case's own customer their name, email, payment methods and only the order IDs that are
+really theirs. Each detail has an explicit `to_snapshot()` projection into the minimal domain snapshots
+(`UserSnapshot`, `OrderSnapshot`, `VariantSnapshot`), which are unchanged and remain the deterministic rule inputs.
+
+**Faults.** Test and demo only (`serve --faults`; the endpoint does not exist otherwise): one-shot 429 or 503 before
+the work, a bounded delay, or commit-then-503. Each adds an `X-PolicyOps-Fault` header.

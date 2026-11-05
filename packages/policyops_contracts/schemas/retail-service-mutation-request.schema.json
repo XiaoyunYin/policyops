@@ -1,0 +1,913 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "Address": {
+      "additionalProperties": false,
+      "properties": {
+        "address1": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Address1",
+          "type": "string"
+        },
+        "address2": {
+          "maxLength": 100,
+          "minLength": 0,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "title": "Address2",
+          "type": "string"
+        },
+        "city": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "City",
+          "type": "string"
+        },
+        "country": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Country",
+          "type": "string"
+        },
+        "state": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "State",
+          "type": "string"
+        },
+        "zip": {
+          "pattern": "^\\d{5}$",
+          "title": "Zip",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address1",
+        "address2",
+        "city",
+        "state",
+        "country",
+        "zip"
+      ],
+      "title": "Address",
+      "type": "object"
+    },
+    "CancelEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "cancel_pending_order",
+          "default": "cancel_pending_order",
+          "title": "Kind",
+          "type": "string"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "no longer needed",
+            "ordered by mistake"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "refunds": {
+          "items": {
+            "$ref": "#/$defs/RefundLine"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Refunds",
+          "type": "array"
+        },
+        "status_after": {
+          "const": "cancelled",
+          "default": "cancelled",
+          "title": "Status After",
+          "type": "string"
+        },
+        "status_before": {
+          "const": "pending",
+          "default": "pending",
+          "title": "Status Before",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "reason",
+        "refunds"
+      ],
+      "title": "CancelEffect",
+      "type": "object"
+    },
+    "CancelPendingOrder": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "no longer needed",
+            "ordered by mistake"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "tool": {
+          "const": "cancel_pending_order",
+          "default": "cancel_pending_order",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "reason"
+      ],
+      "title": "CancelPendingOrder",
+      "type": "object"
+    },
+    "ExchangeDeliveredOrderItems": {
+      "additionalProperties": false,
+      "properties": {
+        "item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Item Ids",
+          "type": "array"
+        },
+        "new_item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "New Item Ids",
+          "type": "array"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "tool": {
+          "const": "exchange_delivered_order_items",
+          "default": "exchange_delivered_order_items",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "item_ids",
+        "new_item_ids",
+        "payment_method_id"
+      ],
+      "title": "ExchangeDeliveredOrderItems",
+      "type": "object"
+    },
+    "ItemChangeLine": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "new_item_id": {
+          "pattern": "^\\d{10}$",
+          "title": "New Item Id",
+          "type": "string"
+        },
+        "price_after": {
+          "$ref": "#/$defs/Money"
+        },
+        "price_before": {
+          "$ref": "#/$defs/Money"
+        },
+        "product_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Product Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "new_item_id",
+        "product_id",
+        "price_before",
+        "price_after"
+      ],
+      "title": "ItemChangeLine",
+      "type": "object"
+    },
+    "ItemsEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/ItemChangeLine"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Changes",
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "modify_pending_order_items",
+            "exchange_delivered_order_items"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "one_time_action": {
+          "const": true,
+          "default": true,
+          "title": "One Time Action",
+          "type": "boolean"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "price_difference": {
+          "$ref": "#/$defs/Money"
+        },
+        "status_after": {
+          "enum": [
+            "pending (item modified)",
+            "exchange requested"
+          ],
+          "title": "Status After",
+          "type": "string"
+        },
+        "status_before": {
+          "enum": [
+            "pending",
+            "delivered"
+          ],
+          "title": "Status Before",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "order_id",
+        "changes",
+        "price_difference",
+        "payment_method_id",
+        "status_before",
+        "status_after"
+      ],
+      "title": "ItemsEffect",
+      "type": "object"
+    },
+    "ModifyPendingOrderAddress": {
+      "additionalProperties": false,
+      "properties": {
+        "address1": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Address1",
+          "type": "string"
+        },
+        "address2": {
+          "maxLength": 100,
+          "minLength": 0,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "title": "Address2",
+          "type": "string"
+        },
+        "city": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "City",
+          "type": "string"
+        },
+        "country": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Country",
+          "type": "string"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "state": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "State",
+          "type": "string"
+        },
+        "tool": {
+          "const": "modify_pending_order_address",
+          "default": "modify_pending_order_address",
+          "title": "Tool",
+          "type": "string"
+        },
+        "zip": {
+          "pattern": "^\\d{5}$",
+          "title": "Zip",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "address1",
+        "address2",
+        "city",
+        "state",
+        "country",
+        "zip"
+      ],
+      "title": "ModifyPendingOrderAddress",
+      "type": "object"
+    },
+    "ModifyPendingOrderItems": {
+      "additionalProperties": false,
+      "properties": {
+        "item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Item Ids",
+          "type": "array"
+        },
+        "new_item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "New Item Ids",
+          "type": "array"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "tool": {
+          "const": "modify_pending_order_items",
+          "default": "modify_pending_order_items",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "item_ids",
+        "new_item_ids",
+        "payment_method_id"
+      ],
+      "title": "ModifyPendingOrderItems",
+      "type": "object"
+    },
+    "ModifyPendingOrderPayment": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "tool": {
+          "const": "modify_pending_order_payment",
+          "default": "modify_pending_order_payment",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "payment_method_id"
+      ],
+      "title": "ModifyPendingOrderPayment",
+      "type": "object"
+    },
+    "ModifyUserAddress": {
+      "additionalProperties": false,
+      "properties": {
+        "address1": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Address1",
+          "type": "string"
+        },
+        "address2": {
+          "maxLength": 100,
+          "minLength": 0,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "title": "Address2",
+          "type": "string"
+        },
+        "city": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "City",
+          "type": "string"
+        },
+        "country": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Country",
+          "type": "string"
+        },
+        "state": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "State",
+          "type": "string"
+        },
+        "tool": {
+          "const": "modify_user_address",
+          "default": "modify_user_address",
+          "title": "Tool",
+          "type": "string"
+        },
+        "user_id": {
+          "maxLength": 64,
+          "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+          "title": "User Id",
+          "type": "string"
+        },
+        "zip": {
+          "pattern": "^\\d{5}$",
+          "title": "Zip",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id",
+        "address1",
+        "address2",
+        "city",
+        "state",
+        "country",
+        "zip"
+      ],
+      "title": "ModifyUserAddress",
+      "type": "object"
+    },
+    "Money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_minor": {
+          "maximum": 1000000000000,
+          "minimum": -1000000000000,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "const": "USD",
+          "default": "USD",
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount_minor"
+      ],
+      "title": "Money",
+      "type": "object"
+    },
+    "OrderAddressEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "address_after": {
+          "$ref": "#/$defs/Address"
+        },
+        "address_before": {
+          "$ref": "#/$defs/Address"
+        },
+        "kind": {
+          "const": "modify_pending_order_address",
+          "default": "modify_pending_order_address",
+          "title": "Kind",
+          "type": "string"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "status_after": {
+          "const": "pending",
+          "default": "pending",
+          "title": "Status After",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "address_before",
+        "address_after"
+      ],
+      "title": "OrderAddressEffect",
+      "type": "object"
+    },
+    "PaymentChangeEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/Money"
+        },
+        "from_payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "From Payment Method Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "modify_pending_order_payment",
+          "default": "modify_pending_order_payment",
+          "title": "Kind",
+          "type": "string"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "refund_timing": {
+          "enum": [
+            "immediately",
+            "5 to 7 business days"
+          ],
+          "title": "Refund Timing",
+          "type": "string"
+        },
+        "status_after": {
+          "const": "pending",
+          "default": "pending",
+          "title": "Status After",
+          "type": "string"
+        },
+        "to_payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "To Payment Method Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "from_payment_method_id",
+        "to_payment_method_id",
+        "amount",
+        "refund_timing"
+      ],
+      "title": "PaymentChangeEffect",
+      "type": "object"
+    },
+    "RefundLine": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/Money"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "timing": {
+          "enum": [
+            "immediately",
+            "5 to 7 business days"
+          ],
+          "title": "Timing",
+          "type": "string"
+        }
+      },
+      "required": [
+        "payment_method_id",
+        "amount",
+        "timing"
+      ],
+      "title": "RefundLine",
+      "type": "object"
+    },
+    "ResourceVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "user",
+            "order",
+            "product"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "version": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "resource_id",
+        "version"
+      ],
+      "title": "ResourceVersion",
+      "type": "object"
+    },
+    "ReturnDeliveredOrderItems": {
+      "additionalProperties": false,
+      "properties": {
+        "item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Item Ids",
+          "type": "array"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "tool": {
+          "const": "return_delivered_order_items",
+          "default": "return_delivered_order_items",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "item_ids",
+        "payment_method_id"
+      ],
+      "title": "ReturnDeliveredOrderItems",
+      "type": "object"
+    },
+    "ReturnEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ReturnLine"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Items",
+          "type": "array"
+        },
+        "kind": {
+          "const": "return_delivered_order_items",
+          "default": "return_delivered_order_items",
+          "title": "Kind",
+          "type": "string"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "refund_payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Refund Payment Method Id",
+          "type": "string"
+        },
+        "returned_items_price_total": {
+          "$ref": "#/$defs/Money"
+        },
+        "status_after": {
+          "const": "return requested",
+          "default": "return requested",
+          "title": "Status After",
+          "type": "string"
+        },
+        "status_before": {
+          "const": "delivered",
+          "default": "delivered",
+          "title": "Status Before",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "items",
+        "returned_items_price_total",
+        "refund_payment_method_id"
+      ],
+      "title": "ReturnEffect",
+      "type": "object"
+    },
+    "ReturnLine": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "price": {
+          "$ref": "#/$defs/Money"
+        }
+      },
+      "required": [
+        "item_id",
+        "price"
+      ],
+      "title": "ReturnLine",
+      "type": "object"
+    },
+    "UserAddressEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "address_after": {
+          "$ref": "#/$defs/Address"
+        },
+        "address_before": {
+          "$ref": "#/$defs/Address"
+        },
+        "kind": {
+          "const": "modify_user_address",
+          "default": "modify_user_address",
+          "title": "Kind",
+          "type": "string"
+        },
+        "user_id": {
+          "maxLength": 64,
+          "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id",
+        "address_before",
+        "address_after"
+      ],
+      "title": "UserAddressEffect",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One write. `expected_versions` must name exactly the resources the tool reads or changes (the service derives\nthat set per tool); `intent_sha256` is the caller's opaque proposal/approval context digest.",
+  "properties": {
+    "call": {
+      "discriminator": {
+        "mapping": {
+          "cancel_pending_order": "#/$defs/CancelPendingOrder",
+          "exchange_delivered_order_items": "#/$defs/ExchangeDeliveredOrderItems",
+          "modify_pending_order_address": "#/$defs/ModifyPendingOrderAddress",
+          "modify_pending_order_items": "#/$defs/ModifyPendingOrderItems",
+          "modify_pending_order_payment": "#/$defs/ModifyPendingOrderPayment",
+          "modify_user_address": "#/$defs/ModifyUserAddress",
+          "return_delivered_order_items": "#/$defs/ReturnDeliveredOrderItems"
+        },
+        "propertyName": "tool"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CancelPendingOrder"
+        },
+        {
+          "$ref": "#/$defs/ModifyPendingOrderAddress"
+        },
+        {
+          "$ref": "#/$defs/ModifyPendingOrderPayment"
+        },
+        {
+          "$ref": "#/$defs/ModifyPendingOrderItems"
+        },
+        {
+          "$ref": "#/$defs/ReturnDeliveredOrderItems"
+        },
+        {
+          "$ref": "#/$defs/ExchangeDeliveredOrderItems"
+        },
+        {
+          "$ref": "#/$defs/ModifyUserAddress"
+        }
+      ],
+      "title": "Call"
+    },
+    "expected_effect": {
+      "discriminator": {
+        "mapping": {
+          "cancel_pending_order": "#/$defs/CancelEffect",
+          "exchange_delivered_order_items": "#/$defs/ItemsEffect",
+          "modify_pending_order_address": "#/$defs/OrderAddressEffect",
+          "modify_pending_order_items": "#/$defs/ItemsEffect",
+          "modify_pending_order_payment": "#/$defs/PaymentChangeEffect",
+          "modify_user_address": "#/$defs/UserAddressEffect",
+          "return_delivered_order_items": "#/$defs/ReturnEffect"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CancelEffect"
+        },
+        {
+          "$ref": "#/$defs/OrderAddressEffect"
+        },
+        {
+          "$ref": "#/$defs/PaymentChangeEffect"
+        },
+        {
+          "$ref": "#/$defs/ItemsEffect"
+        },
+        {
+          "$ref": "#/$defs/ReturnEffect"
+        },
+        {
+          "$ref": "#/$defs/UserAddressEffect"
+        }
+      ],
+      "title": "Expected Effect"
+    },
+    "expected_versions": {
+      "items": {
+        "$ref": "#/$defs/ResourceVersion"
+      },
+      "maxItems": 64,
+      "title": "Expected Versions",
+      "type": "array"
+    },
+    "intent_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Intent Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "call",
+    "expected_effect",
+    "expected_versions",
+    "intent_sha256"
+  ],
+  "title": "MutationRequest",
+  "type": "object"
+}

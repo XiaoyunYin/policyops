@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 policyops-evals = "policyops_evals.cli:main"
+policyops-retail-simulator = "policyops_evals.retail_sim.cli:main"
 
 [dependency-groups]
 dev = [

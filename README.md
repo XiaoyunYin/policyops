@@ -2,7 +2,7 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and offline provider adapters for the OpenAI Responses and Anthropic Messages APIs (exercised only against a scripted mock transport; no live call through these adapters) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. The retail simulator and UI remain pending. No model-quality or performance results are claimed.**
+**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and offline provider adapters for the OpenAI Responses and Anthropic Messages APIs (exercised only against a scripted mock transport; no live call through these adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture; not yet called by any workflow) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. The policy gateway, execution workflow and UI remain pending. No model-quality or performance results are claimed.**
 
 ## Intended architecture
 
@@ -66,6 +66,25 @@ results are validated locally against the full domain schema. Everything is test
 transport; no live call has been made through these adapters, and live capability and counting results remain
 open. See
 [docs/architecture.md](docs/architecture.md#provider-adapters).
+
+## Retail simulator
+
+`evals/.../retail_sim` wraps the pinned upstream retail tools (no fork) in an internal HTTP service. Each case gets
+its own isolated copy of the audited fixture, bound once to its customer. A write runs the upstream tool on an
+in-memory candidate, rebuilds the change it *actually* made from the before and after states, checks every amount as
+exact money, and compares that with the approved expected effect. Only an exact match commits, atomically with the
+new versions and an immutable receipt; anything else leaves one terminal record and no other change. Stable
+operation IDs replay, a fence makes an absent operation definitively not executed, every request carries a
+short-lived signed context with a single-use nonce, and the `retail` schema has its own roles and row-level
+security. `policyops.adapters.retail_client` is the application's typed client: it never retries a write and treats
+a lost or foreign response as unknown. Commands:
+
+```sh
+python -B scripts/devenv.py uv --directory evals run --frozen policyops-retail-simulator --help
+```
+
+See [docs/architecture.md](docs/architecture.md#retail-simulator) and
+[docs/database.md](docs/database.md#retail-schema).
 
 ## Application database
 

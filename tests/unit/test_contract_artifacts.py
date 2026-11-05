@@ -14,6 +14,7 @@ from policyops_contracts.evidence import EvidenceManifest
 from policyops_contracts.policy import RETAIL_POLICY, RETAIL_RULES, RULES_BY_ID
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail import WRITE_TOOLS, ToolName
+from policyops_contracts.retail_service import LookupResult, MutationRequest, OperationResult
 from policyops_contracts.schema_export import export
 from policyops_contracts.seeds import CaseCustomerBinding, CustomerAuthentication, DemoSeed
 
@@ -26,6 +27,9 @@ EXAMPLE_MODELS: dict[str, type[BaseModel]] = {
     "error.consent-ambiguous": ErrorEnvelope, "evidence-manifest.failed-run": EvidenceManifest,
     "case-customer-binding": CaseCustomerBinding,
     "customer-authentication": CustomerAuthentication, "demo-seed": DemoSeed,
+    "retail-service-mutation-request.modify-items": MutationRequest,
+    "retail-service-operation-result.committed": OperationResult,
+    "retail-service-lookup-result.unknown": LookupResult,
 }
 HIDDEN_FIELD_NAMES = ("user_scenario", "instructions", "known_info", "unknown_info", "reason_for_call",
                       "evaluation_criteria", "nl_assertions", "reward_basis", "required_documents", "initial_state")

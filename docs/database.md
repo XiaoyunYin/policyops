@@ -91,6 +91,24 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
     removed at runtime. RLS is forced.
   - The repository's `record` is first write wins: the identical authentication again is a no-op; a different
     customer, or a foreign-key refusal, raises `AuthenticationConflict` and never authenticates.
+- **Embedding foundation (`0009`).** Five tables, each with composite workspace keys and forced workspace RLS for
+  the app runtime:
+  - `app.embedding_jobs`: one job per `(workspace_id, purpose, subject_key)`. It records the digest of the full
+    intended ordered input set, the request configuration and tokenizer digests, and an immutable `deadline_at`
+    (`CHECK (deadline_at > created_at)`). The runtime can update only `state`, `version` and `updated_at`.
+  - `app.embedding_job_inputs`: every intended input by position, with its exact text and local token count. A
+    CHECK ties `input_sha256` to the text's UTF-8 SHA-256. Select and insert only.
+  - `app.embedding_batches`: the frozen dispatch plan (ordered positions, request fingerprint, local tokens,
+    operation ID, ledger attempt ID). The runtime can update only `state`, `lease_owner`, `lease_until`, `fence` and
+    `updated_at`, so the plan itself never changes. A batch's attempt is unique per workspace.
+  - `app.embedding_attempt_evidence`: one row per accounted physical request with parseable billing. Its composite
+    foreign keys reference the batch `(workspace_id, job_id, ordinal, attempt_id)` and the ledger attempt
+    `(workspace_id, id)`. `prompt_tokens` and `total_tokens` must be equal unless the outcome is
+    `usage_contradiction`. Vector norms are an exact `numeric[]` diagnostic, never a floating-point column. Select
+    and insert only.
+  - `app.embedding_cache`: the first validated `vector(1536)` per `(workspace_id, input_sha256,
+    request_config_sha256)`, referencing the evidence row that published it. Select and insert only, so a cached
+    vector is never replaced, deleted or visible to another workspace.
 - **Usage budget ledger (`0006`).**
   - A budget scope holds server-set caps and exact counters (`spent_usd`, `held_usd`, `calls_consumed`,
     `calls_held`, and a sticky `overrun`), with `calls_consumed + calls_held <= cap_calls` checked in the database.
@@ -127,14 +145,18 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Migrations
 
-The chain lives in `persistence/migrations/` and has eight revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index), and `0005` (run initiator, fencing generation, event high-water mark and retention floor, job claim IDs and error codes, run ledger operations, the discovery role's grants), and `0006` (the usage budget ledger: app and evaluation budget scopes and usage attempts, attempt-linked usage events), `0007` (request-bound v2 intents, per-attempt counts, count resources and
-contract blocks), and `0008` (durable customer lookup authentication per run). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
+The chain lives in `persistence/migrations/` and has nine revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index), and `0005` (run initiator, fencing generation, event high-water mark and retention floor, job claim IDs and error codes, run ledger operations, the discovery role's grants), and `0006` (the usage budget ledger: app and evaluation budget scopes and usage attempts, attempt-linked usage events), `0007` (request-bound v2 intents, per-attempt counts, count resources and
+contract blocks), `0008` (durable customer lookup authentication per run) and `0009` (the embedding foundation: jobs, inputs, frozen batches, attempt evidence and the vector cache). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
 
 - **Precondition.** `upgrade` and `downgrade` need a connection with no open transaction. Otherwise Alembic would run all revisions inside the caller's transaction, so they raise `MigrationPreconditionError` before doing anything, and never commit or roll back the caller's work. `current` leaves no transaction behind.
 - **Upgrade.** Each revision runs in its own transaction. A failing revision rolls back completely and the version stays at the previous revision. A test makes revision `0002` fail midway and checks that.
 - **Previous-revision upgrade.** A database at `0001` with imported synthetic data upgrades to head with every existing row unchanged.
 - **Authentication upgrade.** Revision `0003` also upgrades a populated `0002` database. Existing sessions receive NULL idle/CSRF fields and require a new login; the auth service rejects them. New login requests have a bounded expiry and single-use consumption state, with access restricted to the auth role.
 - **Run upgrade.** Revision `0005` upgrades a populated `0004` database in place. It backfills each run's event high-water mark from its stored events and leaves legacy runs without an initiator, and the worker refuses to run those. The backfill lifts FORCE RLS inside the revision's transaction and restores it. Data that violates the new rules (two active workbench runs on one case, or a leased job, which predates claim IDs) refuses the upgrade without being rewritten. The revision needs the discovery role, so run bootstrap first.
+- **Embedding foundation upgrade.** Revision `0009` upgrades a populated `0008` database in place. It only adds
+  the five empty tables, their policies and grants; existing rows and grants are unchanged. A test restores a
+  `pg_dump` of a populated `0008` database into a separate database, upgrades it, compares every pre-existing
+  table's row count and runs an embedding job on the result.
 - **Customer authentication upgrade.** Revision `0008` upgrades a populated `0007` database in place:
   - it adds the empty `app.customer_authentications` and the `(workspace_id, id, customer_user_id)` unique key on
     `app.cases`. Cases were already unique by `(workspace_id, id)`, so the key restricts no existing row;
@@ -156,7 +178,7 @@ contract blocks), and `0008` (durable customer lookup authentication per run). T
   - It is refused (`DataLossRefused`) while the affected tables hold rows, unless `allow_data_loss=True` is passed explicitly. For `0003`, either login-request or session rows trigger refusal; an explicitly allowed downgrade drops the added session fields while retaining session rows. For `0004`, ledger rows trigger refusal (dropping them would break replay of committed writes); without them the downgrade removes exactly the ledger, the index and the message key. For `0005`, runs or jobs trigger refusal (their fencing, initiator and high-water fields would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the `run.start` / `run.cancel` ledger rows, because the restored `0004` operation CHECK cannot hold them; case-ledger rows are kept. Their replays are lost: a later retry with such a key is treated as a new request. Re-upgrading to `0005` afterwards backfills each run's high-water mark from its remaining events, but cannot restore the generation (0 again), the initiator (NULL, so the worker will not execute those runs) or the deleted ledger rows. For `0007`, the downgrade is refused whenever version 2, count or contract-block data exists, **even with
 `allow_data_loss=True`**: dropping it would leave scope totals that no longer match their attempts, so that recovery
 is a restore from a consistent backup. Without such data it removes the columns and triggers, keeps version 1 rows
-and restores the exact FORCE flags. For `0008`, rows in `app.customer_authentications` trigger refusal (dropping them would silently de-authenticate runs). Without them the downgrade drops exactly the table and the case key, and re-upgrading restores both. For `0006`, rows in any budget scope or usage attempt table trigger refusal (holds, consumed calls and settled costs would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the usage events that name only an attempt, because the restored NOT NULL provider request ID cannot hold them; attempt events that have a provider request ID are kept as legacy rows. It lifts FORCE on `app.usage_events` for that delete only if the table was forced, and restores exactly the previous state.
+and restores the exact FORCE flags. For `0009`, rows in any of its five tables trigger refusal (job identities, evidence of billed requests and cached vectors would be lost); `allow_data_loss=True` drops exactly those tables, and the vectors must then be paid for again. Without rows the downgrade drops the tables and re-upgrading restores them. For `0008`, rows in `app.customer_authentications` trigger refusal (dropping them would silently de-authenticate runs). Without them the downgrade drops exactly the table and the case key, and re-upgrading restores both. For `0006`, rows in any budget scope or usage attempt table trigger refusal (holds, consumed calls and settled costs would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the usage events that name only an attempt, because the restored NOT NULL provider request ID cannot hold them; attempt events that have a provider request ID are kept as legacy rows. It lifts FORCE on `app.usage_events` for that delete only if the table was forced, and restores exactly the previous state.
   - The check lifts `FORCE ROW LEVEL SECURITY` temporarily, because the migrator sees no tenant rows otherwise. It then restores each table's previous state, both when it refuses (the rollback) and when it passes. Before T09 a passing check left the table unforced, which in practice meant `identity.sessions` after an empty `0003` downgrade. A regression test covers forced and unforced tables.
 - **Restore.** A restore is a separate operation, not a downgrade. A tested path dumps with `pg_dump -Fc` and restores with `pg_restore --single-transaction` into a separate, freshly provisioned database, as the superuser. It preserves:
   - row counts;
@@ -174,7 +196,7 @@ and restores the exact FORCE flags. For `0008`, rows in `app.customer_authentica
 
 - **Administrators.** The owner, migrator or a superuser can still alter or drop data, policies or triggers. Append-only and audit guarantees hold against the runtime roles, not against database administrators.
 - **Data migrations.** Future data migrations must set a workspace scope or add an explicit, reviewed policy, because the migrator sees no tenant rows.
-- **Not yet built.** Authorization decisions, membership checks on use, ingestion and retrieval queries are later tasks; the budget ledger has no provider adapter calling it yet (T11/T21). The schema supports them but does not perform them.
+- **Not yet built.** Authorization decisions, membership checks on use, document ingestion and retrieval queries are later tasks. The embedding tables (`0009`) are written by the embedding foundation only; no ingestion command populates them yet. The schema supports these but does not perform them.
 - **Linux.** The POSIX/Linux run of the PostgreSQL tests (the CI `postgres` job) has not been executed.
 
 

@@ -55,6 +55,11 @@ explicit_package_bases = true
 mypy_path = ["packages/policyops/src", "packages/policyops_contracts/src", "tests/support"]
 
 [[tool.mypy.overrides]]
+# regex and tiktoken_ext ship no type information (T12: the pinned cl100k pattern and its provenance test).
+module = ["regex", "regex.*", "tiktoken_ext", "tiktoken_ext.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # jsonschema ships no type information (T11 uses it only behind policyops.providers.schema).
 module = ["jsonschema", "jsonschema.*"]
 ignore_missing_imports = true

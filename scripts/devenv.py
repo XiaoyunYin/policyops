@@ -164,6 +164,9 @@ def build_environment(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -
         "UV_PROJECT_ENVIRONMENT": root / "venvs" / (f"evals-{EVALS_NAMESPACE}" if project == EVALS else "app"),
         "RUFF_CACHE_DIR": root / "cache" / "ruff",
         "MYPY_CACHE_DIR": root / "cache" / "mypy",
+        # tiktoken's own download cache (never used by the application, which loads a pinned local vocabulary file;
+        # set before any import so a stray factory call cannot write to the system temp folder).
+        "TIKTOKEN_CACHE_DIR": root / "cache" / "tiktoken",
         "COVERAGE_FILE": root / "reports" / "coverage" / ".coverage",
         "npm_config_cache": root / "cache" / "npm",
         "POLICYOPS_WEB_BUILD_DIR": root / "build" / "web",

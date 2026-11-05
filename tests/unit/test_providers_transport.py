@@ -23,7 +23,14 @@ from policyops.providers.canonical import canonical_bytes, fresh, strict_loads
 from policyops.providers.contract import ContractGap
 from policyops.providers.serialize import PreparedRequest, prepare
 from policyops.providers.tools import retail_tool_spec
-from policyops.providers.transport import BoundedTransport, Expected, TransportRefused
+from policyops.providers.transport import (
+    CHAT_BOUNDS,
+    EMBEDDING_BOUNDS,
+    BoundedTransport,
+    Expected,
+    ResponseBounds,
+    TransportRefused,
+)
 from policyops_contracts.model import Message, ModelRequest, OutputSpec, TextPart
 from policyops_contracts.retail import ReturnDeliveredOrderItems
 
@@ -229,6 +236,30 @@ def test_disallowed_ambient_sdk_settings_refuse_before_any_request(monkeypatch: 
 def test_responses_are_bounded_by_their_decoded_bytes_and_every_line(make: Any, code: str) -> None:
     invocation = run(invoke(prepared(), Script(make), KEY, cache_mode="none"))
     assert (invocation.result, invocation.error, invocation.sent) == (None, code, True)
+
+
+def test_chat_keeps_its_bounds_and_a_bound_policy_is_validated() -> None:
+    """T12 made the bounds an explicit policy; chat requests still get exactly 1 MiB / 64 KiB by default."""
+    assert (CHAT_BOUNDS.total_bytes, CHAT_BOUNDS.line_bytes) == (1 << 20, 64 << 10)
+    assert (EMBEDDING_BOUNDS.total_bytes, EMBEDDING_BOUNDS.line_bytes) == (4 << 20, None)
+    assert Expected("openai", "/v1/responses", b"{}").bounds is CHAT_BOUNDS
+    for total, line in ((0, None), (True, None), ((4 << 20) + 1, None), (100, 200), (100, 0), (1.5, None)):
+        with pytest.raises(ValueError):
+            ResponseBounds(total, line)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        Expected("openai", "/v1/responses", b"{}", bounds="large")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("chunks", "code"), [
+    ([b"A" * 2_100_000], "response_too_large"),  # one 2.1 MiB line: the total bound is hit first
+    ([b"A" * (1 << 20)], "line_too_long"),  # within the total bound, but one line above 64 KiB
+    ([b"A" * 40_000, b"A" * 30_000], "line_too_long"),  # a line continued across chunks
+])
+def test_chat_total_and_line_bounds_are_unchanged(chunks: list[bytes], code: str) -> None:
+    make = lambda r: httpx2.Response(200, headers={"content-type": "application/json"},  # noqa: E731
+                                     stream=Chunks(chunks), request=r)
+    invocation = run(invoke(prepared(), Script(make), KEY, cache_mode="none"))
+    assert (invocation.result, invocation.error) == (None, code)
 
 
 def test_rate_limits_report_status_and_retry_after() -> None:

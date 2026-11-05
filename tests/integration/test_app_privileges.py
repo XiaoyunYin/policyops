@@ -64,6 +64,13 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         # The T10 usage ledger (0006): counters and settlement are updatable; caps, bindings and intent are not.
         "app.budget_scopes": (SI, SCOPE_COUNTERS),
         "app.usage_attempts": (SI, ATTEMPT_SETTLEMENT),
+        # The T12 embedding foundation (0009): only job state, batch advancement and lease columns are updatable;
+        # inputs, plans, evidence and cached vectors are immutable at runtime.
+        "app.embedding_jobs": (SI, {"state", "version", "updated_at"}),
+        "app.embedding_job_inputs": (SI, set()),
+        "app.embedding_batches": (SI, {"state", "lease_owner", "lease_until", "fence", "updated_at"}),
+        "app.embedding_attempt_evidence": (SI, set()),
+        "app.embedding_cache": (SI, set()),
     },
     AUTH_RUNTIME: {
         "identity.workspaces": (SI, set()),

@@ -84,6 +84,8 @@ jobs:
           enable-cache: false
       - name: Install checksum-verified gitleaks 8.30.1 (hook tests use it)
         run: ${{ matrix.py }} -B scripts/gitleaks_gate.py install
+      - name: Provision the pinned cl100k_base vocabulary (hash-checked; the tests never download)
+        run: ${{ matrix.py }} -B scripts/fetch_tokenizer_vocab.py
       - name: Application environment (frozen lock)
         run: ${{ matrix.py }} -B scripts/devenv.py uv sync --frozen
       - name: Lint
@@ -153,6 +155,8 @@ jobs:
         run: >-
           python3 -B scripts/check_repo_artifacts.py
           --write-baseline "$POLICYOPS_TEMP_DIR/reports/web-installed.txt" --installed apps/web/node_modules
+      - name: Provision the pinned cl100k_base vocabulary (hash-checked; the tests never download)
+        run: python3 -B scripts/fetch_tokenizer_vocab.py
       - name: PostgreSQL integration tests
         run: python3 -B scripts/devenv.py uv run --frozen pytest -m postgres
       - name: No owned container or new volume remains

@@ -473,7 +473,9 @@ price.
   - the pinned version headers and exactly the expected bearer credential (compared in constant time);
   - a body that re-encodes canonically to the bound bytes.
 
-  Responses must be uncompressed and stay within 1 MiB and 64 KiB per line. A client is refused while any
+  Responses must be uncompressed and stay within the request's immutable `ResponseBounds`: for chat, 1 MiB and
+  64 KiB per line (every line of every chunk, so SSE lines too); for embeddings (T12), 4 MiB with no line bound, a
+  non-SSE JSON body only. A client is refused while any
   `OPENAI_*` / `ANTHROPIC_*` environment variable other than the API key's is set; only the names are checked.
 - **Counting** is required: one supported count per attempt, over the full projection of the same prepared request
   (instructions/system, messages, tools, output format, effort/thinking). The count is claimed in the ledger before
@@ -537,6 +539,89 @@ price.
     the 180 active seconds.
   - **Cancellation:** a provider may keep generating after a local cancel; the hold stays.
   - **Unimplemented modes:** the Anthropic positive cache modes and OpenAI 12h are refused, not implemented.
+
+## Embedding foundation
+
+T12's first component: an accounted, cached way to embed exact texts with `text-embedding-3-small` at 1536
+dimensions. Document ingestion, chunking, index activation and retrieval are later components; nothing calls this
+from an API or the worker yet, and no live embedding request has been made.
+
+**Local counting** (`providers/tokenizer.py`). Embedding inputs are counted with cl100k_base, the encoding tiktoken
+0.14.0 maps to this model:
+- The vocabulary is pre-provisioned, never downloaded by the application. `scripts/fetch_tokenizer_vocab.py`
+  places the one pinned official file under `$POLICYOPS_TEMP_DIR/tokenizers/`, checked against the SHA-256 that
+  tiktoken's `openai_public.py` names. A missing or different file fails closed, and tiktoken's own downloading
+  factories are never called.
+- The pattern and special tokens are pinned constants, compared in a test with the installed tiktoken source,
+  identified by the hash of its text with line endings normalized to LF (the wheels install platform line endings).
+  The installed tiktoken version is checked when the vocabulary is loaded.
+- Before encoding, every input is bounded (32,768 code points, 65,536 UTF-8 bytes, no NUL or lone surrogate) and
+  split with the pinned pattern; every actual regex piece, whitespace included, must be at most 1,024 UTF-8 bytes.
+  That bounds the per-piece merge work. Encoding is synchronous and no timeout interrupts it; the measured worst
+  admitted inputs take milliseconds on development hardware, which is a measurement, not a guarantee.
+- The count is recorded in the ledger with source `local.tiktoken-cl100k`. There is no embedding count endpoint and
+  no count request. Whether it equals the provider's billed `prompt_tokens` is unverified until a live comparison.
+
+**The request** (`providers/embeddings.py`, `embedding_contract.py`). The body is exactly `{"model", "input",
+"dimensions": 1536, "encoding_format": "float"}`, fingerprinted like a chat request. `encoding_format` is always
+explicit: omitted, the SDK would request base64 and decode it in its parser, which this code never calls. The request
+goes once through the real SDK (`with_raw_response`, no retries) over the same `BoundedTransport` as chat, with the
+embedding bounds. The transport is owned from the moment it is acquired, and closed on every failure path. A
+complete body is handed to the caller as soon as it has arrived, before any stream or client close is awaited, so a
+timeout or cancellation during cleanup cannot lose a known bill.
+
+**Validation.** The body is parsed by an embedding-local bounded parser (the shared chat parser is unchanged):
+- a one-cursor precheck with anchored matches only (linear; at most 1,024 strings of 4 KiB, 256 containers, depth
+  8);
+- numeric literals longer than 24 characters, `NaN`, `Infinity` and duplicate keys become markers confined to
+  their subtree, and taint the document;
+- billing (`model`, `prompt_tokens`, `total_tokens`) is read first and must be present, unique and strictly typed;
+- vectors are usable only from an untainted document: unique contiguous `int` indexes and 1536 finite numbers each,
+  rounded to float32 (overflow refused), not all zero after rounding. Norms are kept as a diagnostic only.
+
+| Response | Ledger | Cache |
+|---|---|---|
+| unparseable, or billing missing or malformed | unresolved, hold kept | none |
+| `prompt_tokens` ≠ `total_tokens` | unresolved, hold kept, blocked | none |
+| another model than requested | unresolved, hold kept, blocked | none |
+| consistent usage ≠ local count | the actual bill settled, blocked | none |
+| billing valid, vectors invalid | the actual bill settled | none |
+| everything valid | settled | the vectors |
+
+**Jobs** (`providers/embedding_calls.py`, `persistence/embeddings.py`, revision `0009`):
+- A job is identified by `(workspace, purpose, subject_key)` and binds the full intended ordered input set, the
+  request configuration and the tokenizer. Any other identity for the same subject is a conflict.
+- Planning (one transaction) stores every input and a frozen plan of the distinct inputs not already cached: at most
+  64 inputs, 8,192 local tokens and 262,144 UTF-8 input bytes per request (a new batch starts before an input that
+  would cross any of the three). Each batch's ledger attempt is `uuid5(job, operation)`, with the full
+  batch digest in the operation. Resume never re-batches; an all-cached or empty job makes no request. A batch whose
+  inputs all became cached before it reserved anything is satisfied from the cache.
+- The job has an immutable deadline (`caps.active_seconds` from its creation, on the database clock); a caller's
+  deadline is clamped to it and to `caps.active_seconds`, and a restart cannot extend it. Preparation has its own
+  60-second bound.
+- Before anything is reserved: the ledger must be the app ledger of the store's workspace on the same engine, the
+  credential must be configured with no ambient SDK setting, and every unreserved batch must fit the operation
+  scope's remaining USD (after spend and every outstanding hold), calls and counts.
+- Per batch, the ledger's single-winner `claim_count` and `begin_dispatch` are the only permission to send. A batch
+  lease with a fence governs job advancement only. A late response is always published and settled, even after its
+  lease moved on; the next owner reconciles the batch from that attempt's own evidence, never from another
+  attempt's cached vector. A dispatched attempt without evidence is `orphaned`: its hold stays and nothing is resent
+  (reissue is a later, explicitly authorized operation). Only the process whose own local count was rejected
+  releases a reservation.
+- Publication of evidence and vectors is one transaction, checked against the stored batch, the job's request
+  configuration and the ledger attempt; evidence is first-write-wins and a cached vector is never replaced. A
+  database failure is retried at most three times, never with a second request; the bill is settled either way.
+
+**Limits.**
+- The default operation caps (64 calls, USD 0.05) and the 180-second active window bound one job; larger jobs need
+  explicitly larger server caps.
+- The provider's actual response layout has not been observed (no live embedding request). A synthetic maximum
+  batch (64 x 1536 numbers of 24 characters, two-space indentation) measures about 3.3 MB; deeper indentation could
+  exceed the enforced 4 MiB bound, and a response above it is refused with its hold kept.
+- Cache entries and evidence are never deleted at runtime; there is no retention policy yet.
+- The job deadline does not bound database waits: the ledger and store transactions are synchronous, no statement
+  or lock timeout is set, and a transaction blocked on a row lock waits until the database releases it. The deadline
+  is checked again afterwards; a blocked wait sends nothing.
 
 ## Dev calibration allowlist and demo seeds
 

@@ -50,11 +50,12 @@ class DevenvTests(unittest.TestCase):
     def test_all_routed_paths_are_under_temp_root(self) -> None:
         env = self.env_for(["uv", "sync", "--frozen"])
         for name in ("TEMP", "TMP", "TMPDIR", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR",
-                     "UV_PROJECT_ENVIRONMENT", "RUFF_CACHE_DIR", "MYPY_CACHE_DIR", "COVERAGE_FILE",
-                     "npm_config_cache", "POLICYOPS_WEB_BUILD_DIR", "POLICYOPS_WEB_CACHE_DIR",
+                     "UV_PROJECT_ENVIRONMENT", "RUFF_CACHE_DIR", "MYPY_CACHE_DIR", "TIKTOKEN_CACHE_DIR",
+                     "COVERAGE_FILE", "npm_config_cache", "POLICYOPS_WEB_BUILD_DIR", "POLICYOPS_WEB_CACHE_DIR",
                      "LOCALAPPDATA", "XDG_DATA_HOME"):
             with self.subTest(name=name):
                 self.assertIn(self.root, Path(env[name]).parents)
+        self.assertEqual(Path(env["TIKTOKEN_CACHE_DIR"]), self.root / "cache" / "tiktoken")
         self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
         self.assertEqual(env["PYTHON_DOTENV_DISABLED"], "1")
         self.assertEqual(env["LITELLM_LOCAL_MODEL_COST_MAP"], "True")

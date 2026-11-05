@@ -14,10 +14,14 @@ Anything else is refused before the inner transport is reached. A second request
 too. The SDK's own retries are already 0.
 
 The response is uncompressed (`Accept-Encoding: identity`; any other `Content-Encoding` is refused before decoding)
-and its stream is bounded: at most 1 MiB in total, and no line longer than 64 KiB, every line of every chunk checked
-(which covers SSE lines). Every opened stream is closed when the caller exits, and `closed` counts the closes so
-tests can prove it. `sent` tells the caller whether the request may have reached the network. `refusal` holds a fixed
-code, never content.
+and its stream is bounded by the expected request's immutable `ResponseBounds`:
+- chat (the default, `CHAT_BOUNDS`): at most 1 MiB in total, and no line longer than 64 KiB, every line of every
+  chunk checked (which covers SSE lines);
+- embeddings (`EMBEDDING_BOUNDS`, T12): at most 4 MiB in total and no per-line bound. That is for a non-SSE JSON
+  body only: a 64 x 1536 vector response is commonly a single line far above 64 KiB.
+
+Every opened stream is closed when the caller exits, and `closed` counts the closes so tests can prove it. `sent`
+tells the caller whether the request may have reached the network. `refusal` holds a fixed code, never content.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from policyops.providers.contract import ALLOWED_HEADER_PREFIX, ALLOWED_HEADERS,
 CLEANUP_SECONDS = 2.0
 MAX_RESPONSE_BYTES = 1 << 20
 MAX_LINE_BYTES = 64 << 10
+MAX_EMBEDDING_RESPONSE_BYTES = 4 << 20
 TIMEOUT = httpx2.Timeout(60.0, connect=5.0)
 
 
@@ -56,10 +61,36 @@ class ResponseTooLarge(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ResponseBounds:
+    """How many decoded response bytes a request may receive: in total, and per line (`None`: no line bound, for a
+    non-SSE JSON body only). Validated once, here; immutable."""
+
+    total_bytes: int
+    line_bytes: int | None
+
+    def __post_init__(self) -> None:
+        values = (self.total_bytes,) if self.line_bytes is None else (self.total_bytes, self.line_bytes)
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_EMBEDDING_RESPONSE_BYTES:
+                raise ValueError("a response bound is a positive integer of at most 4 MiB")
+        if self.line_bytes is not None and self.line_bytes > self.total_bytes:
+            raise ValueError("a line bound cannot exceed the total bound")
+
+
+CHAT_BOUNDS = ResponseBounds(MAX_RESPONSE_BYTES, MAX_LINE_BYTES)
+EMBEDDING_BOUNDS = ResponseBounds(MAX_EMBEDDING_RESPONSE_BYTES, None)
+
+
+@dataclass(frozen=True)
 class Expected:
     provider: Provider
     path: str
     body: bytes
+    bounds: ResponseBounds = CHAT_BOUNDS
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.bounds, ResponseBounds):
+            raise TypeError("bounds must be a ResponseBounds")
 
 
 class _BoundedStream(httpx2.AsyncByteStream):
@@ -68,17 +99,19 @@ class _BoundedStream(httpx2.AsyncByteStream):
         self.owner = owner
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
+        bounds = self.owner.expected.bounds
         total = since_newline = 0
         async for chunk in self.inner:
             total += len(chunk)
-            if total > MAX_RESPONSE_BYTES:
+            if total > bounds.total_bytes:
                 raise ResponseTooLarge("response_too_large")
-            segments = chunk.split(b"\n")
-            # Every line in the chunk is checked: the first continues the previous chunk's open line.
-            lengths = [since_newline + len(segments[0]), *(len(segment) for segment in segments[1:])]
-            if max(lengths) > MAX_LINE_BYTES:
-                raise ResponseTooLarge("line_too_long")
-            since_newline = lengths[-1]
+            if bounds.line_bytes is not None:
+                segments = chunk.split(b"\n")
+                # Every line in the chunk is checked: the first continues the previous chunk's open line.
+                lengths = [since_newline + len(segments[0]), *(len(segment) for segment in segments[1:])]
+                if max(lengths) > bounds.line_bytes:
+                    raise ResponseTooLarge("line_too_long")
+                since_newline = lengths[-1]
             yield chunk
 
     async def aclose(self) -> None:

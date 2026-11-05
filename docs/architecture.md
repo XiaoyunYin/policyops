@@ -313,8 +313,8 @@ Limits:
 `policyops.budget` (T10) holds the allowed models, their dated prices, the cost calculator, the actor configuration,
 the usage ledger rules and the offline evaluation preflight. It imports no provider SDK or HTTP framework and makes
 no provider call itself. The provider adapters (see "Provider adapters" below) account for every physical request
-they make through this ledger. The investigation runtime does not call them yet; their only live use so far is one
-approved smoke (below).
+they make through this ledger. The investigation runtime does not call them yet; their only live use so far is the
+approved smokes and one diagnostic (below).
 
 - **Price snapshot.** `pricing.2026-11-05.v1` holds standard first-party text-token rates per million tokens, read
   on 2026-11-05 from the providers' public model, pricing and prompt-caching pages (listed in `prices.SOURCES`).
@@ -334,7 +334,7 @@ approved smoke (below).
   implicit caching writes at the 30m lifetime. The provider adapters (below) implement the contract: OpenAI requests
   send `prompt_cache_options.mode = "explicit"` with no breakpoints, and Anthropic requests carry no cache markers
   and no replayed thinking. `registry.CACHE_NONE_CONTRACT` keeps its recorded per-provider descriptor unchanged (its
-  Anthropic text still says "unverified", meaning no live verification). It is part of every actor configuration
+  Anthropic text still says "unverified", as written before any live run). It is part of every actor configuration
   digest, so it is not rewritten.
 - **Actors and caps.**
   - Defaults: agent, simulator and reranker use Luna with low effort; the judge uses Haiku with low effort; the
@@ -403,19 +403,46 @@ exact OpenAI Responses or Anthropic Messages request. It sends that request thro
 exactly (`openai` 3.40.0, `anthropic` 2.3.0, the newest version before the lock's supply-chain cutoff), and accounts
 for every physical request in the usage ledger.
 
-**Live use so far.** It is one user-approved capability smoke: a frozen configuration, a persisted USD 0.01 cap,
-one count and one inference per case, no retries and no fallback.
-- **OpenAI.** The text, required-tool and structured-output cases were verified, with known usage. On those three
-  small requests the official count equalled the reported input.
-- **Anthropic.** The three count requests were accepted. The three inference requests returned HTTP 400, and their
-  holds stay unresolved.
-  - **Diagnostic.** One separately approved resend of the unchanged text request (one count, one inference, no
-    retry) recorded only a closed error category: `invalid_request_error`, naming the parameter `speed`, with no
-    indicator such as a spend limit or credit balance. The full message was not retained. This implicates the
-    explicit `speed` field; it does not establish the provider's whole reasoning.
-  - **Repair.** The request now omits `speed`, keeping the standard default (below).
-  - **Status.** Anthropic inference is **not** verified. Verifying it needs a separately approved fixed-source
-    smoke.
+**Live use so far (2026-11-05).** All of it was user-approved and capped, with one count and one inference per
+case, no automatic retries and no fallback. Every case ran at low effort with cache mode `none`: Luna on the default
+tier, and Haiku on `standard_only` with thinking disabled.
+
+1. **First smoke** (source at commit `93afd3b`, a persisted USD 0.01 cap):
+   - **OpenAI.** The text, required-tool and structured-output cases were verified, with known usage.
+   - **Anthropic.** The three count requests were accepted, but the three inference requests returned HTTP 400.
+     They have no result or usage, and their holds stay unresolved.
+2. **Diagnostic.** One separately approved resend of the unchanged Haiku text request (one count, one inference, no
+   retry) also returned HTTP 400, and its hold stays unresolved too.
+   - It recorded only a closed error category: `invalid_request_error`, naming the parameter `speed`, with no
+     indicator such as a spend limit or credit balance.
+   - The full message was not retained. This implicates the explicit `speed` field; it does not establish the
+     provider's whole reasoning.
+3. **Repair.** Commit `0a91c03` makes the Anthropic request omit `speed`, which keeps the standard default (below).
+   The OpenAI request and count bytes, and every count body, are unchanged; tests prove this byte for byte.
+4. **Fixed-source Haiku smoke** (source at commit `0a91c03`, a new study with a USD 0.002 cap and 3 calls): the
+   text, required-tool and streamed structured-output cases were all verified. Each had known usage, one settled
+   attempt, confirmed cleanup and the returned model `claude-haiku-5-5`. The study settled completely, with nothing
+   held and no contract block.
+
+**Which evidence each provider rests on.** The OpenAI results come from the first smoke on the earlier source and
+were **not** rerun on `0a91c03`. They carry over because the request and count bytes are proven unchanged. The Haiku
+results come only from the fixed-source smoke. No call used an automatic retry. The earlier failures and their
+unresolved holds are preserved, not erased or reset.
+
+| Provider / model | Case | Live result | Official count | Reported input | Reported output |
+|---|---|---|---|---|---|
+| OpenAI `gpt-6-luna` | text | verified | 30 | 30 | 10 |
+| OpenAI `gpt-6-luna` | required tool | verified | 152 | 152 | 19 |
+| OpenAI `gpt-6-luna` | streamed structured | verified | 71 | 71 | 26 |
+| Anthropic `claude-haiku-5-5` | text | verified | 37 | 37 | 10 |
+| Anthropic `claude-haiku-5-5` | required tool | verified | 547 | 547 | 40 |
+| Anthropic `claude-haiku-5-5` | streamed structured | verified | 280 | 280 | 33 |
+
+**What the table shows.** On these six small requests the official count equalled the reported input. The ledger
+amounts priced from the dated local price table were USD 0.0000528 for the three OpenAI cases and USD 0.0001279 for
+the three Haiku cases. These are local calculations, not reconciled provider invoices. The results cover one tested
+account per provider (separate vendor accounts), one date and one configuration. They are not evidence of model
+quality, general counting accuracy, performance or a universal capability.
 
 Earlier, separately documented project work made count-only provider requests that did not use these adapters.
 
@@ -499,12 +526,13 @@ price.
   - an unexpected exception after a grant still leaves the attempt unresolved;
   - a count or request client whose close could not be confirmed within its bound is listed in
     `CallReport.cleanup_unconfirmed`, and its bill is unaffected.
-- **Capability record** (`capability.py`): the live cells are all `not_run`. Its smoke manifest is **preliminary
-  data only** (`preliminary_not_enforceable`): it is not an executable or approved plan, and no live run happens
-  without a separately reviewed driver and explicit approval.
+- **Capability record** (`capability.py`): the factory returns an unpopulated template whose live cells are all
+  `not_run`, whatever has been observed. The actual dated live results are the matrix under **Live use so far**
+  above. The record's smoke manifest is **preliminary data only** (`preliminary_not_enforceable`). It is not an
+  executable or approved plan, and no live run happens without a separately reviewed driver and explicit approval.
 - **Limits:**
-  - **No live evidence:** there is no live capability, counting or estimate-versus-usage evidence, so the live
-    acceptance stays open.
+  - **Narrow live evidence:** the live capability and count-versus-usage evidence is limited to the six dated
+    smoke cases above.
   - **Deferred to the worker runtime:** recovering a stale count or dispatch claim needs the worker fence, as do
     the 180 active seconds.
   - **Cancellation:** a provider may keep generating after a local cancel; the hold stays.

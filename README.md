@@ -2,7 +2,7 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and provider adapters for the OpenAI Responses and Anthropic Messages APIs (one user-approved, capped live smoke verified the OpenAI text, tool and structured-output paths; the Anthropic inference requests returned HTTP 400; one approved diagnostic resend showed the refusal naming the optional `speed` field, which the Anthropic request now omits, but Anthropic inference has not been re-verified live; no agent workflow calls the adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture), and a deterministic policy and tool gateway (scoped lookups, reads and computed non-actionable write previews, and an execution precheck that loads persisted authority records by reference; no write is dispatched by it, and no persisted decision store or operation ledger exists yet) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. Persisted proposals and decisions, the execution workflow and the UI remain pending. No model-quality or performance results are claimed.**
+**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and provider adapters for the OpenAI Responses and Anthropic Messages APIs (user-approved, capped live smokes on 2026-11-05 verified the text, tool and structured-output paths for both providers; the Anthropic paths were verified only after the request stopped sending the optional `speed` field named by a diagnostic of the earlier HTTP 400 refusals, which remain recorded; no agent workflow calls the adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture), and a deterministic policy and tool gateway (scoped lookups, reads and computed non-actionable write previews, and an execution precheck that loads persisted authority records by reference; no write is dispatched by it, and no persisted decision store or operation ledger exists yet) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. Persisted proposals and decisions, the execution workflow and the UI remain pending. No model-quality or performance results are claimed.**
 
 ## Intended architecture
 
@@ -63,12 +63,24 @@ pinned exactly (`openai` 3.40.0, `anthropic` 2.3.0). SDK retries are disabled, t
 ambient environment settings are refused, and a transport lets only the bound bytes out. Usage settles exactly when
 it is known and priced, stays held when it is not, and a contract violation blocks further progress. Structured
 results are validated locally against the full domain schema. The test suites run offline against a scripted
-transport. One user-approved live smoke, capped and with no retries, verified the OpenAI text, required-tool and
-structured-output paths. Its Anthropic count requests were accepted, but the three inference requests returned
-HTTP 400. One approved diagnostic resend of the unchanged request recorded only the error's category: an invalid
-request that named the optional `speed` field. The Anthropic request now omits `speed`, which keeps the standard
-default. That repair has not been verified live, so Anthropic inference remains unverified. Full paired-provider
-acceptance is open, and no agent workflow calls the adapters yet. See
+transport.
+
+**Live smokes (2026-11-05).** They were user-approved and capped, with no automatic retries.
+
+- **OpenAI.** The first smoke verified the text, required-tool and structured-output paths. That smoke ran on the
+  source at commit `93afd3b`.
+- **Anthropic.** In that first smoke, the three Anthropic inference requests returned HTTP 400.
+  - One approved diagnostic resend of the unchanged request also returned HTTP 400. It recorded only the error's
+    category: an invalid request that named the optional `speed` field.
+  - Commit `0a91c03` makes the Anthropic request omit `speed`, which keeps the standard default, and leaves the
+    OpenAI request bytes unchanged.
+  - A fixed-source Haiku smoke on that commit then verified the text, required-tool and streamed structured-output
+    paths.
+- **What is unchanged.** The earlier failures and their unresolved budget holds remain recorded.
+- **Counts.** On all six small requests, the official count equalled the reported input.
+
+The architecture document has the dated matrix and its limits. These results are not evidence of model quality,
+general counting accuracy or performance. No agent workflow calls the adapters yet. See
 [docs/architecture.md](docs/architecture.md#provider-adapters).
 
 ## Retail simulator

@@ -314,7 +314,7 @@ Limits:
 the usage ledger rules and the offline evaluation preflight. It imports no provider SDK or HTTP framework and makes
 no provider call itself. The provider adapters (see "Provider adapters" below) account for every physical request
 they make through this ledger. The investigation runtime does not call them yet; their only live use so far is the
-approved smokes and one diagnostic (below).
+approved smokes, the one embedding smoke (see **Embedding foundation**) and one diagnostic.
 
 - **Price snapshot.** `pricing.2026-11-05.v1` holds standard first-party text-token rates per million tokens, read
   on 2026-11-05 from the providers' public model, pricing and prompt-caching pages (listed in `prices.SOURCES`).
@@ -544,7 +544,8 @@ price.
 
 T12's first component: an accounted, cached way to embed exact texts with `text-embedding-3-small` at 1536
 dimensions. Document ingestion, chunking, index activation and retrieval are later components; nothing calls this
-from an API or the worker yet, and no live embedding request has been made.
+from an API or the worker yet. One bounded live compatibility smoke on 2026-11-05 is described under **Limits**
+below.
 
 **Local counting** (`providers/tokenizer.py`). Embedding inputs are counted with cl100k_base, the encoding tiktoken
 0.14.0 maps to this model:
@@ -560,7 +561,8 @@ from an API or the worker yet, and no live embedding request has been made.
   That bounds the per-piece merge work. Encoding is synchronous and no timeout interrupts it; the measured worst
   admitted inputs take milliseconds on development hardware, which is a measurement, not a guarantee.
 - The count is recorded in the ledger with source `local.tiktoken-cl100k`. There is no embedding count endpoint and
-  no count request. Whether it equals the provider's billed `prompt_tokens` is unverified until a live comparison.
+  no count request. In the one live smoke below the local total (42) equalled the provider's `prompt_tokens`; that is
+  a single small sample, not general equality.
 
 **The request** (`providers/embeddings.py`, `embedding_contract.py`). The body is exactly `{"model", "input",
 "dimensions": 1536, "encoding_format": "float"}`, fingerprinted like a chat request. `encoding_format` is always
@@ -615,7 +617,19 @@ timeout or cancellation during cleanup cannot lose a known bill.
 **Limits.**
 - The default operation caps (64 calls, USD 0.05) and the 180-second active window bound one job; larger jobs need
   explicitly larger server caps.
-- The provider's actual response layout has not been observed (no live embedding request). A synthetic maximum
+- **Live compatibility smoke (2026-11-05).** One user-approved, capped request to OpenAI `text-embedding-3-small`
+  (float, 1536 dimensions) ran against accepted commit `3a037abb`. The logical job had four ordered input positions:
+  three distinct short synthetic texts (ASCII, Unicode, CRLF plus tab) and one duplicated position. Deduplication
+  sent the three unique inputs in one physical provider request, with no provider count request and no retries; the
+  provider returned three vectors, stored as three cache entries and mapped back to the four ordered positions. Local
+  counts of 14 + 16 + 12 = 42 equalled the returned `prompt_tokens` and `total_tokens` (42) on this sample only. The
+  ledger settled USD 0.00000084 with nothing held (operation cap USD 0.001, worst-case reservation USD 0.00000256).
+  This is the cost of this smoke, not a statement about retrieval quality, model quality, cache savings or
+  performance, and it is not an evaluation. The earlier dated Luna and Haiku evidence and their recorded holds are
+  unchanged. Ingestion and retrieval are not built, no API or worker caller exists, and T12 is incomplete. The
+  external smoke ran under a 300-second child supervisor with a bounded cleanup grace; that is not a production
+  deadline proof, and the database-wait bullet at the end of this list still applies.
+- A synthetic maximum
   batch (64 x 1536 numbers of 24 characters, two-space indentation) measures about 3.3 MB; deeper indentation could
   exceed the enforced 4 MiB bound, and a response above it is refused with its hold kept.
 - Cache entries and evidence are never deleted at runtime; there is no retention policy yet.

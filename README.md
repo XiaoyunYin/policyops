@@ -2,7 +2,7 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and provider adapters for the OpenAI Responses and Anthropic Messages APIs (user-approved, capped live smokes on 2026-11-05 verified the text, tool and structured-output paths for both providers; the Anthropic paths were verified only after the request stopped sending the optional `speed` field named by a diagnostic of the earlier HTTP 400 refusals, which remain recorded; no agent workflow calls the adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture), and a deterministic policy and tool gateway (scoped lookups, reads and computed non-actionable write previews, and an execution precheck that loads persisted authority records by reference; no write is dispatched by it, and no persisted decision store or operation ledger exists yet) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. Persisted proposals and decisions, the execution workflow and the UI remain pending. The first T12 component, an accounted and cached embedding foundation (local cl100k counting, one ledger-granted request per frozen batch, exact evidence and a per-workspace vector cache), is implemented and tested offline only; document ingestion and retrieval are not built yet. No model-quality or performance results are claimed.**
+**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and provider adapters for the OpenAI Responses and Anthropic Messages APIs (user-approved, capped live smokes on 2026-11-05 verified the text, tool and structured-output paths for both providers; the Anthropic paths were verified only after the request stopped sending the optional `speed` field named by a diagnostic of the earlier HTTP 400 refusals, which remain recorded; no agent workflow calls the adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture), and a deterministic policy and tool gateway (scoped lookups, reads and computed non-actionable write previews, and an execution precheck that loads persisted authority records by reference; no write is dispatched by it, and no persisted decision store or operation ledger exists yet) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. Persisted proposals and decisions, the execution workflow and the UI remain pending. The first T12 component, an accounted and cached embedding foundation (local cl100k counting, one ledger-granted request per frozen batch, exact evidence and a per-workspace vector cache), is implemented and tested offline, plus one bounded live compatibility smoke on 2026-11-05 (below); document ingestion and retrieval are not built yet. No model-quality or performance results are claimed.**
 
 ## Intended architecture
 
@@ -88,8 +88,20 @@ general counting accuracy or performance. No agent workflow calls the adapters y
 downloaded at runtime), a persisted job freezes its batch plan, each batch is one ledger-granted request with an
 explicit float encoding, and its evidence and validated vectors are published atomically to a per-workspace cache.
 Unknown or contradictory billing keeps the hold; a complete body is accounted even if its cleanup is interrupted.
-It is tested offline and on PostgreSQL only: no live embedding request has been made, and nothing calls it from an
-API or the worker yet. See [docs/architecture.md](docs/architecture.md#embedding-foundation).
+It is tested offline and on PostgreSQL. Nothing calls it from an API or the worker yet, and document ingestion and
+retrieval are not built (T12 is incomplete).
+
+**Live embedding smoke (2026-11-05).** One user-approved, capped compatibility check ran against accepted commit
+`3a037abb`: a single OpenAI `text-embedding-3-small` request (float, 1536 dimensions). The logical job had four ordered input
+positions made of three distinct short synthetic texts (ASCII, Unicode, and CRLF plus tab) and one duplicated
+position. Deduplication sent the three unique inputs in one physical provider request; the provider returned three
+vectors, which were stored as three cache entries and mapped back to the four ordered positions. There was no
+provider token-count request and no retries. The local counts (14 + 16 + 12 = 42) equalled the returned `prompt_tokens` and `total_tokens` (42) on this
+sample only. The ledger settled USD 0.00000084 with nothing held (operation cap USD 0.001, worst-case reservation
+USD 0.00000256). That is the cost of this smoke, not evidence of retrieval quality, model quality, cache savings,
+general token-count equality or performance. The external smoke ran under its own 300-second process supervisor with
+bounded cleanup; HTTP cleanup is bounded, but a synchronous SQL wait is not interrupted, so this is not a production
+deadline proof. See [docs/architecture.md](docs/architecture.md#embedding-foundation).
 
 ## Retail simulator
 

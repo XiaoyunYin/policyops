@@ -1,0 +1,1003 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "Address": {
+      "additionalProperties": false,
+      "properties": {
+        "address1": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Address1",
+          "type": "string"
+        },
+        "address2": {
+          "maxLength": 100,
+          "minLength": 0,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "title": "Address2",
+          "type": "string"
+        },
+        "city": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "City",
+          "type": "string"
+        },
+        "country": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Country",
+          "type": "string"
+        },
+        "state": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "State",
+          "type": "string"
+        },
+        "zip": {
+          "pattern": "^\\d{5}$",
+          "title": "Zip",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address1",
+        "address2",
+        "city",
+        "state",
+        "country",
+        "zip"
+      ],
+      "title": "Address",
+      "type": "object"
+    },
+    "CalculationOutput": {
+      "additionalProperties": false,
+      "description": "Upstream's rounded float rendering. A calculator result is never exact-money evidence.",
+      "properties": {
+        "kind": {
+          "const": "calculation",
+          "default": "calculation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 64,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "CalculationOutput",
+      "type": "object"
+    },
+    "ErrorCode": {
+      "enum": [
+        "invalid_input",
+        "unauthenticated",
+        "forbidden",
+        "not_found",
+        "conflict",
+        "stale_version",
+        "expired",
+        "customer_not_authenticated",
+        "customer_mismatch",
+        "policy_denied",
+        "policy_unsupported",
+        "consent_required",
+        "consent_ambiguous",
+        "approval_required",
+        "separation_of_duties",
+        "protocol_violation",
+        "upstream_money_precision",
+        "rate_limited",
+        "unavailable",
+        "internal"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "ExchangeRequestDetail": {
+      "additionalProperties": false,
+      "description": "A *recorded* exchange request: upstream changes no item, payment or balance until it is processed.",
+      "properties": {
+        "item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Item Ids",
+          "type": "array"
+        },
+        "new_item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "New Item Ids",
+          "type": "array"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "price_difference": {
+          "$ref": "#/$defs/Money"
+        }
+      },
+      "required": [
+        "item_ids",
+        "new_item_ids",
+        "payment_method_id",
+        "price_difference"
+      ],
+      "title": "ExchangeRequestDetail",
+      "type": "object"
+    },
+    "FulfillmentDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Item Ids",
+          "type": "array"
+        },
+        "tracking_ids": {
+          "items": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Tracking Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tracking_ids",
+        "item_ids"
+      ],
+      "title": "FulfillmentDetail",
+      "type": "object"
+    },
+    "HandoffObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "handoff",
+          "default": "handoff",
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "const": "YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON.",
+          "default": "YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON.",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "title": "HandoffObservation",
+      "type": "object"
+    },
+    "LookupObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "lookup",
+          "default": "lookup",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "authenticated",
+            "not_found"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "tool": {
+          "enum": [
+            "find_user_id_by_email",
+            "find_user_id_by_name_zip"
+          ],
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "outcome"
+      ],
+      "title": "LookupObservation",
+      "type": "object"
+    },
+    "Money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_minor": {
+          "maximum": 1000000000000,
+          "minimum": -1000000000000,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "const": "USD",
+          "default": "USD",
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount_minor"
+      ],
+      "title": "Money",
+      "type": "object"
+    },
+    "OptionValue": {
+      "additionalProperties": false,
+      "description": "One variant option (for example `color` = `blue`); a variant's options are sorted by name.",
+      "properties": {
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "OptionValue",
+      "type": "object"
+    },
+    "OrderDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Address"
+        },
+        "cancel_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "no longer needed",
+                "ordered by mistake"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cancel Reason"
+        },
+        "exchange_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExchangeRequestDetail"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fulfillments": {
+          "items": {
+            "$ref": "#/$defs/FulfillmentDetail"
+          },
+          "maxItems": 20,
+          "title": "Fulfillments",
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/OrderItemDetail"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Items",
+          "type": "array"
+        },
+        "order_id": {
+          "pattern": "^#W\\d{7}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "payment_history": {
+          "items": {
+            "$ref": "#/$defs/PaymentRecord"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Payment History",
+          "type": "array"
+        },
+        "return_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReturnRequestDetail"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "processed",
+            "delivered",
+            "cancelled",
+            "pending (item modified)",
+            "exchange requested",
+            "return requested"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "user_id": {
+          "maxLength": 64,
+          "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+          "title": "User Id",
+          "type": "string"
+        },
+        "version": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "order_id",
+        "user_id",
+        "version",
+        "status",
+        "address",
+        "items",
+        "fulfillments",
+        "payment_history"
+      ],
+      "title": "OrderDetail",
+      "type": "object"
+    },
+    "OrderItemDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/OptionValue"
+          },
+          "maxItems": 16,
+          "title": "Options",
+          "type": "array"
+        },
+        "price": {
+          "$ref": "#/$defs/Money"
+        },
+        "product_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Product Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "product_id",
+        "name",
+        "price",
+        "options"
+      ],
+      "title": "OrderItemDetail",
+      "type": "object"
+    },
+    "OrderOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "order",
+          "default": "order",
+          "title": "Kind",
+          "type": "string"
+        },
+        "order": {
+          "$ref": "#/$defs/OrderDetail"
+        }
+      },
+      "required": [
+        "order"
+      ],
+      "title": "OrderOutput",
+      "type": "object"
+    },
+    "PaymentMethodDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "brand": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Brand"
+        },
+        "gift_card_balance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "enum": [
+            "credit_card",
+            "paypal",
+            "gift_card"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "last_four": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Four"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "payment_method_id",
+        "kind"
+      ],
+      "title": "PaymentMethodDetail",
+      "type": "object"
+    },
+    "PaymentRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/Money"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        },
+        "transaction_type": {
+          "enum": [
+            "payment",
+            "refund"
+          ],
+          "title": "Transaction Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transaction_type",
+        "payment_method_id",
+        "amount"
+      ],
+      "title": "PaymentRecord",
+      "type": "object"
+    },
+    "ProductOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "product",
+          "default": "product",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "product_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Product Id",
+          "type": "string"
+        },
+        "variants": {
+          "items": {
+            "$ref": "#/$defs/VariantDetail"
+          },
+          "maxItems": 200,
+          "title": "Variants",
+          "type": "array"
+        }
+      },
+      "required": [
+        "product_id",
+        "name",
+        "variants"
+      ],
+      "title": "ProductOutput",
+      "type": "object"
+    },
+    "ProductType": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "product_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Product Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "product_id"
+      ],
+      "title": "ProductType",
+      "type": "object"
+    },
+    "ProductTypesOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "product_types",
+          "default": "product_types",
+          "title": "Kind",
+          "type": "string"
+        },
+        "types": {
+          "items": {
+            "$ref": "#/$defs/ProductType"
+          },
+          "maxItems": 200,
+          "title": "Types",
+          "type": "array"
+        }
+      },
+      "required": [
+        "types"
+      ],
+      "title": "ProductTypesOutput",
+      "type": "object"
+    },
+    "ProposalPreview": {
+      "additionalProperties": false,
+      "properties": {
+        "actionable": {
+          "const": false,
+          "default": false,
+          "title": "Actionable",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "proposal_preview",
+          "default": "proposal_preview",
+          "title": "Kind",
+          "type": "string"
+        },
+        "presentation": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Presentation",
+          "type": "string"
+        },
+        "tool": {
+          "pattern": "^[a-z][a-z_]{2,63}$",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "presentation"
+      ],
+      "title": "ProposalPreview",
+      "type": "object"
+    },
+    "ReadObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "case_version": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Case Version",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "read",
+          "default": "read",
+          "title": "Kind",
+          "type": "string"
+        },
+        "output": {
+          "discriminator": {
+            "mapping": {
+              "calculation": "#/$defs/CalculationOutput",
+              "order": "#/$defs/OrderOutput",
+              "product": "#/$defs/ProductOutput",
+              "product_types": "#/$defs/ProductTypesOutput",
+              "user": "#/$defs/UserOutput",
+              "user_id": "#/$defs/UserIdOutput",
+              "variant": "#/$defs/VariantOutput"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UserIdOutput"
+            },
+            {
+              "$ref": "#/$defs/UserOutput"
+            },
+            {
+              "$ref": "#/$defs/OrderOutput"
+            },
+            {
+              "$ref": "#/$defs/ProductOutput"
+            },
+            {
+              "$ref": "#/$defs/VariantOutput"
+            },
+            {
+              "$ref": "#/$defs/ProductTypesOutput"
+            },
+            {
+              "$ref": "#/$defs/CalculationOutput"
+            }
+          ],
+          "title": "Output"
+        },
+        "tool": {
+          "pattern": "^[a-z][a-z_]{2,63}$",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "output",
+        "case_version"
+      ],
+      "title": "ReadObservation",
+      "type": "object"
+    },
+    "ReturnRequestDetail": {
+      "additionalProperties": false,
+      "description": "A *recorded* return request; upstream computes no refund amount and moves no money.",
+      "properties": {
+        "item_ids": {
+          "items": {
+            "pattern": "^\\d{10}$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Item Ids",
+          "type": "array"
+        },
+        "payment_method_id": {
+          "pattern": "^(?:credit_card|paypal|gift_card)_\\d{7}$",
+          "title": "Payment Method Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_ids",
+        "payment_method_id"
+      ],
+      "title": "ReturnRequestDetail",
+      "type": "object"
+    },
+    "ToolError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "detail": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "const": "error",
+          "default": "error",
+          "title": "Kind",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "rule_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Id"
+        }
+      },
+      "required": [
+        "code",
+        "detail",
+        "retryable"
+      ],
+      "title": "ToolError",
+      "type": "object"
+    },
+    "UserDetail": {
+      "additionalProperties": false,
+      "description": "The case's own customer: name, contact, address, methods and *their* order IDs only.",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/Address"
+        },
+        "email": {
+          "maxLength": 254,
+          "pattern": "^[^@\\s]{1,64}@[^@\\s]{1,189}\\.[A-Za-z]{2,}$",
+          "title": "Email",
+          "type": "string"
+        },
+        "first_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "First Name",
+          "type": "string"
+        },
+        "last_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Last Name",
+          "type": "string"
+        },
+        "order_ids": {
+          "items": {
+            "pattern": "^#W\\d{7}$",
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Order Ids",
+          "type": "array"
+        },
+        "payment_methods": {
+          "items": {
+            "$ref": "#/$defs/PaymentMethodDetail"
+          },
+          "maxItems": 50,
+          "title": "Payment Methods",
+          "type": "array"
+        },
+        "user_id": {
+          "maxLength": 64,
+          "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+          "title": "User Id",
+          "type": "string"
+        },
+        "version": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "user_id",
+        "version",
+        "first_name",
+        "last_name",
+        "email",
+        "address",
+        "payment_methods",
+        "order_ids"
+      ],
+      "title": "UserDetail",
+      "type": "object"
+    },
+    "UserIdOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "user_id",
+          "default": "user_id",
+          "title": "Kind",
+          "type": "string"
+        },
+        "user_id": {
+          "maxLength": 64,
+          "pattern": "^[a-z]+(?:_[a-z]+)*_\\d{1,6}$",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id"
+      ],
+      "title": "UserIdOutput",
+      "type": "object"
+    },
+    "UserOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "user",
+          "default": "user",
+          "title": "Kind",
+          "type": "string"
+        },
+        "user": {
+          "$ref": "#/$defs/UserDetail"
+        }
+      },
+      "required": [
+        "user"
+      ],
+      "title": "UserOutput",
+      "type": "object"
+    },
+    "VariantDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "item_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/OptionValue"
+          },
+          "maxItems": 16,
+          "title": "Options",
+          "type": "array"
+        },
+        "price": {
+          "$ref": "#/$defs/Money"
+        },
+        "product_id": {
+          "pattern": "^\\d{10}$",
+          "title": "Product Id",
+          "type": "string"
+        },
+        "product_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Product Name",
+          "type": "string"
+        },
+        "product_version": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Product Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "product_id",
+        "product_name",
+        "item_id",
+        "available",
+        "price",
+        "options",
+        "product_version"
+      ],
+      "title": "VariantDetail",
+      "type": "object"
+    },
+    "VariantOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "variant",
+          "default": "variant",
+          "title": "Kind",
+          "type": "string"
+        },
+        "variant": {
+          "$ref": "#/$defs/VariantDetail"
+        }
+      },
+      "required": [
+        "variant"
+      ],
+      "title": "VariantOutput",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "error": "#/$defs/ToolError",
+      "handoff": "#/$defs/HandoffObservation",
+      "lookup": "#/$defs/LookupObservation",
+      "proposal_preview": "#/$defs/ProposalPreview",
+      "read": "#/$defs/ReadObservation"
+    },
+    "propertyName": "kind"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ReadObservation"
+    },
+    {
+      "$ref": "#/$defs/LookupObservation"
+    },
+    {
+      "$ref": "#/$defs/ProposalPreview"
+    },
+    {
+      "$ref": "#/$defs/HandoffObservation"
+    },
+    {
+      "$ref": "#/$defs/ToolError"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "code": "policy_denied",
+  "detail": "order status is 'delivered'",
+  "kind": "error",
+  "retryable": false,
+  "rule_id": "cancel.pending_only"
+}

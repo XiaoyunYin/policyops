@@ -156,6 +156,19 @@ def _retail_service_examples(world: World) -> dict[str, Any]:
             "retail-service-lookup-result.unknown": LookupResult(state="unknown")}
 
 
+def _gateway_examples(proposal: Any) -> dict[str, Any]:
+    """What the agent sees after a gateway step (T17): a computed, non-actionable preview and a policy refusal."""
+    from policyops_contracts.errors import ErrorCode
+    from policyops_contracts.gateway import ProposalPreview, ToolError
+
+    return {
+        "tool-observation.proposal-preview": ProposalPreview(tool=proposal.action.tool,
+                                                             presentation=proposal.presentation.text),
+        "tool-observation.policy-denied": ToolError(code=ErrorCode.POLICY_DENIED, rule_id="cancel.pending_only",
+                                                    detail="order status is 'delivered'", retryable=False),
+    }
+
+
 def build_examples() -> dict[str, bytes]:
     """Canonical JSON documents for one fictional exchange flow, plus small standalone examples."""
     from policyops.domain.approval_rules import Decided, decide
@@ -232,6 +245,7 @@ def build_examples() -> dict[str, bytes]:
         "agent-step.transfer": ToolCallStep(call=TransferToHumanAgents(summary="Customer asked about a store "
                                                                              "credit program that is out of scope.")),
         "agent-step.handoff": MessageStep(text=HANDOFF_MESSAGE),
+        **_gateway_examples(proposal),
         "demo-seed": DemoSeed(seed_id="retail-demo-9999", label="Retail demo 9999", domain="retail",
                               upstream_task_id="9999", kind="mutation", allowlist_sha256="0" * 64),
         **_retail_service_examples(world),

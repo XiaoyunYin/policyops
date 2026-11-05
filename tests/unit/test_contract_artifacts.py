@@ -11,6 +11,7 @@ from policyops_contracts.consent import ApprovalDecision, CaseMessage, CustomerC
 from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
 from policyops_contracts.evidence import EvidenceManifest
+from policyops_contracts.gateway import ToolObservation
 from policyops_contracts.policy import RETAIL_POLICY, RETAIL_RULES, RULES_BY_ID
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail import WRITE_TOOLS, ToolName
@@ -50,6 +51,8 @@ def test_examples_regenerate_and_validate_strictly() -> None:
         stem = name.removesuffix(".json")
         if stem.startswith("agent-step."):
             TypeAdapter(AgentStep).validate_json(data)
+        elif stem.startswith("tool-observation."):
+            TypeAdapter(ToolObservation).validate_json(data)
         else:
             EXAMPLE_MODELS[stem].model_validate_json(data)
         text = data.decode("utf-8")

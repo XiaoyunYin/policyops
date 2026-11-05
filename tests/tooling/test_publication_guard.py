@@ -75,6 +75,25 @@ class PublicationGuardTests(unittest.TestCase):
                 self.assertEqual(self.run_guard().returncode, 1)
                 self.git("rm", "--cached", "--", name)
 
+    def test_only_the_exact_policy_coverage_map_passes_among_docs_json(self) -> None:
+        self.stage("docs/policy-coverage.json", '{"schema": "policyops.policy-coverage/v1"}\n')
+        self.assertEqual(self.run_guard().returncode, 0)
+        for name in ("docs/coverage.json", "docs/policy-coverage-raw.json", "docs/policy-coverage.json.bak",
+                     "docs/sub/policy-coverage.json", "docs/traces/policy-coverage.json", "docs/results.json",
+                     "evals/results/policy-coverage.json", "policy-coverage.json"):
+            with self.subTest(name=name):
+                self.stage(name, "{}\n")
+                result = self.run_guard()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(repr(name), result.stderr)  # blocked: outside the allowlist, or raw output
+                self.git("rm", "--cached", "--", name)
+
+    def test_the_policy_coverage_map_is_still_scanned_for_secrets(self) -> None:
+        self.stage("docs/policy-coverage.json", '{"note": "sk-' + 'x' * 30 + '"}\n')
+        result = self.run_guard()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("provider token", result.stderr)
+
     def test_environment_example_only_allowed_at_root(self) -> None:
         self.stage(".env.example", "OPENAI_API_KEY=\n")
         self.assertEqual(self.run_guard().returncode, 0)

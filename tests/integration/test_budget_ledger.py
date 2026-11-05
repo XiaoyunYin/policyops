@@ -41,6 +41,7 @@ from policyops.budget.ledger import (
 )
 from policyops.budget.pricing import Usage
 from policyops.domain.examples import World
+from policyops.persistence import migrate
 from policyops.persistence import repositories as repo
 from policyops.persistence.budget import AppLedgerStore, EvalLedgerStore, build_app_ledger, build_eval_ledger
 from policyops.persistence.database import IdempotencyConflict, RuntimeRoleError, transaction, workspace_transaction
@@ -619,7 +620,7 @@ def test_0006_upgrades_populated_data_and_guards_its_downgrade(new_app_database:
         assert conn.execute("SELECT to_regclass('app.usage_attempts'), to_regclass('evaluation.budget_scopes')"
                             ).fetchone() == (None, None)
     database.upgrade()
-    assert database.current() == "0007"
+    assert database.current() == migrate.head()
 
 
 def force_state(database: AppDatabase) -> bool:

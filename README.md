@@ -2,7 +2,7 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and offline provider adapters for the OpenAI Responses and Anthropic Messages APIs (exercised only against a scripted mock transport; no live call through these adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture; not yet called by any workflow) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. The policy gateway, execution workflow and UI remain pending. No model-quality or performance results are claimed.**
+**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and provider adapters for the OpenAI Responses and Anthropic Messages APIs (one user-approved, capped live smoke verified the OpenAI text, tool and structured-output paths; the Anthropic inference requests returned HTTP 400 with the cause not yet established; no agent workflow calls the adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture), and a deterministic policy and tool gateway (scoped lookups, reads and computed non-actionable write previews, and an execution precheck that loads persisted authority records by reference; no write is dispatched by it, and no persisted decision store or operation ledger exists yet) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. Persisted proposals and decisions, the execution workflow and the UI remain pending. No model-quality or performance results are claimed.**
 
 ## Intended architecture
 
@@ -62,9 +62,11 @@ provider's count endpoint, dispatches only with the ledger's single grant, and s
 pinned exactly (`openai` 3.40.0, `anthropic` 2.3.0). SDK retries are disabled, timeouts are explicit, redirects and
 ambient environment settings are refused, and a transport lets only the bound bytes out. Usage settles exactly when
 it is known and priced, stays held when it is not, and a contract violation blocks further progress. Structured
-results are validated locally against the full domain schema. Everything is tested offline against a scripted
-transport; no live call has been made through these adapters, and live capability and counting results remain
-open. See
+results are validated locally against the full domain schema. The test suites run offline against a scripted
+transport. One user-approved live smoke, capped and with no retries, verified the OpenAI text, required-tool and
+structured-output paths. Its Anthropic count requests were accepted, but the three inference requests returned
+HTTP 400; the cause is not yet established, so Anthropic inference remains unverified. Full paired-provider
+acceptance is open, and no agent workflow calls the adapters yet. See
 [docs/architecture.md](docs/architecture.md#provider-adapters).
 
 ## Retail simulator
@@ -86,9 +88,34 @@ python -B scripts/devenv.py uv --directory evals run --frozen policyops-retail-s
 See [docs/architecture.md](docs/architecture.md#retail-simulator) and
 [docs/database.md](docs/database.md#retail-schema).
 
+## Policy and tool gateway
+
+`packages/policyops/.../gateway` is the only path from an agent step to the retail service. The scope comes from
+the persisted run and case, and the retail client must be bound to it before any request. The closed parser refuses
+unknown tools and extra fields.
+
+**Lookups and reads.** A lookup authenticates only the case's bound customer, durably and first write wins. A read
+must return the requested resource and exactly its version.
+
+**Writes.** A write gathers the customer, the order and the replacement items. All of them must come from one case
+version, with at most three complete collections. The deterministic rules then evaluate them, and the result is
+only a computed, non-actionable preview.
+
+**Execution precheck.** The precheck re-validates persisted proposal, consent and approval records by reference.
+It re-evaluates current facts, so approval never overrides the policy. It checks the approver's current role and
+the proposal's evidence after the reads, and the expiry last. It returns the exact mutation request and its
+authorization deadline, and dispatches nothing.
+
+**Defaults that refuse until later tasks.** Until T18 and T19 exist:
+- there is no decision store, so the precheck refuses;
+- the operation history is incomplete, so once-per-order tools escalate.
+
+[docs/policy-coverage.json](docs/policy-coverage.json) maps every policy rule to its executed cases. See
+[docs/architecture.md](docs/architecture.md#policy-and-tool-gateway).
+
 ## Application database
 
-`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; a seven-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
+`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; an eight-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
 
 ## Development setup
 

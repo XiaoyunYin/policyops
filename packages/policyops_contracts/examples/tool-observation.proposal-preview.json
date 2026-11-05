@@ -1,0 +1,6 @@
+{
+  "actionable": false,
+  "kind": "proposal_preview",
+  "presentation": "Exchange the following items in delivered order #W0000001:\n- item 1000000001 ($19.99) -> item 1000000003 ($30.00), product 9000000001\nThe exchange request records a price difference of $10.01 owed by the customer, with gift_card_0000001 as the payment method for it. No charge or refund is made by this request.\nAn exchange can be requested only once for this order. Its status becomes 'exchange requested', return instructions are sent by email, and no new order is placed.\nPlease confirm that this list includes every item you want to exchange.\nReply yes to proceed, or tell me what to change.",
+  "tool": "exchange_delivered_order_items"
+}

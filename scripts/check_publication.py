@@ -30,6 +30,9 @@ PUBLIC_DOCS = {
     "docs/database.md",
     # T07: public reference for the OIDC/session/CSRF design, local identity setup and its limits.
     "docs/authentication.md",
+    # T17: the generated rule/source coverage map: rule IDs, policy line ranges and clause digests, and the IDs and
+    # asserted outcomes of the executed gateway cases. It holds no traces, states, results or policy text.
+    "docs/policy-coverage.json",
 }
 PRIVATE_NAMES = {
     "plan.md", "agents.md", "claude.md", "bullets.md",

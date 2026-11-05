@@ -1,0 +1,1340 @@
+{
+  "case_count": 71,
+  "case_source": "tests/support/policyops_testing/gateway_cases.py",
+  "case_test": "tests/unit/test_gateway_rules.py::test_rule_case",
+  "policy": {
+    "path": "data/tau2/domains/retail/policy.md",
+    "sha256": "2c9652afbce57d6e087768d37cda64d31c53d50b3e3225cfdb791bac66466467",
+    "source_commit": "19f13ea3f5fba8b4c4d272d1353590f29dc53062"
+  },
+  "rule_counts": {
+    "deterministic": 22,
+    "escalate": 2,
+    "not_codified": 2,
+    "presentation": 6,
+    "protocol": 2
+  },
+  "rules": [
+    {
+      "case_outcomes": [
+        "escalate"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_unsupported",
+          "asserted_rule_id": "scope.supported_requests",
+          "case_id": "unknown-tool-escalates",
+          "history": "not_used",
+          "outcome": "escalate",
+          "tool": "issue_store_credit",
+          "via": null
+        }
+      ],
+      "clause_sha256": "adb745262a0d2ecf60ef3055f12043a9dc63445646936e39ea9ab332fbd86756",
+      "enforcement": "escalate",
+      "linked_tests": [],
+      "policy_lines": [
+        3,
+        8
+      ],
+      "rule_id": "scope.supported_requests",
+      "tools": []
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "customer_mismatch",
+          "asserted_rule_id": "scope.single_customer",
+          "case_id": "address-change-for-other-user-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "modify_user_address",
+          "via": "only the bound customer's default address may change; another user's is scope.single_customer"
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "own-address-change",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "modify_user_address",
+          "via": null
+        }
+      ],
+      "clause_sha256": "2e96467670c66bf1fcb0699053272aae92abffec67954ce8aaf45a1565200fa3",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        7,
+        7
+      ],
+      "rule_id": "user_address.supported",
+      "tools": [
+        "modify_user_address"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "lookup-by-email-authenticates",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "find_user_id_by_email",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "lookup-by-name-zip-authenticates",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "find_user_id_by_name_zip",
+          "via": null
+        },
+        {
+          "asserted_code": "customer_not_authenticated",
+          "asserted_rule_id": "auth.lookup_required",
+          "case_id": "order-read-before-lookup-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "get_order_details",
+          "via": null
+        },
+        {
+          "asserted_code": "customer_not_authenticated",
+          "asserted_rule_id": "auth.lookup_required",
+          "case_id": "write-before-lookup-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "cancel_pending_order",
+          "via": null
+        }
+      ],
+      "clause_sha256": "07b97e5b3205eb45429a4e537cc352ce82ee6a359f6a7095f47f16cd5f04f5a9",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        10,
+        10
+      ],
+      "rule_id": "auth.lookup_required",
+      "tools": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "product-read-after-lookup",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "get_product_details",
+          "via": null
+        },
+        {
+          "asserted_code": "customer_not_authenticated",
+          "asserted_rule_id": "auth.lookup_required",
+          "case_id": "product-types-before-lookup-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "list_all_product_types",
+          "via": "authorize_call refuses every non-lookup read before authentication as auth.lookup_required"
+        }
+      ],
+      "clause_sha256": "9b572da2a8e9046a8c0139773c1f817950aef2094dbbdcaf1c6a37488ab9c0d3",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        12,
+        12
+      ],
+      "rule_id": "auth.reads_after_authentication",
+      "tools": [
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "get_item_details",
+        "list_all_product_types"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "customer_mismatch",
+          "asserted_rule_id": "scope.single_customer",
+          "case_id": "other-profile-read-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "get_user_details",
+          "via": null
+        },
+        {
+          "asserted_code": "customer_mismatch",
+          "asserted_rule_id": "scope.single_customer",
+          "case_id": "other-user-address-change-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "modify_user_address",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "own-profile-read",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "get_user_details",
+          "via": null
+        }
+      ],
+      "clause_sha256": "35c4f291b47c698f2ff3d47df5bee971f7fb9326218b5d2edb1882acd7a98603",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        14,
+        14
+      ],
+      "rule_id": "scope.single_customer",
+      "tools": [
+        "get_user_details",
+        "get_order_details",
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items",
+        "modify_user_address"
+      ]
+    },
+    {
+      "case_outcomes": [],
+      "cases": [],
+      "clause_sha256": "8006d0c4fea14bf6cf28c2c7ff8a296df4b75a96d48e304241f149f489eb4779",
+      "enforcement": "presentation",
+      "linked_tests": [
+        "tests/unit/test_consent_approval.py::test_explicit_yes_after_presentation_is_consent_bounded_by_expiry",
+        "tests/unit/test_consent_approval.py::test_anything_but_a_current_explicit_customer_yes_is_not_consent",
+        "tests/unit/test_gateway_steps.py::test_preview_is_computed_and_carries_no_authority",
+        "tests/unit/test_gateway_precheck.py::test_precheck_clears_only_a_bound_current_decision"
+      ],
+      "policy_lines": [
+        16,
+        16
+      ],
+      "rule_id": "consent.explicit_yes",
+      "tools": [
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items",
+        "modify_user_address"
+      ]
+    },
+    {
+      "case_outcomes": [],
+      "cases": [],
+      "clause_sha256": "b79facae907c653d79fd9d6597fc9271e8971d4819261d0a5ce98f8cce267c3e",
+      "enforcement": "not_codified",
+      "linked_tests": [],
+      "policy_lines": [
+        18,
+        18
+      ],
+      "rule_id": "grounding.no_fabrication",
+      "tools": [],
+      "uncovered_reason": "No invented information or subjective advice; checked later by citation validation and rubric, not by these rules."
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "one-tool-call-step",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "get_user_details",
+          "via": null
+        },
+        {
+          "asserted_code": "protocol_violation",
+          "asserted_rule_id": "protocol.one_action_per_turn",
+          "case_id": "tool-call-with-text-refused",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "calculate",
+          "via": null
+        },
+        {
+          "asserted_code": "protocol_violation",
+          "asserted_rule_id": "protocol.one_action_per_turn",
+          "case_id": "two-tool-calls-refused",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "get_user_details+calculate",
+          "via": null
+        }
+      ],
+      "clause_sha256": "282756cc14a8799b2d9c041d7fce685c5c96a49b98d1107663b899fb54c500b3",
+      "enforcement": "protocol",
+      "linked_tests": [
+        "tests/unit/test_session_protocol_roles.py::test_a_step_is_exactly_one_tool_call_or_one_message"
+      ],
+      "policy_lines": [
+        20,
+        20
+      ],
+      "rule_id": "protocol.one_action_per_turn",
+      "tools": []
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "cancel-pending",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "cancel_pending_order",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "cancel.pending_only",
+          "case_id": "denied-cancel-repeated-stays-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "cancel_pending_order",
+          "via": "a failed precondition denies, and repeating the identical call is denied the same way"
+        }
+      ],
+      "clause_sha256": "1c0d6976edd113a686e268068143cd33bd6a15c077678f5528eb342623477d01",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        22,
+        22
+      ],
+      "rule_id": "policy.deny_violations",
+      "tools": [
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items",
+        "modify_user_address"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "protocol_violation",
+          "asserted_rule_id": "escalation.transfer",
+          "case_id": "handoff-message-without-transfer-refused",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "message",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "transfer-observation",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "transfer_to_human_agents",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "transfer-then-handoff-message",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "message",
+          "via": null
+        },
+        {
+          "asserted_code": "protocol_violation",
+          "asserted_rule_id": "escalation.transfer",
+          "case_id": "transfer-then-other-message-refused",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "message",
+          "via": null
+        }
+      ],
+      "clause_sha256": "20d98bbdb1017e4f5d361612717fff09c069044ad50c08252389d662343d3c3c",
+      "enforcement": "protocol",
+      "linked_tests": [
+        "tests/unit/test_session_protocol_roles.py::test_transfer_must_be_followed_by_the_exact_handoff_message"
+      ],
+      "policy_lines": [
+        24,
+        24
+      ],
+      "rule_id": "escalation.transfer",
+      "tools": [
+        "transfer_to_human_agents"
+      ]
+    },
+    {
+      "case_outcomes": [],
+      "cases": [],
+      "clause_sha256": "e202dde1c02004c4feb7368ec9da2237b0d858f8b41a43b87d42867566c7a4cc",
+      "enforcement": "not_codified",
+      "linked_tests": [],
+      "policy_lines": [
+        28,
+        28
+      ],
+      "rule_id": "time.est_database",
+      "tools": [],
+      "uncovered_reason": "The pinned retail DB has no timestamp fields; application times are UTC."
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "item-read-names-its-product",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "get_item_details",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "items.same_product_other_option",
+          "case_id": "replacement-from-other-product-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_items",
+          "via": "the replacement's product comes from the service's item read; another product's item is denied under the tool's same-product rule"
+        }
+      ],
+      "clause_sha256": "c723aee9877606d77f121b092a1e78457145dd9cf54184f643e53f28ebccb4f6",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        62,
+        62
+      ],
+      "rule_id": "ids.product_item_distinct",
+      "tools": [
+        "get_product_details",
+        "get_item_details",
+        "modify_pending_order_items",
+        "exchange_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "status.actionable",
+          "case_id": "address-change-cancelled-order-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_address",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "address-change-pending-order",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_address",
+          "via": null
+        }
+      ],
+      "clause_sha256": "4406f95fbd2a4b4227b693f01f3a1082f03c4c71d2b541cfb323e6d9260b38c8",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        82,
+        82
+      ],
+      "rule_id": "status.actionable",
+      "tools": [
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny",
+        "escalate"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_unsupported",
+          "asserted_rule_id": "orders.modify_exchange_once",
+          "case_id": "address-change-default-history-escalates",
+          "history": "production_incomplete",
+          "outcome": "escalate",
+          "tool": "modify_pending_order_address",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "address-change-first-time",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_address",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "orders.modify_exchange_once",
+          "case_id": "address-change-second-time-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_address",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_unsupported",
+          "asserted_rule_id": "orders.modify_exchange_once",
+          "case_id": "exchange-default-history-escalates",
+          "history": "production_incomplete",
+          "outcome": "escalate",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "2dfbdc114a29370a0522663e7482bf05703da35b64f7e315095190b08d45ddd2",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        84,
+        84
+      ],
+      "rule_id": "orders.modify_exchange_once",
+      "tools": [
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "exchange_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "cancel.pending_only",
+          "case_id": "cancel-delivered-order-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "cancel_pending_order",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "cancel-pending-order",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "cancel_pending_order",
+          "via": null
+        }
+      ],
+      "clause_sha256": "be51712775959c77490aebe9ae1f231b71477d3760cbd09fff9a338e6a74f9d2",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        88,
+        88
+      ],
+      "rule_id": "cancel.pending_only",
+      "tools": [
+        "cancel_pending_order"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "cancel-ordered-by-mistake",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "cancel_pending_order",
+          "via": null
+        },
+        {
+          "asserted_code": "not_found",
+          "asserted_rule_id": "scope.single_customer",
+          "case_id": "cancel-unknown-order-not-found",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "cancel_pending_order",
+          "via": "an order that is not the customer's is not found by the scoped service read"
+        },
+        {
+          "asserted_code": "invalid_input",
+          "asserted_rule_id": null,
+          "case_id": "cancel-unlisted-reason-refused",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "cancel_pending_order",
+          "via": "enforced by the closed typed contract: the parser refuses the call before any gateway step"
+        }
+      ],
+      "clause_sha256": "85f927e412a03491b5d0882d861c7e480905cd161417609edc64db1766cab65d",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        90,
+        90
+      ],
+      "rule_id": "cancel.order_and_reason",
+      "tools": [
+        "cancel_pending_order"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "escalate"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "cancel-effect-preview",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "cancel_pending_order",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_unsupported",
+          "asserted_rule_id": "cancel.effect",
+          "case_id": "cancel-split-payment-escalates",
+          "history": "not_used",
+          "outcome": "escalate",
+          "tool": "cancel_pending_order",
+          "via": null
+        }
+      ],
+      "clause_sha256": "b0c21f985c4bf70ce249a6b9c0631c04d7fffcd032ae73bc329b0c8317ee7a39",
+      "enforcement": "presentation",
+      "linked_tests": [
+        "tests/unit/test_retail_domain.py::test_cancel_effect_refunds_original_payment_with_policy_timing"
+      ],
+      "policy_lines": [
+        92,
+        92
+      ],
+      "rule_id": "cancel.effect",
+      "tools": [
+        "cancel_pending_order"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "modify.pending_only",
+          "case_id": "payment-change-delivered-order-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "payment-change-pending-order",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        }
+      ],
+      "clause_sha256": "7fcf31ced38fe41507b1ab8dddaafec0ba0ba73b52311c7e480c35cee8e7ac98",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        96,
+        96
+      ],
+      "rule_id": "modify.pending_only",
+      "tools": [
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "escalate"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_unsupported",
+          "asserted_rule_id": "modify.allowed_fields",
+          "case_id": "order-modification-extra-field-escalates",
+          "history": "test_only_complete",
+          "outcome": "escalate",
+          "tool": "modify_pending_order_address",
+          "via": null
+        }
+      ],
+      "clause_sha256": "bb28a8928fc08f995a463d023ab58b2cb70d403cf5b213795badab9bf34e19b9",
+      "enforcement": "escalate",
+      "linked_tests": [],
+      "policy_lines": [
+        98,
+        98
+      ],
+      "rule_id": "modify.allowed_fields",
+      "tools": []
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny",
+        "escalate"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_unsupported",
+          "asserted_rule_id": "payment.single_different_method",
+          "case_id": "payment-change-split-history-escalates",
+          "history": "test_only_complete",
+          "outcome": "escalate",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        },
+        {
+          "asserted_code": "customer_mismatch",
+          "asserted_rule_id": "payment.single_different_method",
+          "case_id": "payment-change-to-foreign-method-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "payment-change-to-paypal",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "payment.single_different_method",
+          "case_id": "payment-change-to-same-method-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        }
+      ],
+      "clause_sha256": "63ae0e7393dc28cc6b06eab09b882b67f00233da19c876a362f08af6f8ecf867",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        102,
+        102
+      ],
+      "rule_id": "payment.single_different_method",
+      "tools": [
+        "modify_pending_order_payment"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "payment-change-to-covering-gift-card",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "payment.gift_card_covers_total",
+          "case_id": "payment-change-to-short-gift-card-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        }
+      ],
+      "clause_sha256": "92423ce544bf620cefffa2c8e9771280b5f0f1196cda38eeeef33116a8ba412f",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        104,
+        104
+      ],
+      "rule_id": "payment.gift_card_covers_total",
+      "tools": [
+        "modify_pending_order_payment"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "payment-effect-preview",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_payment",
+          "via": null
+        }
+      ],
+      "clause_sha256": "2e8b8fcd06b1b7ba77d3d7ab1c2337667f4e13615b20d4dc5cf2de58718ac590",
+      "enforcement": "presentation",
+      "linked_tests": [
+        "tests/unit/test_retail_domain.py::test_address_payment_and_profile_effects"
+      ],
+      "policy_lines": [
+        106,
+        106
+      ],
+      "rule_id": "payment.effect",
+      "tools": [
+        "modify_pending_order_payment"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "items-once-preview",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "11f2f187fdddce12aea8b338de5dea522e0a397a948692d520caca3c946b38ae",
+      "enforcement": "presentation",
+      "linked_tests": [
+        "tests/unit/test_retail_domain.py::test_item_modification_preserves_pairs_multiplicity_and_states_policy_reminders"
+      ],
+      "policy_lines": [
+        110,
+        110
+      ],
+      "rule_id": "items.once_and_all_items",
+      "tools": [
+        "modify_pending_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny",
+        "escalate"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_unsupported",
+          "asserted_rule_id": "items.same_product_other_option",
+          "case_id": "items-change-distinct-replacements-escalates",
+          "history": "test_only_complete",
+          "outcome": "escalate",
+          "tool": "modify_pending_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "items.same_product_other_option",
+          "case_id": "items-change-same-item-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "items-change-same-product",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "items.same_product_other_option",
+          "case_id": "items-change-unavailable-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "not_found",
+          "asserted_rule_id": "items.same_product_other_option",
+          "case_id": "items-change-unknown-item-not-found",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "cd83aecf1d2060a28ae1771d56333fd561205bf105e97ce4e3bf8a7e9f40e99b",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        112,
+        112
+      ],
+      "rule_id": "items.same_product_other_option",
+      "tools": [
+        "modify_pending_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "items-change-paid-by-card",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "modify_pending_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "items.price_difference_method",
+          "case_id": "items-change-short-gift-card-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "modify_pending_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "568fa8e61b096db7520d6c40f1457d25544b26fb3ad5bb31dbdf7551bb2ecf10",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        114,
+        114
+      ],
+      "rule_id": "items.price_difference_method",
+      "tools": [
+        "modify_pending_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "return-delivered-order",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "return_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "return.delivered_only",
+          "case_id": "return-pending-order-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "return_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "ed1a8b666bade33eaff7d1427b63174036a4023050058b553939dc268be2296b",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        118,
+        118
+      ],
+      "rule_id": "return.delivered_only",
+      "tools": [
+        "return_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "return-both-items",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "return_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "return.order_and_items",
+          "case_id": "return-duplicate-beyond-quantity-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "return_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "return.order_and_items",
+          "case_id": "return-item-not-in-order-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "return_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "55f30c452733263a926507dbc0f877b111f7ada0838c6ec5a686dce1fa62407f",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        120,
+        120
+      ],
+      "rule_id": "return.order_and_items",
+      "tools": [
+        "return_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "return-with-refund-method",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "return_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "invalid_input",
+          "asserted_rule_id": null,
+          "case_id": "return-without-refund-method-refused",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "return_delivered_order_items",
+          "via": "enforced by the closed typed contract: the parser refuses the call before any gateway step"
+        }
+      ],
+      "clause_sha256": "fbeb12565000d65565e83a0a83ac5050a0ce24879951e5ce55bc649476b0643f",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        122,
+        122
+      ],
+      "rule_id": "return.refund_method_required",
+      "tools": [
+        "return_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "return-to-gift-card",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "return_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "return.refund_destination",
+          "case_id": "return-to-other-method-denied",
+          "history": "not_used",
+          "outcome": "deny",
+          "tool": "return_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "096488a16ac30cc5bdd42ce7a2c48365e33800c2fc9de4b891883eba2bf24e75",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        124,
+        124
+      ],
+      "rule_id": "return.refund_destination",
+      "tools": [
+        "return_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "return-effect-preview",
+          "history": "not_used",
+          "outcome": "allow",
+          "tool": "return_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "02caf3b3fc3900e965ef38c541b94d6aa585fb6e3d6861e2297129413a8d5d78",
+      "enforcement": "presentation",
+      "linked_tests": [
+        "tests/unit/test_retail_domain.py::test_exchange_and_return_effects"
+      ],
+      "policy_lines": [
+        126,
+        126
+      ],
+      "rule_id": "return.effect",
+      "tools": [
+        "return_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "exchange-delivered-order",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "exchange.delivered_only_all_items",
+          "case_id": "exchange-pending-order-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "fc134f759d49da4a0287e5892abf5c61ab44068861f1b19064887e966060dbc1",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        130,
+        130
+      ],
+      "rule_id": "exchange.delivered_only_all_items",
+      "tools": [
+        "exchange_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "exchange.same_product_other_option",
+          "case_id": "exchange-other-product-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "exchange-same-product",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "e5a1e8d4c8d4d9671d99b83651b93911af5fdd377e6b9abfb559edebde974da4",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        132,
+        132
+      ],
+      "rule_id": "exchange.same_product_other_option",
+      "tools": [
+        "exchange_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow",
+        "deny"
+      ],
+      "cases": [
+        {
+          "asserted_code": "policy_denied",
+          "asserted_rule_id": "exchange.price_difference_method",
+          "case_id": "exchange-short-gift-card-denied",
+          "history": "test_only_complete",
+          "outcome": "deny",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        },
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "exchange-to-covering-gift-card",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "568fa8e61b096db7520d6c40f1457d25544b26fb3ad5bb31dbdf7551bb2ecf10",
+      "enforcement": "deterministic",
+      "linked_tests": [],
+      "policy_lines": [
+        134,
+        134
+      ],
+      "rule_id": "exchange.price_difference_method",
+      "tools": [
+        "exchange_delivered_order_items"
+      ]
+    },
+    {
+      "case_outcomes": [
+        "allow"
+      ],
+      "cases": [
+        {
+          "asserted_code": null,
+          "asserted_rule_id": null,
+          "case_id": "exchange-effect-preview",
+          "history": "test_only_complete",
+          "outcome": "allow",
+          "tool": "exchange_delivered_order_items",
+          "via": null
+        }
+      ],
+      "clause_sha256": "adc0923e7fd4155456970b310ed94cd04ce267fea3be62d50c6e1da119408c69",
+      "enforcement": "presentation",
+      "linked_tests": [
+        "tests/unit/test_retail_domain.py::test_exchange_presentation_records_a_quote_not_a_payment",
+        "tests/unit/test_retail_domain.py::test_exchange_and_return_effects"
+      ],
+      "policy_lines": [
+        136,
+        136
+      ],
+      "rule_id": "exchange.effect",
+      "tools": [
+        "exchange_delivered_order_items"
+      ]
+    }
+  ],
+  "schema": "policyops.policy-coverage/v1"
+}

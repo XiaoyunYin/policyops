@@ -57,6 +57,7 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.chunks": (SI, set()),
         "app.retrieval_traces": (SI, set()),
         "app.citations": (SI, set()),
+        "app.customer_authentications": (SI, set()),  # 0008: first write wins, never rewritten at runtime
         "app.usage_reservations": (SI, {"actual_usd", "state", "updated_at", "version"}),
         "app.usage_events": (SI, set()),
         "app.request_idempotency": (SI, set()),  # append-only successful-response ledger (0004)

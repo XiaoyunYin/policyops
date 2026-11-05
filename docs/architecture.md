@@ -312,9 +312,9 @@ Limits:
 
 `policyops.budget` (T10) holds the allowed models, their dated prices, the cost calculator, the actor configuration,
 the usage ledger rules and the offline evaluation preflight. It imports no provider SDK or HTTP framework and makes
-no provider call itself. The offline provider adapters (see "Provider adapters" below) account for every physical
-request they make through this ledger. The investigation runtime does not call them yet, and no live call has been
-made through them.
+no provider call itself. The provider adapters (see "Provider adapters" below) account for every physical request
+they make through this ledger. The investigation runtime does not call them yet; their only live use so far is one
+approved smoke (below).
 
 - **Price snapshot.** `pricing.2026-11-05.v1` holds standard first-party text-token rates per million tokens, read
   on 2026-11-05 from the providers' public model, pricing and prompt-caching pages (listed in `prices.SOURCES`).
@@ -401,10 +401,20 @@ made through them.
 `policyops.providers` turns a provider-neutral `ModelRequest` (`policyops_contracts.model`, pydantic only) into one
 exact OpenAI Responses or Anthropic Messages request. It sends that request through the official SDKs, pinned
 exactly (`openai` 3.40.0, `anthropic` 2.3.0, the newest version before the lock's supply-chain cutoff), and accounts
-for every physical request in the usage ledger. **No live call has been made through these adapters.** (Earlier,
-separately documented project work did make count-only provider requests; they did not use these adapters.) The
-offline tests exercise the request boundary, the response mapping and the accounting over a scripted mock transport.
-They are not evidence of provider behaviour, any account's access, model quality, counting accuracy or price.
+for every physical request in the usage ledger.
+
+**Live use so far.** It is one user-approved capability smoke: a frozen configuration, a persisted USD 0.01 cap,
+one count and one inference per case, no retries and no fallback.
+- **OpenAI.** The text, required-tool and structured-output cases were verified, with known usage. On those three
+  small requests the official count equalled the reported input.
+- **Anthropic.** The three count requests were accepted. The three inference requests returned HTTP 400, and their
+  holds stay unresolved. The cause is not yet established, so Anthropic inference is **not** verified.
+
+Earlier, separately documented project work made count-only provider requests that did not use these adapters.
+
+**What the offline tests cover.** They exercise the request boundary, the response mapping and the accounting over
+a scripted mock transport. Neither they nor the smoke are evidence of model quality, general counting accuracy or
+price.
 
 - **Preparation** (`serialize.prepare`): every local check runs before anything is reserved: the registry, the
   implemented provider contract (`contract.py`), schema registration, history consistency and the output limit.
@@ -576,3 +586,108 @@ really theirs. Each detail has an explicit `to_snapshot()` projection into the m
 
 **Faults.** Test and demo only (`serve --faults`; the endpoint does not exist otherwise): one-shot 429 or 503 before
 the work, a bounded delay, or commit-then-503. Each adds an `X-PolicyOps-Fault` header.
+
+## Policy and tool gateway
+
+`policyops.gateway` is the only path from a run's typed agent step to the retail service. It composes the
+deterministic domain rules; it does not reimplement them, and it dispatches no write.
+
+### Scope
+
+**How the scope is built.** `GatewayScope` (run, case-customer binding, fixture digest) is built by the server.
+`load_scope` reads the persisted run and case under the workspace scope, and refuses a binding for another case or
+customer.
+
+**Binding before contact.** The gateway checks that the retail client is bound to exactly that tenant, case,
+customer and fixture, and refuses before any request if it is not.
+
+**Model identifiers are compared, never adopted.** A `user_id` or `order_id` in a step is only compared with the
+scope; it never becomes one.
+
+### Steps
+
+**Parsing.** The provider result becomes one typed step through the closed parser (`parse_result`, built on the T11
+bridge):
+- an unknown tool is out of scope (`scope.supported_requests`);
+- an extra field on an order modification is an unsupported change (`modify.allowed_fields`);
+- any other invalid or extra argument is fixed invalid input.
+
+Dispatch is a closed match on the validated call. A step object that skipped validation is re-validated and refused.
+
+**Lookups.**
+- A lookup authenticates only if the service answers the case's bound customer.
+- The authentication is recorded in `app.customer_authentications`, first write wins. A different identity is a
+  `customer_mismatch` and is never adopted.
+- An unknown, refused or not-found lookup records nothing. The service hides other customers, so a lookup for one
+  reads as not found.
+
+**Reads.** A read result must be the requested resource, listing exactly its own resource version. Anything else is
+`facts_invalid`. The typed detail goes back to the model as untrusted data, and its strings never steer anything.
+
+**Writes.**
+1. The gateway collects the facts for the decision in a fixed order: the customer, the order, then each distinct
+   replacement item through `get_item_details`. The replacement's product comes from the service, never from the
+   call.
+2. Every read in one collection must report the same `case_version`. Otherwise the whole collection is repeated, at
+   most three collections in total, and then refused as retryable `facts_inconsistent`. A mixed-version fact set is
+   never evaluated.
+3. `evaluate_write` decides. An allowed write becomes a `ProposalPreview`: the server-rendered text, computed, not
+   persisted and `actionable: false`. It carries no proposal ID, digest, consent or approval authority. The durable,
+   actionable pending proposal is T18's.
+
+**Once-per-order tools.** The default operation history is incomplete until T19's receipt ledger exists, so every
+once-per-order tool escalates (`orders.modify_exchange_once`). Complete histories exist only as labelled test fakes.
+
+**Transfer.** A transfer returns the handoff observation; the next step must be the exact handoff message.
+
+### Execution precheck
+
+`precheck(scope, refs, ...)` is the gate the executor (T19) calls immediately before a dispatch. It takes
+references only, the proposal ID and version and the consent and approval IDs, and loads each record from a
+`DecisionStore`. It re-validates each record from its serialized form, so a constructed or untyped object is no
+authority.
+
+**Before any read**, it requires:
+- a decision store. None exists before T18, so the default refuses with `no_decision_store`; there is no bypass;
+- a proposal for this run, customer and pinned policy;
+- a consent and an approval bound to it, with the chronology checked;
+- the run's durable lookup authentication.
+
+**Then it reads the current facts** and re-evaluates them:
+- a denial or escalation is returned as itself, so approval never overrides an invalid policy;
+- a different effect, resource-version set or rule set is `stale_version`.
+
+**After those reads**, it checks:
+- that the approver still holds the reviewer role;
+- that the proposal's evidence is still current;
+- the time, once more.
+
+**What it returns.** It returns the exact `MutationRequest` and `authorization_not_after`, the earliest of the
+approval, consent and proposal expiries. It assigns no operation ID and dispatches nothing.
+
+**Not a guarantee against a later write.** The precheck does not protect against a concurrent write after it
+returns. The service's expected-version check under its case lock and the client's expiry cap stay authoritative at
+commit.
+
+### Rule coverage
+
+[`docs/policy-coverage.json`](policy-coverage.json) maps every source-traced rule to the gateway cases that exercise
+it. It is generated from the executable case table in `tests/support/policyops_testing/gateway_cases.py`, and a test
+requires byte equality.
+
+**Per case it records:**
+- the asserted outcome, error code and rule ID;
+- for a case whose asserted rule differs from the covered rule, the reason;
+- whether it ran with the labelled test-only complete history.
+
+**Requirements by rule kind:**
+
+| Rule kind | Requirement |
+|---|---|
+| Deterministic | Executed allow and deny cases. A rule the typed contract enforces is denied by the closed parser, before any read |
+| Escalation | Escalation cases |
+| Presentation and protocol | Gateway cases plus the named existing tests |
+| Not codified (`grounding.no_fabrication`, `time.est_database`) | Listed with their reason; counted as uncovered |
+
+**What the map does and does not prove.** It records a mapping. The evidence is the parametrized test that
+executes every case.

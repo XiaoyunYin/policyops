@@ -308,6 +308,86 @@ Limits:
 - **What the deadline covers.** The delivery deadline and the stalled-send behaviour were tested at the ASGI level
   (including the composed app over real PostgreSQL), not with a stalled physical socket or behind a reverse proxy.
 
+## Model configuration and usage budgets
+
+`policyops.budget` (T10) holds the allowed models, their dated prices, the cost calculator, the actor configuration,
+the usage ledger rules and the offline evaluation preflight. It imports no provider SDK or HTTP framework and makes
+no provider call; no provider adapter uses it yet (T11 adds the adapters, T21 the runtime).
+
+- **Price snapshot.** `pricing.2026-11-05.v1` holds standard first-party text-token rates per million tokens, read
+  on 2026-11-05 from the providers' public model, pricing and prompt-caching pages (listed in `prices.SOURCES`).
+  These are dated evidence, not a claim about any account's access or invoices.
+  - A request is priced at the tier of its **whole prompt**, cache reads and writes included. Haiku 5.5 is short up
+    to 100000 prompt tokens. Luna is short up to 272000, the recorded reading of "more than 272K"; its long rates are
+    the documented multipliers (input and cache x2, output x1.5), written out.
+  - Cache writes have a rate per lifetime: OpenAI 30m and 12h, Anthropic 5m and 1h.
+  - Reasoning tokens are part of the billed output and are never added again.
+  - Every amount is an exact `Decimal`; nothing is rounded or truncated.
+- **Registry.** Only the listed models, efforts and cache modes are allowed, and there is no fallback. Luna allows
+  effort `low` or `none`; Haiku allows `low`; the embedding model allows 1536 dimensions. Embeddings have their own
+  request limits from the provider's documentation (8192 tokens per input, 300000 tokens and 2048 inputs per
+  request, no empty input); chat effort, output and cache settings do not apply to them.
+- **Cache mode `none` is a contract with the later serializer.** It is reserved as ordinary input only, which is
+  valid only if the request really disables caching. For OpenAI, omitting the cache options does not disable it:
+  implicit caching writes at the 30m lifetime. T11 must send `prompt_cache_options.mode = "explicit"` with no
+  breakpoints, or reserve as a cold write. `registry.CACHE_NONE_CONTRACT` records this per provider (the Anthropic
+  entry is still unverified) and is part of every actor configuration digest.
+- **Actors and caps.**
+  - Defaults: agent, simulator and reranker use Luna with low effort; the judge uses Haiku with low effort; the
+    embedding model is called at 1536 dimensions.
+  - Chat requests are capped at 16000 input and 2048 output tokens. The embedding actor reserves at most 8192 tokens
+    and 64 inputs per request.
+  - A workbench run gets 12 calls and $0.05, counting every request of every actor. An evaluation scenario gets
+    $0.20, an invocation $5, and a study $5 unless its manifest declares another finite ceiling.
+  - A non-run operation (future ingestion) gets its own finite budget: 64 calls and $0.05.
+  - `BudgetSettings` reads optional `POLICYOPS_BUDGET_*` overrides from the environment only. A variable that is
+    present must be valid (an empty value is refused, never treated as the default), and every value is checked
+    against the registry and the caps.
+- **Reservations (decision D4).** An attempt reserves its actor's worst case before it is sent: the highest tier its
+  admitted maximum prompt can reach, every prompt token written cold at the configured cache lifetime, plus the
+  maximum output. The default chat reservation is $0.002624, the embedding one $0.00016384. Settlement prices the
+  actual usage at the attempt's own price revision. One revision names one price table; installing a second,
+  different table under the same revision is refused.
+- **Ledger.** One accounted provider request is one usage attempt; a retry is a new attempt. `Ledger` applies the
+  same rules to the app store (workspace RLS) and the evaluation store (eval runtime), over static SQL.
+  - `reserve` holds the worst case and one call slot in **every** applicable scope, in one transaction. The scopes
+    come from a canonical binding and never from a caller's list: a run, an operation, or a study with an invocation
+    and a scenario.
+  - A scope is created on first use with the server's caps. Recreating it with the same caps is a replay and with
+    different caps a conflict, so a new attempt ID or a restarted process cannot reset a budget.
+  - The same attempt ID with the same intent is a replay; a different actor configuration or operation is a
+    conflict. The intent includes the digest of the full actor configuration, so an effort change is a different
+    intent even when it prices the same.
+  - `begin_dispatch` moves reserved → dispatching in a committed transaction before any I/O, and consumes the call
+    slot for good. Only the caller that makes that transition gets `DispatchGranted`. Every other caller gets
+    `DispatchRefused` with a reason: the attempt is already past `reserved`, a scope is overrun, or the run is no
+    longer active.
+  - `release` is allowed only from `reserved`. Nothing that may have been sent is ever released.
+  - `mark_unresolved` keeps the conservative hold when usage is unknown, and never downgrades a settled attempt.
+  - `settle` moves the hold to spent at the true cost. If the cost exceeds the reservation, the attempt and every
+    scope it charges become `overrun`, which blocks new holds and dispatches there. Settlement is still recorded
+    after a run is cancelled; it authorizes nothing else.
+  - App settlement also writes one `usage_events` row for the attempt. Reusing a provider request ID that already
+    belongs to another attempt is a conflict that keeps the hold.
+  - Lock order: the run row (`FOR SHARE`, for reserve and dispatch only), then the scopes by (kind rank, ID), then
+    the attempt. Release, dispatch and settle first read the attempt's immutable bindings without a lock. Times come
+    from the database clock, read after the locks, and no transaction spans provider I/O.
+- **Preflight.** `budget.preflight` checks a typed study manifest offline. For each actor it takes the request
+  bounds, the logical calls per scenario, the repairs per logical call (at most 1) and the retries per request.
+  - Attempts per logical call are `(1 + repairs) x (1 + retries)`, because a repair request can be retried too.
+  - The worst cases are totalled per scenario, invocation and study and checked against the caps.
+  - With a ledger snapshot, the study's persisted spend and **all** of its holds (active and unresolved) count, its
+    persisted caps must equal the manifest's, and an overrun study is reported as `blocked_by_overrun`. Without a
+    snapshot the prior spend is `unverified`, never zero.
+  - `authorizes_paid_execution` is always `false`: runtime reservations remain the authority.
+- **Limits.**
+  - No exactly-once external billing is claimed. A grant is a ledger decision; the adapter that honours it, and
+    that disables implicit SDK retries, is T11's.
+  - The ledger checks the run's state but not a worker's claim; the fence check before dispatch belongs to the T21
+    runtime.
+  - The 180 active seconds per run are configured but not enforced here.
+  - The overrun block has no operator reset.
+
 ## Dev calibration allowlist and demo seeds
 
 `evals/manifests/tau2-19f13ea3/retail-calibration.json` is rebuilt from the committed T03 manifests by

@@ -14,7 +14,15 @@ from psycopg import errors
 import pytest
 
 from policyops_testing import network
-from policyops_testing.postgres import DATABASE, MIGRATOR, RUNTIME, VOLUME, OwnedPostgres, PostgresUnavailable
+from policyops_testing.postgres import (
+    DATABASE,
+    MIGRATOR,
+    RUNTIME,
+    VOLUME,
+    OwnedPostgres,
+    PostgresUnavailable,
+    owned_postgres,
+)
 
 
 pytestmark = pytest.mark.postgres
@@ -85,24 +93,58 @@ def test_exact_vector_distance(postgres: OwnedPostgres) -> None:
 
 
 def test_restart_keeps_data_and_moves_the_registered_endpoint(postgres: OwnedPostgres) -> None:
-    with postgres.connect(MIGRATOR) as conn:
-        conn.execute("create table harness_durable(x int)")
-        conn.execute("insert into harness_durable select generate_series(1, 1000)")
-        conn.commit()
-    old_port = postgres.port
-    postgres.restart()
-    assert ("127.0.0.1", postgres.port) in network.registered()
-    if postgres.port != old_port:
-        assert ("127.0.0.1", old_port) not in network.registered()
-    with postgres.connect(MIGRATOR) as conn:
-        assert conn.execute("select count(*) from harness_durable").fetchone() == (1000,)
+    # A dedicated owned server, not the shared session server. Restarting the session server made every later test
+    # depend on its crash recovery: in the T10 C1 gate the restart interrupted the shutdown checkpoint, and recovery
+    # (an fsync over every database the earlier tests created, then redo) outlasted the 120 s readiness deadline.
+    # This proves restart behaviour on a small data set only, not recovery of a large one within the deadline.
+    run_id = f"{postgres.run_id}-restart"
+    with owned_postgres(postgres.root.parent, run_id) as server:
+        assert postgres.root.parent in server.root.parents and server.port != postgres.port
+        with server.connect(MIGRATOR) as conn:
+            conn.execute("create table harness_durable(x int)")
+            conn.execute("insert into harness_durable select generate_series(1, 1000)")
+            conn.commit()
+        old_port = server.port
+        server.restart()
+        assert ("127.0.0.1", server.port) in network.registered()
+        if server.port != old_port:
+            assert ("127.0.0.1", old_port) not in network.registered()
+        with server.connect(MIGRATOR) as conn:
+            assert conn.execute("select count(*) from harness_durable").fetchone() == (1000,)
+        container_id = server.container_id
+    assert not _container_exists(container_id) and not _container_exists(f"policyops-test-pg-{run_id}")
+    assert ("127.0.0.1", server.port) not in network.registered()
+    assert (server.root / "log" / "postgresql.log").is_file()  # its logs are kept under the temp root
+    assert _container_exists(postgres.container_id)  # the session server is untouched
+    with postgres.connect(MIGRATOR, DATABASE) as conn:
+        assert conn.execute("select 1").fetchone() == (1,)
+
+
+def _password_refused(error: psycopg.OperationalError, role: str) -> bool:
+    """True only for the server's authentication refusal. The installed psycopg reports a connection-time
+    refusal as a plain OperationalError without a SQLSTATE, so the C-locale server's message is the evidence. A
+    server that is starting up, recovering or unreachable (for example 57P03) must not count."""
+    return (error.sqlstate in (None, "28P01") and not isinstance(error, errors.CannotConnectNow)
+            and f'password authentication failed for user "{role}"' in str(error))
 
 
 def test_connections_outside_the_registered_endpoint_are_refused(postgres: OwnedPostgres) -> None:
     with pytest.raises(network.NetworkBlocked):
         network.require_registered("127.0.0.1", 5432)
-    with pytest.raises(psycopg.OperationalError):
+    with postgres.connect(RUNTIME) as conn:  # control: the right password connects now
+        assert conn.execute("select current_user").fetchone() == (RUNTIME,)
+    with pytest.raises(psycopg.OperationalError) as refused:
         postgres.try_password(RUNTIME, "wrong-SYNTHETIC")
+    assert _password_refused(refused.value, RUNTIME), type(refused.value).__name__
+
+
+def test_the_password_oracle_rejects_an_unavailable_server() -> None:
+    unavailable = (errors.CannotConnectNow("FATAL:  the database system is not yet accepting connections"),
+                   psycopg.OperationalError("connection failed: FATAL:  the database system is starting up"),
+                   psycopg.OperationalError("connection refused"))
+    assert not any(_password_refused(error, RUNTIME) for error in unavailable)
+    assert _password_refused(psycopg.OperationalError(
+        f'connection failed: FATAL:  password authentication failed for user "{RUNTIME}"'), RUNTIME)
 
 
 def _server_log(postgres: OwnedPostgres) -> str:
@@ -166,8 +208,9 @@ def test_ambient_pg_session_variables_cannot_change_helper_connections(postgres:
             assert conn.execute("select current_user").fetchone() == (role,)
     needle = f'password authentication failed for user "{RUNTIME}"'
     before = _server_log(postgres).count(needle)
-    with pytest.raises(psycopg.OperationalError):
+    with pytest.raises(psycopg.OperationalError) as refused:
         postgres.try_password(RUNTIME, "wrong-SYNTHETIC")
+    assert _password_refused(refused.value, RUNTIME), type(refused.value).__name__
     deadline = time.monotonic() + 10
     while (log := _server_log(postgres)).count(needle) <= before and time.monotonic() < deadline:
         time.sleep(0.2)

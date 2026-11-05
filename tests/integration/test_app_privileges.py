@@ -26,6 +26,9 @@ pytestmark = pytest.mark.postgres
 
 TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
 SI = {"SELECT", "INSERT"}
+SCOPE_COUNTERS = {"spent_usd", "held_usd", "calls_consumed", "calls_held", "overrun", "updated_at", "version"}
+ATTEMPT_SETTLEMENT = {"state", "provider_request_id", "usage", "usage_sha256", "actual_tier", "actual_usd", "overrun",
+                      "updated_at", "version"}
 
 # role -> table -> (table-level privileges, columns updatable through column grants)
 EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
@@ -55,6 +58,9 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.usage_reservations": (SI, {"actual_usd", "state", "updated_at", "version"}),
         "app.usage_events": (SI, set()),
         "app.request_idempotency": (SI, set()),  # append-only successful-response ledger (0004)
+        # The T10 usage ledger (0006): counters and settlement are updatable; caps, bindings and intent are not.
+        "app.budget_scopes": (SI, SCOPE_COUNTERS),
+        "app.usage_attempts": (SI, ATTEMPT_SETTLEMENT),
     },
     AUTH_RUNTIME: {
         "identity.workspaces": (SI, set()),
@@ -66,6 +72,8 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
     EVAL_RUNTIME: {
         "evaluation.evaluation_runs": (SI, {"status", "started_at", "finished_at", "total_cost_usd", "version"}),
         "evaluation.evaluation_trials": (SI, set()),
+        "evaluation.budget_scopes": (SI, SCOPE_COUNTERS),
+        "evaluation.usage_attempts": (SI, ATTEMPT_SETTLEMENT),
     },
     WORKER_DISCOVERY: {},  # no table-level privilege at all; column SELECT only (below)
 }

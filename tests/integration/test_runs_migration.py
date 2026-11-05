@@ -200,7 +200,7 @@ def ledger(database: AppDatabase) -> dict[str, int]:
 
 
 def test_a_lossy_0005_downgrade_with_run_ledger_rows(new_app_database: NewDatabase) -> None:
-    database = new_app_database("runs_ledger_downgrade")
+    database = new_app_database("runs_ledger_downgrade", revision="0005")  # this revision's own downgrade
     _api, run = served_start_and_cancel(database)
     assert ledger(database) == {"case.create": 1, "run.start": 1, "run.cancel": 1}
     before = counts(database)

@@ -158,6 +158,48 @@ def set_case_status(connection: Connection, case_id: UUID, *, expected_version: 
     return CaseRecord.model_validate(row, strict=False)
 
 
+def lock_case(connection: Connection, case_id: UUID) -> CaseRecord | None:
+    """The case row, locked FOR UPDATE until the end of the transaction (None if absent or another workspace's)."""
+    row = _one(connection, "SELECT id, workspace_id, scenario, customer_user_id, created_by, created_at, status, "
+               "updated_at, version FROM app.cases WHERE id = :id FOR UPDATE", {"id": case_id})
+    return CaseRecord.model_validate(row, strict=False) if row else None
+
+
+def bump_case_version(connection: Connection, case_id: UUID, now: datetime) -> CaseRecord:
+    """Advance the version (and updated_at) of a case the caller has locked."""
+    row = _one(connection, "UPDATE app.cases SET version = version + 1, updated_at = greatest(updated_at, :now) "
+               "WHERE id = :id RETURNING id, workspace_id, scenario, customer_user_id, created_by, created_at, status, "
+               "updated_at, version", {"id": case_id, "now": now})
+    if row is None:
+        raise NotFound(f"case {case_id}")
+    return CaseRecord.model_validate(row, strict=False)
+
+
+def case_page(connection: Connection, *, status: str | None, before: tuple[datetime, UUID] | None,
+              limit: int) -> list[CaseRecord]:
+    """Cases of the scoped workspace in immutable (created_at DESC, id DESC) order, strictly after the keyset
+    position `before`; at most `limit` rows. Updates never reorder the queue."""
+    if not 1 <= limit <= MAX_PAGE + 1:
+        raise ValueError("limit out of range")
+    rows = connection.execute(text(
+        "SELECT id, workspace_id, scenario, customer_user_id, created_by, created_at, status, updated_at, version "
+        "FROM app.cases WHERE (CAST(:status AS text) IS NULL OR status = :status) "
+        "AND (CAST(:created AS timestamptz) IS NULL OR (created_at, id) < (CAST(:created AS timestamptz), :id)) "
+        "ORDER BY created_at DESC, id DESC LIMIT :limit"),
+        {"status": status, "created": before[0] if before else None, "id": before[1] if before else None,
+         "limit": limit}).mappings().all()
+    return [CaseRecord.model_validate(dict(row), strict=False) for row in rows]
+
+
+def scoped_roles(connection: Connection, principal_id: UUID) -> frozenset[str]:
+    """The principal's active roles in the scoped workspace, read in the caller's transaction (used to recheck
+    authorization after waiting for locks). The explicit workspace filter does not rely on RLS alone."""
+    rows = connection.execute(text("SELECT role FROM identity.memberships WHERE principal_id = :p "
+                                   "AND workspace_id = app.current_workspace() AND revoked_at IS NULL"),
+                              {"p": principal_id}).scalars().all()
+    return frozenset(rows)
+
+
 def append_message(connection: Connection, *, message_id: UUID, scope: CaseScope, source: MessageSource,
                    entered_by: UUID | None, text_value: str, created_at: datetime) -> CaseMessage:
     """Append with the next case sequence; the case row lock serializes concurrent appends (no gaps/duplicates)."""

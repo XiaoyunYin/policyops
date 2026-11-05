@@ -126,10 +126,78 @@ where it comes from.
 | Action | analyst | reviewer | admin | auditor |
 |---|---|---|---|---|
 | View case | yes | yes | yes | yes |
-| Create case, staff note, operator customer turn, start/cancel run | yes | yes | yes | no |
+| Create case, change case status, staff note, operator customer turn, start/cancel run | yes | yes | yes | no |
 | Decide proposal | no | yes | no | no |
 | Manage membership | no | no | yes | no |
 | Read audit and evaluation summaries | no | yes | yes | yes |
+
+## Case and message API
+
+Routes under `/api/v1` (`policyops.api.cases`, service `policyops.services.cases`). Every route needs a session
+with a selected workspace and runs in that workspace's row-level-security scope, so another workspace's case is
+`404 api.case_not_found`, like an unknown ID.
+
+| Route | Action | Notes |
+|---|---|---|
+| `GET /cases?status=&cursor=&limit=` | view case | newest first by immutable `(created_at, id)`; `limit` 1–100, default 50 |
+| `POST /cases` | create case | body `{"scenario": "retail"}`; the case starts `open`, version 1, no bound customer |
+| `GET /cases/{id}` | view case | `ETag` is the strong case version, for example `"3"` |
+| `PATCH /cases/{id}` | change case status | body `{"status": ...}`; `If-Match` required |
+| `GET /cases/{id}/messages?after_sequence=&limit=` | view case | sequence order; `limit` 1–200, default 50 |
+| `POST /cases/{id}/messages` | staff note or operator customer turn | body `{"source", "text"}`; `If-Match` required |
+
+- **Provenance is server-owned.** The browser may send only `staff_note` or `operator_entered_customer`. Actor,
+  workspace, IDs, times, sequence and digests are set by the server. Unknown body fields are refused. Customer
+  binding stays a trusted seed path. `scenario` reports the stored value; the API itself creates only retail
+  cases.
+- **Status.** A pure table allows `open → in_progress → resolved → closed` and `resolved → in_progress`;
+  `closed` is terminal and anything else is `409 api.status_transition`. Asking for the current status is a no-op:
+  no version change and no audit row.
+- **Versions.** A status change and a message append each advance the case version (and `updated_at`). The
+  append does it under the same row lock that allocates the sequence. Two operators posting against the same
+  version conflict: one wins and the other gets `409 api.stale_version` and must reload.
+- **Idempotency.** Every write needs an `Idempotency-Key` (8–128 of `A-Za-z0-9._~-`); a missing key is
+  `400 api.idempotency_key_required`. Keys are scoped by workspace, principal and operation. The request is
+  reduced to a typed, versioned intent (path IDs, body and expected version), and its SHA-256 is stored with the
+  original successful status, body and ETag in one transaction with the change and its audit row. A retry with
+  the same intent gets that original response, byte for byte, with `Idempotent-Replayed: true`, even after later
+  changes and even with its old `If-Match`. A different intent for the key is `409 api.idempotency_mismatch`.
+  Concurrent requests with one key wait on a transaction-scoped advisory lock, so exactly one change happens. A
+  failed attempt stores nothing and the key can be retried. Replay happens only after the current role is
+  rechecked (after the lock wait) and the case is visible in the selected workspace. Stored responses do not
+  expire; any later retention policy must keep the replay guarantee.
+- **Preconditions.** `If-Match` must be one strong case ETag. Missing is `428 api.precondition_required`;
+  malformed (weak, `*`, lists, zero, out of range) is `422 api.invalid_precondition`.
+- **Pagination.** The queue cursor is untrusted data, not a capability: a strictly typed, canonical, base64url
+  document bound to the workspace and the status filter; anything else is `422 api.invalid_cursor`. Each page
+  reads live rows strictly after the cursor's `(created_at, id)` position. A case inserted later appears on a
+  later page only if its `(created_at, id)` sorts after that position: one with a newer `created_at` (the usual
+  case) does not, but one with the same `created_at` and a smaller `id`, or an older `created_at` from a clock
+  that moved back, does. A case whose status changes between pages can be missed by, or appear later in, a
+  status filter. There is no snapshot across pages.
+- **Bounds and errors.** Bodies are bounded to 64 KiB as received (`BodyLimit`, a pure ASGI pre-read). A larger
+  declared length is refused before reading; otherwise reading stops at the chunk that passes the limit (`413`).
+  A malformed or repeated `Content-Length` is `400`. Message text is 1–4000 code points; newline and tab are
+  allowed, other control characters (C0, DEL and C1) are not, and it must be encodable Unicode (a lone surrogate
+  is `422`). Errors use the standard envelope without
+  echoing input. Responses are `no-store` with `Referrer-Policy: no-referrer`.
+- **Refusal order.** Body limits and undecodable (`400`) or malformed JSON (`422`) are refused while reading the
+  body, before authorization. Authorization then precedes body-model validation, header parsing, idempotency
+  lookup and the service.
+- **Audit.** Each successful create, status change and message post appends one actor-attributed audit row
+  (`case.created`, `case.status_changed`, `case.message_posted`). Replays and no-ops add none.
+
+The OpenAPI document `packages/policyops/openapi/v1.json` is exported from the served route composition, without
+a runtime, settings or database (`python -m policyops.api.openapi --check FILE`). Requirements that PolicyOps
+dependencies enforce (session cookie, CSRF token and Origin, `Idempotency-Key`, `If-Match`, cookie-setting
+responses) and every error status are documented explicitly with the error envelope. FastAPI's default
+validation-error body is refused because the API never returns it. `apps/web/src/api/schema.d.ts` is generated
+from it by `scripts/api_types.py` with openapi-typescript 7.13.0, in an isolated, exactly locked generator project
+(`scripts/api-types`). openapi-typescript 7.13.0 declares a TypeScript 5 peer, while the web app uses TypeScript 6,
+so the generator has its own TypeScript 5.9.3 instead of changing the web toolchain. The generator gets the
+parsed document with only local references, an explicit Redocly configuration (no `redocly.yaml` discovery, no
+tokens), a minimal environment and closed proxies. The tests check real HTTP responses against the document and
+compile real bodies against the generated types.
 
 ## Dev calibration allowlist and demo seeds
 

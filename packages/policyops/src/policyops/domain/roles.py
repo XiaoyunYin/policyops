@@ -19,6 +19,7 @@ class Role(StrEnum):
 class Action(StrEnum):
     VIEW_CASE = "view_case"
     CREATE_CASE = "create_case"
+    UPDATE_CASE_STATUS = "update_case_status"
     POST_STAFF_NOTE = "post_staff_note"
     ENTER_CUSTOMER_TURN = "enter_customer_turn"
     START_RUN = "start_run"
@@ -29,8 +30,8 @@ class Action(StrEnum):
     READ_EVALUATIONS = "read_evaluations"
 
 
-_OPERATE = frozenset({Action.VIEW_CASE, Action.CREATE_CASE, Action.POST_STAFF_NOTE, Action.ENTER_CUSTOMER_TURN,
-                      Action.START_RUN, Action.CANCEL_RUN})
+_OPERATE = frozenset({Action.VIEW_CASE, Action.CREATE_CASE, Action.UPDATE_CASE_STATUS, Action.POST_STAFF_NOTE,
+                      Action.ENTER_CUSTOMER_TURN, Action.START_RUN, Action.CANCEL_RUN})
 
 PERMISSIONS: MappingProxyType[Role, frozenset[Action]] = MappingProxyType({
     Role.ANALYST: _OPERATE,

@@ -92,7 +92,7 @@ The narrow admin surface is:
 - `GET /api/v1/workspace/members`;
 - `POST /api/v1/workspace/members/{id}/revoke` (`MANAGE_MEMBERSHIP`, CSRF).
 
-Case and message APIs belong to T08.
+The case and message routes use the same dependencies ([architecture](architecture.md#case-and-message-api)). Their writes recheck the principal's current role inside the write transaction after each lock wait, so a membership revoked while a request waited is refused before any change or replay.
 
 ## Database roles and wiring
 

@@ -45,6 +45,7 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.citations": (SI, set()),
         "app.usage_reservations": (SI, {"actual_usd", "state", "updated_at", "version"}),
         "app.usage_events": (SI, set()),
+        "app.request_idempotency": (SI, set()),  # append-only successful-response ledger (0004)
     },
     AUTH_RUNTIME: {
         "identity.workspaces": (SI, set()),

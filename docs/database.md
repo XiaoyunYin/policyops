@@ -58,7 +58,7 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Invariants enforced by the database
 
-- **Append-only records.** Messages, run events, consents, decisions, presentations, audit events, usage events, citations and traces get `INSERT`/`SELECT` only. Other tables get column-level `UPDATE` grants, and nothing gets `DELETE`.
+- **Append-only records.** Messages, run events, consents, decisions, presentations, audit events, usage events, citations, traces and the request-idempotency ledger get `INSERT`/`SELECT` only. Other tables get column-level `UPDATE` grants, and nothing gets `DELETE`.
 - **Proposals.** A proposal's bound content cannot change. A trigger, which fires even for the owner and superusers, allows only setting the presentation time once and forward status moves.
 - **The binding chain.** Proposal, presentation, consent and decision records store every contract field and reconstruct to the exact contracts. Composite keys tie each record to the previous one: the same case, run, proposal version, action digest and presentation digest. They also tie each record to the referenced message's stored case, sequence, text digest, source and author. A record whose recorded evidence disagrees with the referenced row is rejected.
   - The database compares stored digest and sequence fields between rows. It does not recompute a hash from a message body: the typed repository computes `text_sha256` when it appends a message, and the SQL check on that column validates only its format.
@@ -69,6 +69,7 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
   - Jobs compare an immutable request fingerprint: the SHA-256 of every requested field except the row ID and creation time. It is stored in `request_sha256`, which the runtime cannot update. The same request therefore still replays after a worker has changed the job's state, attempts or `available_at`.
   - Usage events compare every recorded field.
   - Outbox entries have SQL key uniqueness only; no repository implements payload comparison for them yet.
+  - HTTP case writes (`app.request_idempotency`, revision `0004`) are keyed by workspace, principal, operation and the client's `Idempotency-Key`. Each row stores the SHA-256 of the typed request intent and the original successful response (status 2xx, JSON body of at most 64 KiB, ETag). It links to its case by `(workspace_id, case_id)`, and a message write also to that case's message by `(workspace_id, case_id, message_id)`, so a ledger row cannot name a message of another case; only message writes name a message. The runtime can insert and read rows, never change or delete them, and RLS is forced on the workspace scope.
 - **Money.**
   - Commerce money stays integer minor units in the contracts.
   - USD amounts use unconstrained `NUMERIC` with checks: finite, between 0 (inclusive) and 10^6 (exclusive), at most 18 fractional digits.
@@ -79,15 +80,16 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Migrations
 
-The chain lives in `persistence/migrations/` and has three revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), and `0003` (single-use login requests and session idle/CSRF state). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
+The chain lives in `persistence/migrations/` and has four revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), and `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
 
 - **Precondition.** `upgrade` and `downgrade` need a connection with no open transaction. Otherwise Alembic would run all revisions inside the caller's transaction, so they raise `MigrationPreconditionError` before doing anything, and never commit or roll back the caller's work. `current` leaves no transaction behind.
 - **Upgrade.** Each revision runs in its own transaction. A failing revision rolls back completely and the version stays at the previous revision. A test makes revision `0002` fail midway and checks that.
 - **Previous-revision upgrade.** A database at `0001` with imported synthetic data upgrades to head with every existing row unchanged.
 - **Authentication upgrade.** Revision `0003` also upgrades a populated `0002` database. Existing sessions receive NULL idle/CSRF fields and require a new login; the auth service rejects them. New login requests have a bounded expiry and single-use consumption state, with access restricted to the auth role.
+- **Case API upgrade.** Revision `0004` upgrades a populated `0003` database in place. It adds a `(workspace_id, case_id, id)` unique key on messages for the ledger's message link, the ledger table and the queue index; it changes no existing row.
 - **Downgrade.**
   - Dropping a revision's tables or columns loses their data, so a downgrade can be lossy.
-  - It is refused (`DataLossRefused`) while the affected tables hold rows, unless `allow_data_loss=True` is passed explicitly. For `0003`, either login-request or session rows trigger refusal; an explicitly allowed downgrade drops the added session fields while retaining session rows.
+  - It is refused (`DataLossRefused`) while the affected tables hold rows, unless `allow_data_loss=True` is passed explicitly. For `0003`, either login-request or session rows trigger refusal; an explicitly allowed downgrade drops the added session fields while retaining session rows. For `0004`, ledger rows trigger refusal (dropping them would break replay of committed writes); without them the downgrade removes exactly the ledger, the index and the message key.
   - The refusal rolls back the check's temporary `NO FORCE ROW LEVEL SECURITY`.
 - **Restore.** A restore is a separate operation, not a downgrade. A tested path dumps with `pg_dump -Fc` and restores with `pg_restore --single-transaction` into a separate, freshly provisioned database, as the superuser. It preserves:
   - row counts;

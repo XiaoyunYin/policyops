@@ -49,11 +49,18 @@ class RepositoryConfigTests(unittest.TestCase):
 
     def test_artifact_checks_inventory_installed_tree_without_exemptions(self) -> None:
         self.assertNotIn("--allow", self.workflow)
-        self.assertEqual(self.workflow.count("scripts/check_repo_artifacts.py"), 4)
-        self.assertIn("--installed apps/web/node_modules", self.workflow)
+        # The Python job checks once; the web and PostgreSQL jobs (the latter installs apps/web for the API
+        # contract check) record the installed tree, then check against it.
+        self.assertEqual(self.workflow.count("scripts/check_repo_artifacts.py"), 5)
+        self.assertEqual(self.workflow.count("--installed apps/web/node_modules"), 2)
         baseline = '"$POLICYOPS_TEMP_DIR/reports/web-installed.txt"'
         self.assertIn(f"--write-baseline {baseline}", self.workflow)
         self.assertIn(f"check_repo_artifacts.py --baseline {baseline}", self.workflow)
+
+    def test_generated_api_types_are_checked_in_the_web_job(self) -> None:
+        web = self.workflow[self.workflow.index("\n  web:\n"):]
+        self.assertIn("scripts/api_types.py --check", web)
+        self.assertEqual(self.workflow.count("scripts/api_types.py"), 1)
 
     def test_web_tooling_tests_run_only_in_the_web_job(self) -> None:
         # They need Node and node_modules, which the Python job does not install.

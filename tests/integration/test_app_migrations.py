@@ -4,6 +4,7 @@ upgrades, failed-revision rollback, refused/allowed lossy downgrade and restore 
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -289,7 +290,7 @@ def test_0003_upgrades_populated_data_and_refuses_lossy_downgrade(new_app_databa
 
     from policyops.auth.tokens import digest
 
-    _, second, third = migrate.revisions()
+    _, second, third, *_ = migrate.revisions()
     database = new_app_database("auth_upgrade", revision=second)
     import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
     world = World()
@@ -298,7 +299,7 @@ def test_0003_upgrades_populated_data_and_refuses_lossy_downgrade(new_app_databa
                      "VALUES (gen_random_uuid(), %s, %s, %s, %s)",
                      (world.analyst, digest("pre-0003-cookie"), world.now, world.now + timedelta(hours=1)))
     before = _counts(database)
-    database.upgrade()
+    database.upgrade(third)
     assert database.current() == third
     after = _counts(database)
     assert {table: after[table] for table in before} == before and after["identity.login_requests"] == 0
@@ -313,3 +314,73 @@ def test_0003_upgrades_populated_data_and_refuses_lossy_downgrade(new_app_databa
                                                   "WHERE table_schema = 'identity' AND table_name = 'sessions'")}
     assert database.current() == second and not {"csrf_sha256", "last_seen_at"} & columns
     assert _counts(database)["identity.sessions"] == 1  # the session row itself survives a column drop
+
+
+def test_0004_upgrades_populated_data_and_guards_the_response_ledger(new_app_database: NewDatabase) -> None:
+    """T08 forward migration: a populated 0003 database upgrades in place, gaining the request-idempotency ledger
+    (case/message composite foreign keys, operation/message rule, forced RLS) and the immutable queue index.
+    Downgrading is refused while ledger rows exist; without them it removes exactly what 0004 added."""
+    import psycopg
+
+    *_, third, fourth = migrate.revisions()
+    database = new_app_database("idempotency_upgrade", revision=third)
+    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    world = World()
+    before = _counts(database)
+    database.upgrade(fourth)
+    after = _counts(database)
+    assert {table: after[table] for table in before} == before and after["app.request_idempotency"] == 0
+    other_workspace, other_case, second_case = uuid4(), uuid4(), uuid4()
+    with database.superuser() as conn:  # constraints apply to the superuser too (RLS does not)
+        assert conn.execute("SELECT indexdef FROM pg_indexes WHERE indexname = 'cases_queue_created'").fetchone() \
+            == ("CREATE INDEX cases_queue_created ON app.cases USING btree (workspace_id, created_at DESC, id DESC)",)
+        message = conn.execute("SELECT id FROM app.case_messages WHERE case_id = %s", (world.case,)).fetchone()[0]
+        conn.execute("INSERT INTO identity.workspaces (id, slug, name, created_at) VALUES (%s, 'other-ws', 'Other', "
+                     "%s)", (other_workspace, world.now))
+        for case_id, workspace_id in ((other_case, other_workspace), (second_case, world.workspace)):
+            conn.execute("INSERT INTO app.cases (id, workspace_id, scenario, status, created_at, updated_at) "
+                         "VALUES (%s, %s, 'retail', 'open', %s, %s)", (case_id, workspace_id, world.now, world.now))
+
+        def ledger(operation: str, workspace_id: Any, case_id: Any, message_id: Any, *, key: str = "key-0001",
+                   status: int = 201) -> None:
+            conn.execute("INSERT INTO app.request_idempotency (workspace_id, principal_id, operation, "
+                         "idempotency_key, request_sha256, case_id, message_id, response_status, response_body, "
+                         "response_etag, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}', '\"1\"', %s)",
+                         (workspace_id, world.analyst, operation, key, "0" * 64, case_id, message_id, status,
+                          world.now))
+
+        refused = [
+            (psycopg.errors.ForeignKeyViolation, ("case.message", world.workspace, second_case, message)),  # wrong case
+            (psycopg.errors.ForeignKeyViolation, ("case.status", other_workspace, world.case, None)),  # foreign case
+            (psycopg.errors.CheckViolation, ("case.create", world.workspace, world.case, message)),
+            (psycopg.errors.CheckViolation, ("case.message", world.workspace, world.case, None)),
+            (psycopg.errors.CheckViolation, ("case.delete", world.workspace, world.case, None)),
+        ]
+        for error, args in refused:
+            with pytest.raises(error):
+                ledger(*args)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            ledger("case.status", world.workspace, world.case, None, status=409)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            ledger("case.status", world.workspace, world.case, None, key="short")
+        ledger("case.message", world.workspace, world.case, message)
+        ledger("case.status", other_workspace, other_case, None)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            ledger("case.message", world.workspace, world.case, message)
+    with workspace_transaction(database.engine(APP_RUNTIME), world.workspace) as conn:  # forced RLS
+        visible = conn.execute(text("SELECT workspace_id FROM app.request_idempotency")).all()
+    assert visible == [(world.workspace,)]
+    with pytest.raises(DataLossRefused, match=r"app\.request_idempotency"):
+        database.downgrade(third)
+    assert database.current() == fourth
+    with database.superuser() as conn:
+        conn.execute("DELETE FROM app.request_idempotency")
+    database.downgrade(third)
+    with database.superuser() as conn:
+        assert conn.execute("SELECT to_regclass('app.request_idempotency'), to_regclass('app.cases_queue_created')"
+                            ).fetchone() == (None, None)
+        assert conn.execute("SELECT count(*) FROM pg_constraint WHERE conname = 'case_messages_case_unique'"
+                            ).fetchone() == (0,)
+    assert database.current() == third and _counts(database)["app.case_messages"] == before["app.case_messages"]
+    database.upgrade()
+    assert database.current() == fourth

@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from policyops.api import docs
 from policyops.auth.service import AuthError, Authorized, AuthService, IssuedSession, SessionContext, forbidden
 from policyops.domain.roles import Action, Role
 from policyops.persistence import repositories as repo
@@ -151,7 +152,10 @@ def require_action(action: Action) -> Callable[..., Authorized]:
 def build_router() -> APIRouter:
     router = APIRouter()
 
-    @router.get("/auth/login")
+    @router.get("/auth/login", status_code=302, response_class=Response,
+                **docs.operation(errors=(422, 503), success={302: {
+                    "description": "Redirect to the identity provider; sets the login-binding cookie.",
+                    "headers": {"Location": docs.REDIRECT_HEADER, "Set-Cookie": docs.SET_COOKIE_HEADER}}}))
     def login(auth: Runtime, return_to: str = "/") -> Response:
         start = auth.service.begin_login(return_to)
         response = RedirectResponse(start.redirect_url, status_code=302, headers=NO_STORE)
@@ -159,7 +163,14 @@ def build_router() -> APIRouter:
                 max_age=int(auth.settings.login_request_ttl.total_seconds()), http_only=True, same_site="lax")
         return response
 
-    @router.get("/auth/callback")
+    @router.get("/auth/callback", status_code=303, response_class=Response,
+                **docs.operation(errors=(401, 422, 503), success={303: {
+                    "description": "Signed in: redirect to the stored return path; sets the session and CSRF "
+                                   "cookies.",
+                    "headers": {"Location": docs.REDIRECT_HEADER, "Set-Cookie": docs.SET_COOKIE_HEADER}}},
+                                 # a refused callback still clears the single-use login-binding cookie
+                                 error_headers={401: {"Set-Cookie": docs.SET_COOKIE_HEADER},
+                                                503: {"Set-Cookie": docs.SET_COOKIE_HEADER}}))
     def callback(request: Request, auth: Runtime, state: str | None = None, code: str | None = None,
                  error: str | None = None) -> Response:
         try:
@@ -174,7 +185,7 @@ def build_router() -> APIRouter:
         _issue(response, auth, issued)
         return response
 
-    @router.get("/me", response_model=MeOut)
+    @router.get("/me", response_model=MeOut, **docs.operation(session=True, errors=(401,)))
     def me(session: Session, auth: Runtime) -> Response:
         choices = auth.service.workspaces(session)
         roles = sorted(auth.service.roles(session))
@@ -183,21 +194,26 @@ def build_router() -> APIRouter:
                                               roles=[Role(r) for r in c.roles]) for c in choices])
         return JSONResponse(body.model_dump(mode="json"), headers=NO_STORE)
 
-    @router.post("/auth/workspace", status_code=204)
+    @router.post("/auth/workspace", status_code=204, **docs.operation(
+        csrf=True, errors=(400, 401, 403, 404, 422), success={204: {
+            "description": "Selected; the session is rotated.", "headers": {"Set-Cookie": docs.SET_COOKIE_HEADER}}}))
     def select_workspace(body: SelectWorkspaceIn, session: Session, auth: Runtime) -> Response:
         issued = auth.service.select_workspace(session, body.workspace_id)
         response = Response(status_code=204, headers=NO_STORE)
         _issue(response, auth, issued)
         return response
 
-    @router.post("/auth/logout", status_code=204)
+    @router.post("/auth/logout", status_code=204, **docs.operation(csrf=True, errors=(401, 403), success={204: {
+        "description": "Signed out; the session, CSRF and login cookies are cleared.",
+        "headers": {"Set-Cookie": docs.SET_COOKIE_HEADER}}}))
     def logout(session: Session, auth: Runtime) -> Response:
         auth.service.logout(session)
         response = Response(status_code=204, headers=NO_STORE)
         _clear(response, auth, auth.settings.session_cookie, auth.csrf_cookie, auth.settings.login_cookie)
         return response
 
-    @router.get("/workspace/members", response_model=list[MembershipOut])
+    @router.get("/workspace/members", response_model=list[MembershipOut],
+                **docs.operation(session=True, errors=(401, 403)))
     def members(authorized: Annotated[Authorized, Depends(require_action(Action.MANAGE_MEMBERSHIP))],
                 auth: Runtime) -> list[MembershipOut]:
         with workspace_transaction(auth.app_engine, authorized.workspace_id) as connection:
@@ -205,7 +221,8 @@ def build_router() -> APIRouter:
         return [MembershipOut(membership_id=m.id, principal_id=m.principal_id, role=Role(m.role),
                               active=m.revoked_at is None) for m in rows]
 
-    @router.post("/workspace/members/{membership_id}/revoke", status_code=204)
+    @router.post("/workspace/members/{membership_id}/revoke", status_code=204,
+                 **docs.operation(csrf=True, errors=(401, 403, 404, 422)))
     def revoke_member(membership_id: UUID,
                       authorized: Annotated[Authorized, Depends(require_action(Action.MANAGE_MEMBERSHIP))],
                       auth: Runtime) -> Response:
@@ -218,8 +235,8 @@ def build_router() -> APIRouter:
 
 
 def install(app: FastAPI, auth: AuthRuntime) -> None:
+    """Attach the runtime and its error handler; `policyops.api.app.include_api_routes` adds the routes."""
     app.state.auth = auth
-    app.include_router(build_router(), prefix="/api/v1")
 
     @app.exception_handler(AuthError)
     def _auth_error(_request: Request, exc: AuthError) -> JSONResponse:
@@ -229,7 +246,8 @@ def install(app: FastAPI, auth: AuthRuntime) -> None:
 HTTP_CODES = {401: ErrorCode.UNAUTHENTICATED, 403: ErrorCode.FORBIDDEN, 404: ErrorCode.NOT_FOUND,
               405: ErrorCode.INVALID_INPUT, 409: ErrorCode.CONFLICT, 429: ErrorCode.RATE_LIMITED,
               503: ErrorCode.UNAVAILABLE}
-HTTP_DETAILS = {404: "Not found.", 405: "This method is not allowed here."}
+HTTP_DETAILS = {400: "The request could not be read.", 404: "Not found.", 405: "This method is not allowed here.",
+                413: "The request body is larger than 64 KiB."}
 
 
 def install_error_boundary(app: FastAPI) -> None:

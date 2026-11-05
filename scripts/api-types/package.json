@@ -1,0 +1,14 @@
+{
+  "name": "@policyops/api-types-generator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^26.13.0"
+  },
+  "devDependencies": {
+    "@redocly/openapi-core": "1.34.23",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

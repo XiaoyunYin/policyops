@@ -109,6 +109,22 @@ def active_memberships(connection: Connection, principal_id: UUID) -> list[Membe
     return [Membership.model_validate(dict(row), strict=False) for row in rows]
 
 
+# -- memberships of the current workspace (app runtime, workspace scope; admin flows authorize first) -------
+
+def workspace_memberships(connection: Connection) -> list[Membership]:
+    rows = connection.execute(text(
+        "SELECT id, workspace_id, principal_id, role, created_at, revoked_at, version FROM identity.memberships "
+        "ORDER BY created_at, id LIMIT 500")).mappings().all()
+    return [Membership.model_validate(dict(row), strict=False) for row in rows]
+
+
+def revoke_membership(connection: Connection, membership_id: UUID, now: datetime) -> bool:
+    """Revoke an active membership of the scoped workspace; False if it is not visible or already revoked."""
+    return bool(connection.execute(text(
+        "UPDATE identity.memberships SET revoked_at = :now, version = version + 1 WHERE id = :id "
+        "AND revoked_at IS NULL"), {"id": membership_id, "now": now}).rowcount)
+
+
 # -- cases and messages (app runtime, workspace scope) --------------------------------------------------------
 
 def create_case(connection: Connection, case: NewCase) -> CaseRecord:

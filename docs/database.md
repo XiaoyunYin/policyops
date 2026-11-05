@@ -2,7 +2,7 @@
 
 This page describes the PostgreSQL schema and roles in `packages/policyops/src/policyops/persistence/`. Everything here is tested against the pinned PostgreSQL 17.11 + pgvector 0.8.7 image (`pytest -m postgres`; Windows Docker Desktop is the only platform where that has actually run so far).
 
-The database stores records and enforces relational invariants. It does not authenticate anyone (T07) or decide whether a workflow step is allowed (T18/T19). Row-level security and constraints are a backstop for those services, not a substitute.
+The database stores records and enforces relational invariants. The [authentication service](authentication.md) validates identity, sessions and current workspace membership using these records. Business workflow authorization and execution remain later work. Row-level security and constraints support those services.
 
 ## Roles
 
@@ -12,7 +12,7 @@ Bootstrap creates four cluster roles. All of them are `NOSUPERUSER NOCREATEDB NO
 |---|---|---|
 | `policyops_app_migrator` | Owns the schemas and runs Alembic | DDL in its database. It has no data policy under forced RLS, so it reads no tenant rows |
 | `policyops_app_runtime` | API and worker | Tenant tables in `app`, plus its current workspace and memberships in `identity`; `USAGE` on `checkpoints` |
-| `policyops_auth_runtime` | Trusted authentication service | `identity` only: workspaces, principals, memberships, sessions |
+| `policyops_auth_runtime` | Trusted authentication service | `identity` only: workspaces, principals, memberships, sessions, login requests |
 | `policyops_eval_runtime` | Evaluation recording | `evaluation` only |
 
 - **Auth role.** Pre-workspace identity lookups (principal by issuer and subject, a principal's memberships across workspaces) need rows that no workspace scope can select. A separate, narrowly granted auth role does this, rather than a `SECURITY DEFINER` function. It sees all identity rows by design: that service is the trusted boundary, and it has no business, evaluation or retail access.
@@ -38,7 +38,7 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 | Schema | Contents |
 |---|---|
-| `identity` | workspaces, principals (global), memberships, sessions |
+| `identity` | workspaces, principals (global), memberships, sessions, browser-bound login requests |
 | `app` | cases and messages, documents and versions, runs and events, action proposals, presentations, consents, decisions, tool executions, jobs, outbox, audit, index generations, chunks, retrieval traces, citations, usage reservations and events |
 | `evaluation` | evaluation runs and trials (not tenant data; isolated by schema and role) |
 | `checkpoints` | empty: ownership and `USAGE` only. T21 owns the checkpoint DDL; the runtime never runs setup or migrations |
@@ -47,7 +47,7 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 - Every tenant table has `workspace_id NOT NULL`, and every one with its own `id` also has `UNIQUE (workspace_id, id)`. The exception is `proposal_presentations`, whose natural composite primary key is workspace, proposal and version, with no `id`. Every tenant relationship is a composite foreign key, so a reference to another workspace's row fails in the database even with a valid UUID, and even for a superuser.
 - Optional links use the default `MATCH SIMPLE`: a NULL link is no link, and because `workspace_id` is never NULL, a non-NULL link is always checked.
 - There are no cascades and no `SET NULL`.
-- Principals are the one global table; they are referenced by single-column keys.
+- Principals use global issuer/subject identity and single-column references. Login requests are pre-workspace auth-service records; tenant permissions still come from current memberships.
 
 **Row-level security.**
 - RLS is enabled and forced on every `identity` and `app` table, with policies for named roles only.
@@ -79,14 +79,15 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Migrations
 
-The chain lives in `persistence/migrations/` and has two revisions: `0001` (identity, cases, actions, jobs, audit) and `0002` (retrieval, usage, evaluation, checkpoints). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
+The chain lives in `persistence/migrations/` and has three revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), and `0003` (single-use login requests and session idle/CSRF state). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
 
 - **Precondition.** `upgrade` and `downgrade` need a connection with no open transaction. Otherwise Alembic would run all revisions inside the caller's transaction, so they raise `MigrationPreconditionError` before doing anything, and never commit or roll back the caller's work. `current` leaves no transaction behind.
 - **Upgrade.** Each revision runs in its own transaction. A failing revision rolls back completely and the version stays at the previous revision. A test makes revision `0002` fail midway and checks that.
 - **Previous-revision upgrade.** A database at `0001` with imported synthetic data upgrades to head with every existing row unchanged.
+- **Authentication upgrade.** Revision `0003` also upgrades a populated `0002` database. Existing sessions receive NULL idle/CSRF fields and require a new login; the auth service rejects them. New login requests have a bounded expiry and single-use consumption state, with access restricted to the auth role.
 - **Downgrade.**
-  - Dropping a revision's tables destroys their rows, so a downgrade is lossy.
-  - It is refused (`DataLossRefused`) while those tables hold rows, unless `allow_data_loss=True` is passed explicitly.
+  - Dropping a revision's tables or columns loses their data, so a downgrade can be lossy.
+  - It is refused (`DataLossRefused`) while the affected tables hold rows, unless `allow_data_loss=True` is passed explicitly. For `0003`, either login-request or session rows trigger refusal; an explicitly allowed downgrade drops the added session fields while retaining session rows.
   - The refusal rolls back the check's temporary `NO FORCE ROW LEVEL SECURITY`.
 - **Restore.** A restore is a separate operation, not a downgrade. A tested path dumps with `pg_dump -Fc` and restores with `pg_restore --single-transaction` into a separate, freshly provisioned database, as the superuser. It preserves:
   - row counts;

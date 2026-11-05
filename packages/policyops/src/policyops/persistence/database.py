@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
+import weakref
 
 import psycopg
 from sqlalchemy import Connection, Engine, create_engine, event, text
@@ -77,3 +78,54 @@ def transaction(engine: Engine) -> Iterator[Connection]:
     """An unscoped transaction, for the auth and evaluation roles (their tables are not workspace-scoped by RLS)."""
     with engine.begin() as connection:
         yield connection
+
+
+class RuntimeRoleError(PersistenceError):
+    """A runtime engine authenticates as the wrong role, or as a role with privileges a runtime must not have."""
+
+
+_VERIFIED: weakref.WeakKeyDictionary[Engine, str] = weakref.WeakKeyDictionary()
+
+
+def _driver_user(dbapi_connection: Any) -> str:
+    """The user psycopg actually authenticated as (not affected by SET ROLE / SET SESSION AUTHORIZATION)."""
+    user: str = dbapi_connection.info.user
+    return user
+
+
+def verify_runtime_role(engine: Engine, expected: str) -> None:
+    """Refuse runtime wiring unless the engine really authenticates as `expected` (one of the restricted runtime
+    roles) with no superuser, BYPASSRLS, CREATEROLE, CREATEDB, replication, inheritance or memberships.
+
+    The authenticated identity is psycopg's `info.user`; `session_user` and `current_user` must equal it too, so a
+    privileged login masked by `SET ROLE` or `SET SESSION AUTHORIZATION` is refused. The same driver-identity check
+    is then attached to every pool checkout (including connections opened before verification).
+    """
+    from policyops.persistence.roles import RUNTIME_ROLES
+
+    if expected not in RUNTIME_ROLES:
+        raise RuntimeRoleError(f"{expected!r} is not a runtime role")
+    with engine.connect() as connection:
+        authenticated = _driver_user(connection.connection.driver_connection)
+        row = connection.execute(text(
+            "SELECT session_user, current_user, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, "
+            "r.rolreplication, r.rolinherit, (SELECT count(*) FROM pg_auth_members m WHERE m.member = r.oid) "
+            "FROM pg_roles r WHERE r.rolname = session_user")).one()
+        connection.rollback()
+    session, current, superuser, bypassrls, createrole, createdb, replication, inherit, memberships = row
+    if {authenticated, session, current} != {expected}:
+        raise RuntimeRoleError(f"the engine authenticates as {authenticated!r} (session {session!r}, current "
+                               f"{current!r}), expected {expected!r}")
+    if superuser or bypassrls or createrole or createdb or replication or inherit or memberships:
+        raise RuntimeRoleError(f"{expected} has privileges a runtime role must not have")
+    known = _VERIFIED.get(engine)
+    if known is None:
+        _VERIFIED[engine] = expected
+
+        @event.listens_for(engine, "checkout")
+        def _same_identity(dbapi_connection: Any, _record: Any, _proxy: Any) -> None:
+            # Every checkout, so connections the pool opened before verification are covered too.
+            if _driver_user(dbapi_connection) != expected:
+                raise RuntimeRoleError("a pooled connection authenticated as a different role")
+    elif known != expected:
+        raise RuntimeRoleError("this engine was already verified for a different runtime role")

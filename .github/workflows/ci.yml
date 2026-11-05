@@ -106,7 +106,7 @@ jobs:
     # Linux only: GitHub's Windows runners have no Linux container engine. The fixture starts its own labelled,
     # read-only container on an ephemeral 127.0.0.1 port, binds all writable data under $RUNNER_TEMP/policyops
     # and removes the container by ID; this job then checks that no owned container or new volume remains.
-    name: PostgreSQL fixture (ubuntu-24.04)
+    name: PostgreSQL and Dex integration (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -132,10 +132,12 @@ jobs:
           version: "0.13.7"
           checksum: c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
           enable-cache: false
-      - name: Pull the pinned PostgreSQL image by digest
+      - name: Pull the pinned PostgreSQL and Dex images by digest
         run: |
-          image="$(python3 -B -c 'import json; p = json.load(open("infra/images.json"))["images"]["postgres"]; print(p["image"] + "@" + p["digest"])')"
-          docker pull "$image"
+          for name in postgres oidc; do
+            image="$(python3 -B -c 'import json, sys; p = json.load(open("infra/images.json"))["images"][sys.argv[1]]; print(p["image"] + "@" + p["digest"])' "$name")"
+            docker pull "$image"
+          done
           docker volume ls -q | sort > "$POLICYOPS_TEMP_DIR/volumes-before.txt"
       - name: Application environment (frozen lock)
         run: python3 -B scripts/devenv.py uv sync --frozen

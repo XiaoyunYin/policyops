@@ -28,6 +28,8 @@ PUBLIC_DOCS = {
     "docs/security.md", "docs/data-provenance.md",
     # T06: public reference for the database role matrix, bootstrap/migration usage and restore/rollback limits.
     "docs/database.md",
+    # T07: public reference for the OIDC/session/CSRF design, local identity setup and its limits.
+    "docs/authentication.md",
 }
 PRIVATE_NAMES = {
     "plan.md", "agents.md", "claude.md", "bullets.md",

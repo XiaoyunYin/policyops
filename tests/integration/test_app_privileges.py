@@ -50,7 +50,8 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "identity.workspaces": (SI, set()),
         "identity.principals": (SI, set()),
         "identity.memberships": (SI, {"revoked_at", "version"}),
-        "identity.sessions": (SI, {"revoked_at", "workspace_id"}),
+        "identity.sessions": (SI, {"revoked_at", "workspace_id", "last_seen_at"}),
+        "identity.login_requests": (SI, {"consumed_at"}),
     },
     EVAL_RUNTIME: {
         "evaluation.evaluation_runs": (SI, {"status", "started_at", "finished_at", "total_cost_usd", "version"}),

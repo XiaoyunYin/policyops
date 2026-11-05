@@ -781,3 +781,68 @@ def test_pgpass_cleanup_is_always_attempted_and_confirmed(tmp_path: Path, monkey
     assert len(paths) == 1 and next(iter(paths)).startswith("/var/lib/postgresql/data/secrets/pgpass-")
     assert all(PGPASS_PASSWORD not in " ".join(args) for args, _ in docker.calls)  # never in argv
     assert [stdin for _, stdin in docker.calls if stdin] == [f"127.0.0.1:5432:*:postgres:{PGPASS_PASSWORD}\n"]
+
+
+# -- Dex fixture secret cleanup (T07 review F1) ----------------------------------------------------------------
+
+def _dex_without_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, run_fails: bool = False) -> Any:
+    from policyops_testing import dex as dex_module
+
+    def docker(*args: str, timeout: float = 120, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ("image", "inspect"):
+            return subprocess.CompletedProcess(["docker", *args], 0, "", "")
+        if args[0] == "run" and run_fails:
+            return subprocess.CompletedProcess(["docker", *args], 125, "", "synthetic run failure")
+        raise AssertionError(f"unexpected docker call {args[:2]}")
+
+    monkeypatch.setattr(dex_module, "_docker", docker)
+    root = tmp_path / "dex"
+    root.mkdir()
+    return dex_module.OwnedDex(root=root, run_id="cleanup", redirect_uri="http://127.0.0.1:8000/cb",
+                               image="unused")
+
+
+def test_a_failed_dex_secret_write_leaves_no_secret_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _dex_without_docker(tmp_path, monkeypatch)
+    real_write = Path.write_text
+
+    def failing_write(self: Path, data: str, *args: Any, **kwargs: Any) -> int:
+        if self.name == "bob":
+            raise OSError("synthetic write failure")
+        return real_write(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing_write)
+    with pytest.raises(OSError, match="synthetic write failure"):
+        server.start()
+    assert list((server.root / "secrets").iterdir()) == [] and not (server.root / "data" / "config.yaml").exists()
+    assert server.client_secret and redaction.redact_text(server.client_secret) == server.client_secret  # forgotten
+
+
+def test_a_failed_dex_start_removes_written_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from policyops_testing.dex import DexUnavailable
+
+    server = _dex_without_docker(tmp_path, monkeypatch, run_fails=True)
+    with pytest.raises(DexUnavailable, match="synthetic run failure"):
+        server.start()
+    assert list((server.root / "secrets").iterdir()) == []
+
+
+def test_unconfirmed_dex_secret_cleanup_is_reported_with_the_primary_error(tmp_path: Path,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    from policyops_testing.dex import DexUnavailable
+
+    server = _dex_without_docker(tmp_path, monkeypatch, run_fails=True)
+    real_unlink = Path.unlink
+
+    def stuck_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "alice":
+            raise PermissionError("synthetic: cannot remove")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", stuck_unlink)
+    with pytest.raises(CleanupUncertain, match="secrets/alice") as raised:
+        server.start()
+    assert isinstance(raised.value.__context__, DexUnavailable)  # the primary failure is kept
+    assert server.passwords["alice"] not in str(raised.value)
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    (server.root / "secrets" / "alice").unlink()  # the test's own synthetic leftover

@@ -1,7 +1,9 @@
 # Architecture: retail contracts and domain rules
 
 This page describes what is implemented so far. The application database (schema, roles, migrations) is described
-in [database.md](database.md); HTTP handlers, the agent runtime, the retail simulator and the web UI are later work. The contracts and rules below are pure, typed and tested, but they do not by
+in [database.md](database.md), and OIDC/session authentication handlers and role dependencies in
+[authentication.md](authentication.md). Business case/message handlers, the agent runtime, the retail simulator
+and the web UI remain later work. The contracts and rules below are pure, typed and tested, but they do not by
 themselves authorize anything at runtime.
 
 ## Packages

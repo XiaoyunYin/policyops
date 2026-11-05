@@ -67,7 +67,8 @@ class RepositoryConfigTests(unittest.TestCase):
     def test_postgres_job_pulls_the_pinned_digest_and_checks_teardown(self) -> None:
         job = self.workflow[self.workflow.index("\n  postgres:\n"):self.workflow.index("\n  web:\n")]
         self.assertIn("runs-on: ubuntu-24.04", job)
-        self.assertIn('["images"]["postgres"]', job)
+        self.assertIn('["images"][sys.argv[1]]', job)
+        self.assertIn("for name in postgres oidc; do", job)
         self.assertIn('p["image"] + "@" + p["digest"]', job)
         self.assertIn('docker pull "$image"', job)
         self.assertEqual(self.workflow.count("pytest -m postgres"), 1)

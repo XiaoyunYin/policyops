@@ -67,6 +67,7 @@ class PublicationGuardTests(unittest.TestCase):
 
     def test_only_reviewed_docs_pages_pass(self) -> None:
         self.stage("docs/database.md")
+        self.stage("docs/authentication.md")
         self.assertEqual(self.run_guard().returncode, 0)
         for name in ("docs/notes.md", "docs/review-T06.md", "docs/sub/database.md"):
             with self.subTest(name=name):

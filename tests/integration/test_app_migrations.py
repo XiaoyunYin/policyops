@@ -112,7 +112,7 @@ def test_populated_previous_revision_upgrades_with_data_intact(new_app_database:
 
 
 def test_failed_revision_rolls_back_alone(new_app_database: NewDatabase) -> None:
-    first, second = migrate.revisions()
+    first, *_ = migrate.revisions()
     database = new_app_database("failing", revision=first)
     with database.superuser() as conn:
         conn.execute("CREATE SCHEMA evaluation")  # makes the second revision fail midway (after its first tables)
@@ -123,11 +123,11 @@ def test_failed_revision_rolls_back_alone(new_app_database: NewDatabase) -> None
     with database.superuser() as conn:
         conn.execute("DROP SCHEMA evaluation")
     database.upgrade()
-    assert database.current() == second
+    assert database.current() == migrate.head()
 
 
 def test_lossy_downgrade_is_refused_unless_explicitly_allowed(new_app_database: NewDatabase) -> None:
-    first, _ = migrate.revisions()
+    first, second, *_ = migrate.revisions()
     database = new_app_database("downgrade")
     import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
     world = World()
@@ -137,9 +137,10 @@ def test_lossy_downgrade_is_refused_unless_explicitly_allowed(new_app_database: 
             provider_request_id="req-1", uncached_input_tokens=10, cache_read_tokens=0, cache_write_tokens=0,
             output_tokens=5, reasoning_tokens=0, price_revision="synthetic-1", cost_status="known",
             cost_usd=Decimal("0.000000000000000001"), created_at=world.now))
+    database.downgrade(second)  # later revisions hold no rows here; each downgrade step commits on its own
     with pytest.raises(DataLossRefused, match=r"app\.usage_events"):
         database.downgrade(first)
-    assert database.current() == migrate.head()
+    assert database.current() == second
     with database.superuser() as conn:
         forced = conn.execute("SELECT bool_and(relforcerowsecurity) FROM pg_class c JOIN pg_namespace n "
                               "ON n.oid = c.relnamespace WHERE n.nspname = 'app' AND c.relkind = 'r'").fetchone()
@@ -245,7 +246,7 @@ def test_client_side_scram_verifier_matches_postgresql(app_cluster: AppCluster) 
 def test_migrations_refuse_a_connection_with_an_open_transaction(new_app_database: NewDatabase) -> None:
     """C1 finding F1: a caller transaction would make Alembic run every revision inside it (a later failure then
     loses earlier revisions, and the caller's work could be committed). Refused before any work instead."""
-    first, second = migrate.revisions()
+    first, *_ = migrate.revisions()
     database = new_app_database("precondition", revision=first)
     with database.superuser() as conn:
         conn.execute("CREATE SCHEMA evaluation")  # would make 0002 fail midway, as in the reviewer's probe
@@ -277,4 +278,38 @@ def test_migrations_refuse_a_connection_with_an_open_transaction(new_app_databas
     with database.superuser() as conn:
         conn.execute("DROP SCHEMA evaluation")
     database.upgrade()
-    assert database.current() == second
+    assert database.current() == migrate.head()
+
+
+def test_0003_upgrades_populated_data_and_refuses_lossy_downgrade(new_app_database: NewDatabase) -> None:
+    """T07 forward migration: a 0002 database with identity rows and a pre-0003 session upgrades in place; such a
+    session has no CSRF digest or last-seen time, so the application treats it as invalid. Downgrading 0003 is
+    refused while login or session rows exist."""
+    from datetime import timedelta
+
+    from policyops.auth.tokens import digest
+
+    _, second, third = migrate.revisions()
+    database = new_app_database("auth_upgrade", revision=second)
+    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    world = World()
+    with database.superuser() as conn:
+        conn.execute("INSERT INTO identity.sessions (id, principal_id, cookie_sha256, created_at, expires_at) "
+                     "VALUES (gen_random_uuid(), %s, %s, %s, %s)",
+                     (world.analyst, digest("pre-0003-cookie"), world.now, world.now + timedelta(hours=1)))
+    before = _counts(database)
+    database.upgrade()
+    assert database.current() == third
+    after = _counts(database)
+    assert {table: after[table] for table in before} == before and after["identity.login_requests"] == 0
+    with database.superuser() as conn:
+        assert conn.execute("SELECT csrf_sha256, last_seen_at FROM identity.sessions").fetchone() == (None, None)
+    with pytest.raises(DataLossRefused, match=r"identity\.sessions"):
+        database.downgrade(second)
+    assert database.current() == third
+    database.downgrade(second, allow_data_loss=True)
+    with database.superuser() as conn:
+        columns = {row[0] for row in conn.execute("SELECT column_name FROM information_schema.columns "
+                                                  "WHERE table_schema = 'identity' AND table_name = 'sessions'")}
+    assert database.current() == second and not {"csrf_sha256", "last_seen_at"} & columns
+    assert _counts(database)["identity.sessions"] == 1  # the session row itself survives a column drop

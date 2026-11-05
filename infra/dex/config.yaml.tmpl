@@ -1,0 +1,53 @@
+{{- /* PolicyOps local identity provider (pinned Dex v2.46.1, see infra/images.json). Fictional users only.
+     Rendered inside the container by the image's own gomplate: secrets are read from files under /work/secrets
+     (generated per run, never committed), bcrypt-hashed here, and the rendered file is deleted once Dex is up.
+     Environment (not secret): DEX_ISSUER (exact issuer URL), POLICYOPS_REDIRECT_URI (exact callback URL). */ -}}
+issuer: {{ getenv "DEX_ISSUER" | required "DEX_ISSUER is required" }}
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+expiry:
+  idTokens: "10m"
+  authRequests: "10m"
+
+signer:
+  type: local
+  config:
+    keysRotationPeriod: "6h"
+    algorithm: RS256
+
+logger:
+  level: info
+  format: json
+
+oauth2:
+  responseTypes: [code]
+  skipApprovalScreen: true
+  alwaysShowLoginScreen: false
+
+enablePasswordDB: true
+
+staticClients:
+  - id: policyops-local
+    name: PolicyOps (local)
+    secret: '{{ file.Read "/work/secrets/client_secret" | strings.TrimSpace }}'
+    redirectURIs:
+      - '{{ getenv "POLICYOPS_REDIRECT_URI" | required "POLICYOPS_REDIRECT_URI is required" }}'
+
+staticPasswords:
+  - email: alice@example.invalid
+    username: alice
+    userID: 3f1c2a64-6a2e-4c41-9a10-6f0c3e1a0001
+    hash: '{{ file.Read "/work/secrets/alice" | strings.TrimSpace | crypto.Bcrypt }}'
+  - email: bob@example.invalid
+    username: bob
+    userID: 3f1c2a64-6a2e-4c41-9a10-6f0c3e1a0002
+    hash: '{{ file.Read "/work/secrets/bob" | strings.TrimSpace | crypto.Bcrypt }}'
+  - email: carol@example.invalid
+    username: carol
+    userID: 3f1c2a64-6a2e-4c41-9a10-6f0c3e1a0003
+    hash: '{{ file.Read "/work/secrets/carol" | strings.TrimSpace | crypto.Bcrypt }}'

@@ -1,7 +1,8 @@
 """Pinned gitleaks gate and hook ordering, exercised in isolated repositories.
 
 Synthetic secrets are generated at run time, so the scanner configuration needs
-no allowlist for test fixtures. Hook tests require the verified scanner
+no allowlist for test fixtures; its only allowlist is the reviewed exact corpus-key
+exception, tested here in both directions. Hook tests require the verified scanner
 (`python -B scripts/gitleaks_gate.py install`); they fail rather than skip.
 """
 
@@ -33,6 +34,10 @@ gate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gate)
 
 ALNUM = string.ascii_letters + string.digits
+# The reviewed allowlist's two public identifiers and two files, assembled at run time so this
+# source file's own assignments cannot match generic-api-key when the repository is scanned.
+CORPUS_KEYS = tuple("tau2-" + name for name in ("banking-knowledge", "retail-policy"))
+CORPUS_KEY_PATHS = ("evals/src/policyops_evals/ingest_manifest.py", "evals/manifests/tau2-19f13ea3/ingest-corpora.json")
 # Runs the gate and records, through audit hooks, every directory it creates and
 # the TEMP/TMP/TMPDIR handed to each child process, whichever API created them.
 RECORDING_DRIVER = r'''
@@ -219,6 +224,35 @@ class GitleaksHookTests(unittest.TestCase):
         self.assertIn("rule=policyops-secret-assignment", found.stderr)
         self.assertNotIn(secret, found.stdout + found.stderr)
 
+    def test_corpus_key_exception_admits_only_the_two_exact_identifiers_in_the_two_files(self) -> None:
+        # The reviewed allowlist (.gitleaks.toml): public corpus_key values that generic-api-key misreads.
+        legit = "".join(f'{{"corpus_key": "{key}", "domain": "d"}},\n' for key in CORPUS_KEYS)
+        repo = TempRepo(self)
+        for path in CORPUS_KEY_PATHS:
+            repo.stage(path, legit)
+        clean = repo.run(sys.executable, "-B", str(GATE), "staged")
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        blocked: list[tuple[str, str, str | None]] = [("apps/other_manifest.py", legit, None)]  # elsewhere
+        for path in CORPUS_KEY_PATHS:
+            secret = random_text(32)
+            blocked.append((path, legit + f'api_key = "{secret}"\n', secret))  # a real secret beside them
+            lookalike = f"{CORPUS_KEYS[0]}-{random_text(20)}"
+            blocked.append((path, f'{{"corpus_key": "{lookalike}"}}\n', lookalike))  # not an exact identifier
+        for case, (path, content, generated) in enumerate(blocked):  # labels never carry generated values
+            with self.subTest(case=case, path=path):
+                repo = TempRepo(self)
+                repo.stage(path, content)
+                found = repo.run(sys.executable, "-B", str(GATE), "staged")
+                self.assertEqual(found.returncode, 1, found.stdout + found.stderr)
+                self.assertIn(f"{path}:", found.stderr)
+                self.assertIn("rule=generic-api-key", found.stderr)
+                if generated is not None:
+                    self.assertNotIn(generated, found.stdout + found.stderr)
+        repo = TempRepo(self)
+        secret = stripe_like_key()
+        repo.stage(CORPUS_KEY_PATHS[0], legit + f'payment_key = "{secret}"\n')  # other rules are not allowlisted
+        self.assert_blocked_by_scanner(repo.commit(), secret)
+
     def test_non_ascii_history_metadata_is_reported_not_crashed(self) -> None:
         # Regression: scanner JSON (UTF-8, including commit author names) was
         # decoded with the locale code page, e.g. cp936, instead of UTF-8.
@@ -375,14 +409,21 @@ class GitleaksInstallTests(unittest.TestCase):
             for digest in (archive_sha, binary_sha):
                 self.assertRegex(digest, r"^[0-9a-f]{64}$")
 
-    def test_config_extends_defaults_without_allowlists(self) -> None:
+    def test_config_extends_defaults_with_only_the_reviewed_exact_allowlist(self) -> None:
         config = tomllib.loads((REPO / ".gitleaks.toml").read_text(encoding="utf-8"))
         self.assertEqual(config["extend"], {"useDefault": True})
         self.assertNotIn("allowlist", config)
-        self.assertNotIn("allowlists", config)
         for rule in config.get("rules", []):
             self.assertNotIn("allowlist", rule)
             self.assertNotIn("allowlists", rule)
+        (exception,) = config["allowlists"]
+        self.assertEqual(exception["targetRules"], ["generic-api-key"])
+        self.assertEqual(exception["condition"], "AND")
+        self.assertEqual(exception["regexes"], [rf"\A{key}\z" for key in CORPUS_KEYS])
+        self.assertEqual(exception["paths"], [r"\Aevals/src/policyops_evals/ingest_manifest\.py\z",
+                                              r"\Aevals/manifests/tau2-19f13ea3/ingest-corpora\.json\z"])
+        self.assertEqual(set(exception) - {"description"},
+                         {"targetRules", "condition", "regexes", "paths"})  # no stopwords, commits or regexTarget
         self.assertFalse((REPO / ".gitleaksignore").exists())
 
 

@@ -22,7 +22,6 @@ from policyops.budget.config import Configuration
 from policyops.budget.ledger import OperationBinding, Settlement
 from policyops.budget.pricing import Usage
 from policyops.domain.examples import World
-from policyops.persistence import migrate
 from policyops.persistence.budget import build_app_ledger
 from policyops.persistence.database import workspace_transaction
 from policyops.persistence.embeddings import EmbeddingStore
@@ -103,9 +102,9 @@ def test_a_populated_0008_dump_upgrades_to_0009_intact_and_runs_a_job(app_cluste
     assert before == counts(source) and target.current() == "0008"
     assert before["app.usage_attempts"] == 1 and before["app.case_messages"] > 0
     assert not set(NEW_TABLES) & set(before)
-    target.upgrade()
+    target.upgrade("0009")  # this revision's own upgrade (0010 has its own migration tests)
     after = counts(target)
-    assert target.current() == migrate.head() == "0009"
+    assert target.current() == "0009"
     assert {table: after[table] for table in before} == before  # nothing changed in pre-existing tables
     assert {table: after[table] for table in NEW_TABLES} == dict.fromkeys(NEW_TABLES, 0)
     world = World()
@@ -136,7 +135,7 @@ def run_one(database: AppDatabase) -> None:
 
 
 def test_a_populated_0009_downgrade_is_refused_unless_explicitly_destructive(new_app_database: NewDatabase) -> None:
-    database = new_app_database("emb_downgrade")
+    database = new_app_database("emb_downgrade", revision="0009")
     import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
     run_one(database)
     with pytest.raises(DataLossRefused, match=r"app\.embedding"):
@@ -154,10 +153,10 @@ def test_a_populated_0009_downgrade_is_refused_unless_explicitly_destructive(new
 
 
 def test_an_empty_0009_downgrades_and_upgrades_again_cleanly(new_app_database: NewDatabase) -> None:
-    database = new_app_database("emb_empty_downgrade")
+    database = new_app_database("emb_empty_downgrade", revision="0009")
     database.downgrade("0008")
     assert database.current() == "0008" and not set(NEW_TABLES) & set(counts(database))
-    database.upgrade()
+    database.upgrade("0009")
     assert database.current() == "0009" and set(NEW_TABLES) <= set(counts(database))
 
 

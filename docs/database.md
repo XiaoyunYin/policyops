@@ -40,7 +40,7 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 | Schema | Contents |
 |---|---|
 | `identity` | workspaces, principals (global), memberships, sessions, browser-bound login requests |
-| `app` | cases and messages, documents and versions, runs and events, action proposals, presentations, consents, decisions, tool executions, jobs, outbox, audit, index generations, chunks, retrieval traces, citations, usage reservations and events, budget scopes and usage attempts (`0006`) |
+| `app` | cases and messages, documents and versions, runs and events, action proposals, presentations, consents, decisions, tool executions, jobs, outbox, audit, index generations, corpora and generation membership (`0010`), chunks, retrieval traces, citations, usage reservations and events, budget scopes and usage attempts (`0006`) |
 | `evaluation` | evaluation runs and trials, study/invocation/scenario budget scopes and usage attempts (`0006`) (not tenant data; isolated by schema and role) |
 | `checkpoints` | empty: ownership and `USAGE` only. T21 owns the checkpoint DDL; the runtime never runs setup or migrations |
 
@@ -109,6 +109,39 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
   - `app.embedding_cache`: the first validated `vector(1536)` per `(workspace_id, input_sha256,
     request_config_sha256)`, referencing the evidence row that published it. Select and insert only, so a cached
     vector is never replaced, deleted or visible to another workspace.
+- **Corpus ingestion (`0010`).** Written only by the ingestion component (`persistence/corpora.py`); there is no
+  HTTP or worker writer.
+  - `app.corpora`: one stable slot per `(workspace_id, corpus_key)` with the active generation pointer and an
+    optimistic `version`. The pointer is a composite foreign key `(workspace_id, corpus_key, active_generation_id)`,
+    so it can only name a generation of the same corpus; at most one `ready` generation exists per corpus (partial
+    unique index). The runtime can `SELECT`, `INSERT` and update only the pointer, version and `updated_at`.
+    Activation is a compare-and-swap on this row.
+  - `app.index_generations` gains corpus provenance (source repository, commit and tree, source and corpus manifest
+    digests, license scope, render, chunk configuration, tokenizer and request-configuration digests, expected-set
+    and generation-key digests, document and chunk counts). A row has all of it or none (legacy rows).
+  - `app.generation_documents`: the exact membership of a generation, including documents with no chunk, with the
+    version, `source_uri`, path, Git blob and raw file digest and size of that revision. Select and insert only.
+  - `app.documents` gains the owning `corpus_key` and a unique `source_uri` per workspace, so a stable source
+    identity cannot belong to two corpora. `app.chunks` gains section offsets, the plain `text_sha256` (a CHECK ties
+    it to the text), the embedding input digest and request configuration (a foreign key to the immutable
+    embedding-cache entry), and a unique position per generation; the existing ready-only chunk policy is unchanged.
+    `app.citations` gains a composite foreign key `(workspace_id, chunk_id, document_version_id)` referencing
+    `app.chunks (workspace_id, id, document_version_id)`, which binds each citation's document version to its
+    cited chunk.
+  - Guards (PL/pgSQL, `SECURITY INVOKER`, no `EXECUTE` for `PUBLIC`; they run with the caller's own privileges and
+    RLS, and no new role or `SECURITY DEFINER` exists):
+    - Inserting a chunk or membership row locks its generation `FOR SHARE` and requires it to be visible and
+      `building`. That lock conflicts with the status change of a concurrent activation, so no row can be added to
+      a generation after another transaction verified and activated it.
+    - A corpus generation starts `building`; only `building` to `ready`/`failed` and `ready` to `retired` are
+      allowed, and `ready_at` changes only with the first.
+    - A deferred constraint at commit requires that no corpus generation is left `building` and that a generation is
+      `ready` exactly when its corpus points at it. This is structural only: it does not inspect chunk contents.
+    - A citation insert requires a chunk visible to the inserting role (for the app runtime: in a `ready`
+      generation), the trace's generation and the chunk's document version, and a span inside the chunk. This checks
+      structure; it does not authorize the citing run or show that the span supports a claim.
+  - The repository's publish transaction, historical citation read and their exact checks are described in
+    [architecture.md](architecture.md#corpus-ingestion). Retired and `building` chunks stay hidden from the runtime.
 - **Usage budget ledger (`0006`).**
   - A budget scope holds server-set caps and exact counters (`spent_usd`, `held_usd`, `calls_consumed`,
     `calls_held`, and a sticky `overrun`), with `calls_consumed + calls_held <= cap_calls` checked in the database.
@@ -145,14 +178,27 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Migrations
 
-The chain lives in `persistence/migrations/` and has nine revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index), and `0005` (run initiator, fencing generation, event high-water mark and retention floor, job claim IDs and error codes, run ledger operations, the discovery role's grants), and `0006` (the usage budget ledger: app and evaluation budget scopes and usage attempts, attempt-linked usage events), `0007` (request-bound v2 intents, per-attempt counts, count resources and
-contract blocks), `0008` (durable customer lookup authentication per run) and `0009` (the embedding foundation: jobs, inputs, frozen batches, attempt evidence and the vector cache). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
+The chain lives in `persistence/migrations/` and has ten revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index), and `0005` (run initiator, fencing generation, event high-water mark and retention floor, job claim IDs and error codes, run ledger operations, the discovery role's grants), and `0006` (the usage budget ledger: app and evaluation budget scopes and usage attempts, attempt-linked usage events), `0007` (request-bound v2 intents, per-attempt counts, count resources and
+contract blocks), `0008` (durable customer lookup authentication per run), `0009` (the embedding foundation: jobs, inputs, frozen batches, attempt evidence and the vector cache) and `0010` (corpus ingestion: corpora, generation membership and provenance, publication and citation guards). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
 
 - **Precondition.** `upgrade` and `downgrade` need a connection with no open transaction. Otherwise Alembic would run all revisions inside the caller's transaction, so they raise `MigrationPreconditionError` before doing anything, and never commit or roll back the caller's work. `current` leaves no transaction behind.
 - **Upgrade.** Each revision runs in its own transaction. A failing revision rolls back completely and the version stays at the previous revision. A test makes revision `0002` fail midway and checks that.
 - **Previous-revision upgrade.** A database at `0001` with imported synthetic data upgrades to head with every existing row unchanged.
 - **Authentication upgrade.** Revision `0003` also upgrades a populated `0002` database. Existing sessions receive NULL idle/CSRF fields and require a new login; the auth service rejects them. New login requests have a bounded expiry and single-use consumption state, with access restricted to the auth role.
 - **Run upgrade.** Revision `0005` upgrades a populated `0004` database in place. It backfills each run's event high-water mark from its stored events and leaves legacy runs without an initiator, and the worker refuses to run those. The backfill lifts FORCE RLS inside the revision's transaction and restores it. Data that violates the new rules (two active workbench runs on one case, or a leased job, which predates claim IDs) refuses the upgrade without being rewritten. The revision needs the discovery role, so run bootstrap first.
+- **Ingestion upgrade.** Revision `0010` upgrades a populated `0009` database in place. Before changing anything it
+  counts rows that would violate the constraints it adds: duplicate document source identities, duplicate chunk
+  positions, and citations whose document version, trace generation or span disagree with their chunk. Any such row
+  refuses the whole upgrade (`LegacyIncompatible`, with counts only, no IDs or text) in the revision's transaction:
+  nothing is repaired, dropped or rewritten, and the version stays at `0009`. The check lifts and restores each
+  table's exact FORCE state. A passing upgrade validates structural agreement only, and it cannot add the
+  historical fact that a legacy citation's chunk was ready when it was cited. Existing rows and grants are otherwise
+  unchanged. Verification: a copy of a genuine populated `0008` dump (34 tables, 15 of them non-empty) was restored
+  and upgraded through `0009` to `0010`. All 34 row counts stayed the same; the row-level inventories of the 33
+  pre-existing data tables stayed identical, and the 34th table, the Alembic version table, advances by design. After
+  an empty-data downgrade to `0008` the full 34-table inventory was restored, and a re-upgrade reproduced it. The
+  three widened retrieval tables (documents, generations and chunks) were empty in that historical dump, so
+  populated legacy retrieval data is covered by separate migration fixtures, not by the dump.
 - **Embedding foundation upgrade.** Revision `0009` upgrades a populated `0008` database in place. It only adds
   the five empty tables, their policies and grants; existing rows and grants are unchanged. A test restores a
   `pg_dump` of a populated `0008` database into a separate database, upgrades it, compares every pre-existing
@@ -178,7 +224,7 @@ contract blocks), `0008` (durable customer lookup authentication per run) and `0
   - It is refused (`DataLossRefused`) while the affected tables hold rows, unless `allow_data_loss=True` is passed explicitly. For `0003`, either login-request or session rows trigger refusal; an explicitly allowed downgrade drops the added session fields while retaining session rows. For `0004`, ledger rows trigger refusal (dropping them would break replay of committed writes); without them the downgrade removes exactly the ledger, the index and the message key. For `0005`, runs or jobs trigger refusal (their fencing, initiator and high-water fields would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the `run.start` / `run.cancel` ledger rows, because the restored `0004` operation CHECK cannot hold them; case-ledger rows are kept. Their replays are lost: a later retry with such a key is treated as a new request. Re-upgrading to `0005` afterwards backfills each run's high-water mark from its remaining events, but cannot restore the generation (0 again), the initiator (NULL, so the worker will not execute those runs) or the deleted ledger rows. For `0007`, the downgrade is refused whenever version 2, count or contract-block data exists, **even with
 `allow_data_loss=True`**: dropping it would leave scope totals that no longer match their attempts, so that recovery
 is a restore from a consistent backup. Without such data it removes the columns and triggers, keeps version 1 rows
-and restores the exact FORCE flags. For `0009`, rows in any of its five tables trigger refusal (job identities, evidence of billed requests and cached vectors would be lost); `allow_data_loss=True` drops exactly those tables, and the vectors must then be paid for again. Without rows the downgrade drops the tables and re-upgrading restores them. For `0008`, rows in `app.customer_authentications` trigger refusal (dropping them would silently de-authenticate runs). Without them the downgrade drops exactly the table and the case key, and re-upgrading restores both. For `0006`, rows in any budget scope or usage attempt table trigger refusal (holds, consumed calls and settled costs would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the usage events that name only an attempt, because the restored NOT NULL provider request ID cannot hold them; attempt events that have a provider request ID are kept as legacy rows. It lifts FORCE on `app.usage_events` for that delete only if the table was forced, and restores exactly the previous state.
+and restores the exact FORCE flags. For `0009`, rows in any of its five tables trigger refusal (job identities, evidence of billed requests and cached vectors would be lost); `allow_data_loss=True` drops exactly those tables, and the vectors must then be paid for again. Without rows the downgrade drops the tables and re-upgrading restores them. For `0010`, the downgrade is refused while `app.corpora` or `app.generation_documents` has rows, or while any generation, document or chunk carries the new provenance columns. With `allow_data_loss=True` it drops the guards, constraints, new columns and the two tables; the ingested documents, versions, chunks and generations remain as ordinary legacy rows without their provenance, section, corpus and membership information, and the cached vectors of `0009` are untouched. That override is destructive and does not restore anything; recovery of the provenance is a restore from a consistent backup, and re-upgrading afterwards does not recreate it. For `0008`, rows in `app.customer_authentications` trigger refusal (dropping them would silently de-authenticate runs). Without them the downgrade drops exactly the table and the case key, and re-upgrading restores both. For `0006`, rows in any budget scope or usage attempt table trigger refusal (holds, consumed calls and settled costs would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the usage events that name only an attempt, because the restored NOT NULL provider request ID cannot hold them; attempt events that have a provider request ID are kept as legacy rows. It lifts FORCE on `app.usage_events` for that delete only if the table was forced, and restores exactly the previous state.
   - The check lifts `FORCE ROW LEVEL SECURITY` temporarily, because the migrator sees no tenant rows otherwise. It then restores each table's previous state, both when it refuses (the rollback) and when it passes. Before T09 a passing check left the table unforced, which in practice meant `identity.sessions` after an empty `0003` downgrade. A regression test covers forced and unforced tables.
 - **Restore.** A restore is a separate operation, not a downgrade. A tested path dumps with `pg_dump -Fc` and restores with `pg_restore --single-transaction` into a separate, freshly provisioned database, as the superuser. It preserves:
   - row counts;
@@ -196,7 +242,7 @@ and restores the exact FORCE flags. For `0009`, rows in any of its five tables t
 
 - **Administrators.** The owner, migrator or a superuser can still alter or drop data, policies or triggers. Append-only and audit guarantees hold against the runtime roles, not against database administrators.
 - **Data migrations.** Future data migrations must set a workspace scope or add an explicit, reviewed policy, because the migrator sees no tenant rows.
-- **Not yet built.** Authorization decisions, membership checks on use, document ingestion and retrieval queries are later tasks. The embedding tables (`0009`) are written by the embedding foundation only; no ingestion command populates them yet. The schema supports these but does not perform them.
+- **Not yet built.** Authorization decisions, membership checks on use and retrieval queries are later tasks. The embedding tables (`0009`) are written by the embedding foundation, and the `0010` tables by the operator-run ingestion command only; no API or worker writes them. The ingestion component is implemented and verified locally (see the upgrade notes above and [architecture.md](architecture.md#corpus-ingestion)); hosted CI has not been run. The schema supports retrieval and citations but does not perform them.
 - **Linux.** The POSIX/Linux run of the PostgreSQL tests (the CI `postgres` job) has not been executed.
 
 

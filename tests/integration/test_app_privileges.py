@@ -71,6 +71,9 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.embedding_batches": (SI, {"state", "lease_owner", "lease_until", "fence", "updated_at"}),
         "app.embedding_attempt_evidence": (SI, set()),
         "app.embedding_cache": (SI, set()),
+        # T12 ingestion (0010): only the corpus pointer moves; generation membership is immutable at runtime.
+        "app.corpora": (SI, {"active_generation_id", "version", "updated_at"}),
+        "app.generation_documents": (SI, set()),
     },
     AUTH_RUNTIME: {
         "identity.workspaces": (SI, set()),
@@ -147,12 +150,16 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
     functions = _rows(shared_db, "SELECT p.oid::regprocedure::text, p.proacl::text FROM pg_proc p "
                       "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' ORDER BY 1")
     acl = dict(functions)
+    guards = {"app.guard_generation_member()", "app.guard_generation_insert()", "app.guard_generation_transition()",
+              "app.check_generation_publication()", "app.guard_citation_insert()"}  # 0010 trigger functions
     assert set(acl) == {"app.current_workspace()", "app.guard_action_proposal_update()",
-                        "app.refuse_legacy_usage_attempt()"}
+                        "app.refuse_legacy_usage_attempt()"} | guards
     # Owner plus the app runtime only; a PUBLIC entry would appear as "=X/...".
     assert acl["app.current_workspace()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR},{APP_RUNTIME}=X/{APP_MIGRATOR}}}"
     assert acl["app.guard_action_proposal_update()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"
     assert acl["app.refuse_legacy_usage_attempt()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"
+    for guard in guards:
+        assert acl[guard] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}", guard
 
 
 def test_schema_usage_and_no_runtime_create_anywhere(shared_db: AppDatabase) -> None:

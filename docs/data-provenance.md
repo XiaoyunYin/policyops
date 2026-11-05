@@ -16,8 +16,11 @@ derived from it lives in [`evals/manifests/tau2-19f13ea3/`](../evals/manifests/t
 | `upstream-verification.json` | Results of pinned upstream code run against the acquisition |
 | `corpus-tokens.json` | Extraction digests, sizes and tokenizer-specific counts |
 | `retail-calibration.json` | T04: dev demo/tuning allowlist (46 of 64), 18 sourced exclusions, mutation/read-only tags, neutral metadata-only seeds; see [architecture.md](architecture.md) |
+| `ingest-corpora.json` | T12: the ingestion source manifest (`policyops.ingest-manifest/v1`): per corpus the document keys, paths, Git blobs, SHA-256 digests and sizes, license scope, render and rendered-list digest; no document text. See [Ingestion manifest](#ingestion-manifest) |
 
-Each manifest carries `manifest_sha256` over its canonical JSON, so an edit that is not regenerated is detected.
+Each manifest except `ingest-corpora.json` carries `manifest_sha256` over its canonical JSON, so an edit that is not
+regenerated is detected. The ingestion manifest is instead bound by the SHA-256 of its exact bytes, which the
+ingestion command requires from its caller, and `ingest_manifest --check` compares it with a fresh rebuild.
 
 ## Commands
 
@@ -39,6 +42,37 @@ python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data
 `build` (without `--check`) rewrites the source, split, rights and audit manifests. On first use `tokens` downloads
 the two tiktoken vocabularies into `--cache` (network); tiktoken checks them against the SHA-256 values in its
 installed package, and later runs are offline.
+
+## Ingestion manifest
+
+`ingest-corpora.json` is generated from the committed `source.json`, `corpus-tokens.json` and `rights-audit.json`
+only: no acquisition tree, document text or network is needed.
+
+```powershell
+# Offline: rebuild from the committed manifests and compare with the committed file (no data, no model).
+python -B scripts/devenv.py uv --project evals run --frozen python -B -m policyops_evals.ingest_manifest --check
+```
+
+Running it without `--check` rewrites the file. It lists two corpora, both under the root MIT grant described below:
+
+| Corpus | Domain | Render | Documents | Source |
+|---|---|---|---:|---|
+| `tau2-banking-knowledge` | `banking_knowledge` | `tau2-banking/v1` (`## <title>`, blank line, content, as T03's `render_document`) | 698 | every consumed `banking_knowledge/documents/*.json`, keyed by file stem |
+| `tau2-retail-policy` | `retail` | `identity` (the decoded file) | 1 | the retail `policy.md` |
+
+Each document's path, Git blob, SHA-256 and size come from `source.json`, the license scope statement is the rights
+audit's verbatim. The rendered-list digest is the SHA-256 of the sorted per-document rendered-body SHA-256 hex
+strings (sorted by document key) joined by LF: it is T03's for banking, and for retail the list has one string, so
+the digest is the SHA-256 of the ASCII policy-file digest and is distinct from that file digest. The retail file
+digest itself is cross-checked against T03's `retail_policy_sha256`. The source revision (repository, commit, tree and source-manifest
+digest) belongs to the manifest: a future revision gets its own manifest and values.
+
+At import time the ingestion command re-verifies each listed file against these values (size, SHA-256, Git blob,
+strict UTF-8, rendered-list digest) before anything is written; see [architecture.md](architecture.md#corpus-ingestion).
+The imported bodies exist only in the operator's own PostgreSQL database for one workspace, never in Git. The rights
+position is unchanged: the root MIT license is the only explicit grant, and it does not establish the provenance of
+every data file. Neither this manifest nor the ingestion component changes the retrieval, model-quality or cost
+evidence, none of which has been measured.
 
 ## Acquisition integrity
 

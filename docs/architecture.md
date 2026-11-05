@@ -543,8 +543,8 @@ price.
 ## Embedding foundation
 
 T12's first component: an accounted, cached way to embed exact texts with `text-embedding-3-small` at 1536
-dimensions. Document ingestion, chunking, index activation and retrieval are later components; nothing calls this
-from an API or the worker yet. One bounded live compatibility smoke on 2026-11-05 is described under **Limits**
+dimensions. Nothing calls this from an API or the worker yet; its only caller is the operator-run ingestion command
+(see **Corpus ingestion**), and retrieval is a later component. One bounded live compatibility smoke on 2026-11-05 is described under **Limits**
 below.
 
 **Local counting** (`providers/tokenizer.py`). Embedding inputs are counted with cl100k_base, the encoding tiktoken
@@ -626,7 +626,7 @@ timeout or cancellation during cleanup cannot lose a known bill.
   ledger settled USD 0.00000084 with nothing held (operation cap USD 0.001, worst-case reservation USD 0.00000256).
   This is the cost of this smoke, not a statement about retrieval quality, model quality, cache savings or
   performance, and it is not an evaluation. The earlier dated Luna and Haiku evidence and their recorded holds are
-  unchanged. Ingestion and retrieval are not built, no API or worker caller exists, and T12 is incomplete. The
+  unchanged. Retrieval is not built and no API or worker caller exists; the ingestion command is described under **Corpus ingestion** and does not extend this smoke. The
   external smoke ran under a 300-second child supervisor with a bounded cleanup grace; that is not a production
   deadline proof, and the database-wait bullet at the end of this list still applies.
 - A synthetic maximum
@@ -636,6 +636,130 @@ timeout or cancellation during cleanup cannot lose a known bill.
 - The job deadline does not bound database waits: the ledger and store transactions are synchronous, no statement
   or lock timeout is set, and a transaction blocked on a row lock waits until the database releases it. The deadline
   is checked again afterwards; a blocked wait sends nothing.
+
+## Corpus ingestion
+
+T12's second component: `policyops.retrieval` (`sources.py`, `parse.py`, `corpus.py`, `ingest.py`, `cli.py`) and
+`persistence/corpora.py` on revision `0010` ([database.md](database.md)) import one corpus into one workspace as a
+new, atomically activated generation. **Status: implemented and verified locally** (Windows with Docker Desktop: the application suite with
+1,149 default and 415 PostgreSQL cases, the evaluator suite with 168 cases of which 35 use PostgreSQL, strict lint
+and type checks, and a genuine populated pre-ingestion dump upgraded to `0010`); hosted and Linux CI have not been
+run. It is an operator-run command: the process holds
+database credentials, so there is no principal or membership check (like the synthetic importer), and there is no
+HTTP endpoint, worker, retrieval query or ranking. The one-request embedding smoke under **Limits** above remains the
+only live embedding evidence; nothing here is a corpus-scale, quality, savings or performance result.
+
+**Source manifest and reading** (`sources.py`). `policyops.ingest-manifest/v1` is committed metadata only: per
+corpus a sorted, finite list of documents (key, repository path, Git blob, SHA-256, size), the license scope, the
+pinned render and the digest of the sorted rendered bodies. `evals/manifests/tau2-19f13ea3/ingest-corpora.json`
+holds `tau2-banking-knowledge` (698 documents, render `tau2-banking/v1`) and `tau2-retail-policy` (1 document,
+render `identity`). It is derived from the committed T03 manifests by the evaluator-owned
+`policyops_evals.ingest_manifest` (`--check` compares, `--manifests DIR` selects the input); the application never
+imports the evaluator. The caller supplies the manifest's exact bytes with their SHA-256. Before any database write or
+provider call:
+
+- the manifest is strictly parsed (unknown fields, duplicate keys and non-finite numbers refused; at most 2,000
+  documents and 16 MiB of raw bytes per corpus, 4 MiB per file);
+- every path is a safe relative POSIX path under an acquisition root (for `data fetch --dest D`, the root is
+  `D/tree`) that is itself free of links; each component is checked and the joined path must equal its strict
+  resolution inside the root;
+- each file is read bounded by its declared size and its size, SHA-256 and Git blob SHA-1 must all match; the bytes
+  must be strict UTF-8 without a BOM, and the rendered body non-empty, at most 4 MiB and free of NUL and lone
+  surrogates;
+- the rendered-list digest must equal the manifest's value. A refusal refuses the whole corpus.
+
+The check-then-open sequence guards ordinary aliasing, not an attacker replacing files during the read.
+
+**Parser** (`parse.py`, `policyops.md/v1`, chunk configuration `chunk.cl100k-512-nooverlap/v1`). A deterministic
+function of the body, the versions and the token counter. Offsets are code-point indexes and a chunk's text is
+exactly `body[start:end]`: CRLF, tabs and Unicode are never normalized. `\n` is the only line terminator. Headings
+are ATX only; fenced code (a CommonMark subset) keeps its headings as text; a section runs from a heading to the next
+heading of any level, so a parent never repeats its children. Paragraphs and whole fenced blocks are packed greedily
+without overlap while the exact submitted embedding input (heading path, blank line, text) counts at most 512
+cl100k_base tokens and the span at most 20,000 code points. An oversized paragraph is split at sentences, and an
+oversized sentence or fence is hard split by bisection. Prefix counts are not assumed monotone, so a split is
+feasible and deterministic, not maximal, and at most 18 counts are made per split; a position where not even one
+code point is feasible, or a heading path over 500 code points, is a named, bounded refusal.
+
+**Identities** (`corpus.py`). A document's identity is its `source_uri` from the corpus domain and document key, with
+no source commit, and a source identity owned by another corpus is refused. Each generation records the revision,
+path, Git blob and raw digest of its members, while an immutable document version is identified by its rendered-body
+digest: changed content creates a new version numbered after the document's latest, and a body that matches an
+existing version of that document reuses it even when the revision, path or blob differs (a candidate whose stored
+body does not have its recorded digest refuses the publication). A chunk's `sha256` is a composite digest over parser and chunk versions, source identity, version digest,
+offsets, heading path, section metadata and the plain text digest, so repeated text at other positions keeps distinct
+identities; the plain text digest is stored and verified separately. The embedding input digest is the cache key and
+is independent of document and position. The expected set (header, every member document including those without chunks,
+such as heading-only or whitespace-only bodies, and every chunk) has one digest; an empty body is refused at reading; the generation key binds it to the header, and a key equal to the active generation's is a
+repeat that changes no row and makes no call. At most 10,000 chunks and 64 MiB of bodies are accepted so that the
+publish transaction is bounded.
+
+**Modes and the paid gate** (`ingest.py`, `cli.py`).
+
+| Invocation | Effect |
+|---|---|
+| default | Read-only plan: verifies, parses, compares with the active generation, looks up the cache and any existing job, and estimates the remaining work. No write, reservation, credential read or request |
+| `--execute` | Writes allowed. Publishes locally when every input is cached, or when an existing job is settled |
+| `--execute --paid` with `--model --dimensions --max-usd --max-calls --max-input-tokens --max-seconds` | The only way to embed misses. Every flag is required (no defaults), model and dimensions must equal the configured actor (`text-embedding-3-small`, 1536), and the caps are bounded by USD 1.00, 1,000 calls, 5,120,000 local tokens and 3,600 seconds |
+
+Caps without `--paid`, or `--paid` without `--execute`, are usage refusals. The preflight runs over the complete
+remaining miss plan before any credential read, reservation or request: batches times the worst-case reservation
+within `--max-usd`, batches within `--max-calls`, the frozen plan's **total** local tokens within
+`--max-input-tokens`, and batches times (30-second attempt plus 10-second settlement margin) within `--max-seconds`
+and the job's remaining window. The caps are also the ledger configuration used for admission, so recorded caps are the
+enforced ones. The token ceiling is a cumulative job budget: a resume counts every frozen batch, attempted or not, so
+a lower ceiling cannot ignore work already planned, and a larger one does not widen the effective budget. When provider
+work remains, a resume whose caps or window differ from the stored job and scope is refused
+(`resume_configuration_changed`); there is never a second job or a reissue. `OPENAI_API_KEY` is read only after the preflight passed. An expired incomplete job, an
+unresolved hold or a missing vector is reported (`embedding_incomplete`) with accounting and cache preserved; a job
+that is already settled (complete, or every batch published or satisfied by the cache with nothing held) is published
+from the cache without a provider call, credential read or deadline change even after its window elapsed. That
+cache-only publication is local: it needs no paid caps and does not validate a changed paid budget that it does not
+use.
+
+**Publish** (`CorpusStore.publish`). One bounded transaction as `policyops_app_runtime` inside the workspace scope
+(the store verifies at construction that its engine authenticates as that role), with no provider or file I/O:
+
+1. create or lock the corpus row `FOR UPDATE` and compare it with the import's snapshot (compare-and-swap, including
+   the no-corpus case); a difference is `StaleActivation`, exit 4, with nothing written;
+2. insert or reuse documents and versions (only the one reuse candidate per document is read and hashed; a candidate
+   whose body does not have the expected digest refuses the publication and is never rewritten);
+3. insert the `building` generation, its membership and its chunks with their cached vectors;
+4. retire the previous ready generation, make the new one ready and move the pointer;
+5. read back through the unchanged ready-only chunk policy and verify the exact expected set (counts, every member's
+   body digest and source identity, every chunk slice against its version body, text digest, composite identity and
+   vector against its cache entry, and the recomputed expected-set digest). Any difference rolls everything back.
+
+A failed or interrupted import leaves the previous generation active; failed jobs keep their accounting and cache.
+Step 5 partly re-reads values this process just wrote: it catches database-side differences, and is not an
+independent oracle. The `0010` guards independently prevent later rows in a published generation. SQL waits are
+not interrupted by any deadline (the accepted SQL-wait exception), so no wall-clock bound on the publish is claimed,
+and no duration, row or byte measurements of a real corpus import are reported here.
+
+**Citation read** (`CorpusStore.resolve_citation_text`). A narrow typed read port returns the cited span from the
+immutable version body, with the checks actually performed: the run matches the citation's trace, the version's
+actual body digest equals its recorded digest, and the span lies within the version (at most 20,000 code points). For
+a corpus generation it also checks that the version is a member of the trace's generation and reports chunk
+containment as a write-time guard; for a legacy generation it reports `version_in_generation` as
+`not_recorded_legacy`. This is not authorization (the service must already have checked run and case access) and does
+not show that a span supports any claim; no citation-producing service exists yet.
+
+**Scripted full-manifest measurement.** One local run imported the full committed manifest into a fresh workspace
+on real PostgreSQL as `policyops_app_runtime`, through the real SDK path over a scripted transport (synthetic
+credentials and deterministic synthetic vectors; no provider HTTP): 699 documents (698 banking, 1 retail policy),
+2,963 chunks and 2,957 distinct embedding inputs (2,945 banking and 12 retail), published as one generation per
+corpus with 48 scripted requests (47 and 1). The tables then held 699 documents, 699 versions, 2 generations, 699
+memberships, 2,963 chunks, 2,957 cache entries and 48 usage attempts. The banking publish transaction took 4.17 s
+(its corpus-row lock was held for 4.16 s, mostly verification) and the retail one 0.06 s, on one machine in one
+observation: that is not a speed or capacity claim. The 6 duplicate occurrences (five repeated banking input strings)
+are why chunks exceed distinct inputs; their roughly 246 tokens are a count difference, not a measured saving. The
+serialized vector text recorded (about 95 MB) is not database storage (relation sizes were measured separately) and
+not billable input. Vectors, prices and usage are synthetic; no retrieval quality or live-embedding result follows.
+
+**Operator output.** One JSON object on stdout with the outcome, counts, digests, estimate and caps (never document
+text or secrets). Exit codes: 0 planned, unchanged or activated; 1 verification failure or unexpected error (type
+only); 2 refused; 3 embedding incomplete; 4 stale activation. The connection uses the libpq environment, and the role
+must be `policyops_app_runtime`.
 
 ## Dev calibration allowlist and demo seeds
 

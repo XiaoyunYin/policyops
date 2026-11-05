@@ -1,6 +1,7 @@
 # Independent secret scanner configuration for the pinned gitleaks 8.30.1.
-# Extends the built-in rules; there is deliberately no path allowlist. Tests
-# generate synthetic secrets at run time instead of committing fixtures.
+# Extends the built-in rules. Tests generate synthetic secrets at run time
+# instead of committing fixtures. The only allowlist is the reviewed exception
+# below: one built-in rule, two exact secret values, two exact paths (AND).
 title = "PolicyOps gitleaks configuration"
 
 [extend]
@@ -13,3 +14,13 @@ regex = '''(?i)\bPOLICYOPS_[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY)\b["']?[ \
 secretGroup = 1
 entropy = 3.0
 keywords = ["policyops_"]
+
+# Reviewed false positive (T12): the public ingestion corpus identifiers are
+# `corpus_key` values, which generic-api-key reads as a key assignment. Only
+# these exact two secrets, only for that rule, only in these two files.
+[[allowlists]]
+description = "T12 public corpus_key identifiers in the ingestion manifest builder and its committed manifest"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexes = ['''\Atau2-banking-knowledge\z''', '''\Atau2-retail-policy\z''']
+paths = ['''\Aevals/src/policyops_evals/ingest_manifest\.py\z''', '''\Aevals/manifests/tau2-19f13ea3/ingest-corpora\.json\z''']

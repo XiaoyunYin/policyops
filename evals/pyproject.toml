@@ -66,6 +66,9 @@ minversion = "9.1"
 testpaths = ["tests"]
 # Shared harness plugin (network guard, seeds, fake provider, evidence) from the repository's tests/support.
 pythonpath = ["../tests/support"]
-addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider"]
+# `postgres` tests (tests/test_retail_sim_db.py) need Docker and run only when selected explicitly:
+# pytest -m postgres (the CI PostgreSQL job does this).
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider",
+           "-m", "not postgres"]
 xfail_strict = true
 filterwarnings = ["error"]

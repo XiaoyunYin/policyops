@@ -78,11 +78,35 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertIn("for name in postgres oidc; do", job)
         self.assertIn('p["image"] + "@" + p["digest"]', job)
         self.assertIn('docker pull "$image"', job)
-        self.assertEqual(self.workflow.count("pytest -m postgres"), 1)
+        # Exactly two PostgreSQL selections in the whole workflow: the application's and the evaluator's, both in
+        # this Linux job (the Windows Python job has no container engine and never selects postgres explicitly).
+        app_command = "python3 -B scripts/devenv.py uv run --frozen pytest -m postgres"
+        evaluator_command = "python3 -B ../scripts/devenv.py uv run --frozen pytest -m postgres"
+        evaluator_setup = "python3 -B scripts/devenv.py uv sync --project evals --frozen"
+        self.assertEqual(self.workflow.count("pytest -m postgres"), 2)
+        self.assertEqual(job.count("pytest -m postgres"), 2)
+        self.assertEqual(job.count(app_command), 1)
+        self.assertEqual(job.count(evaluator_command), 1)
+        self.assertEqual(job.count(evaluator_setup), 1)
         self.assertIn("label=policyops.owner=policyops-tests", job)
         self.assertIn("if: always()", job)
-        self.assertLess(job.index("volumes-before.txt"), job.index("pytest -m postgres"))
-        self.assertLess(job.index("pytest -m postgres"), job.index("volumes-after.txt"))
+        # Both commands run after the pinned pulls and the volume baseline and before the always-run teardown;
+        # the evaluator's frozen environment is created before its command.
+        self.assertLess(job.index("volumes-before.txt"), job.index(app_command))
+        self.assertLess(job.index(app_command), job.index(evaluator_setup))
+        self.assertLess(job.index(evaluator_setup), job.index(evaluator_command))
+        self.assertLess(job.index(evaluator_command), job.index("if: always()"))
+        self.assertLess(job.index(evaluator_command), job.index("volumes-after.txt"))
+        step = job[job.index("      - name: Evaluator PostgreSQL"):]
+        step = step[:step.index(evaluator_command) + len(evaluator_command)]
+        self.assertIn("working-directory: evals\n", step)
+        # The application and evaluator defaults exclude postgres, so only these explicit steps select it.
+        for project in ("pyproject.toml", "evals/pyproject.toml"):
+            with self.subTest(project=project):
+                addopts = load_toml(project)["tool"]["pytest"]["addopts"]
+                self.assertEqual(addopts[addopts.index("-m") + 1], "not postgres")
+        python_job = self.workflow[self.workflow.index("\n  python:\n"):self.workflow.index("\n  postgres:\n")]
+        self.assertNotIn("postgres", python_job)
 
     def test_tool_versions_agree(self) -> None:
         node = (REPO / ".nvmrc").read_text(encoding="utf-8").strip()

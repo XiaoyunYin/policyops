@@ -2,7 +2,21 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and provider adapters for the OpenAI Responses and Anthropic Messages APIs (user-approved, capped live smokes on 2026-11-05 verified the text, tool and structured-output paths for both providers; the Anthropic paths were verified only after the request stopped sending the optional `speed` field named by a diagnostic of the earlier HTTP 400 refusals, which remain recorded; no agent workflow calls the adapters), and an evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client (tested against the pinned retail fixture), and a deterministic policy and tool gateway (scoped lookups, reads and computed non-actionable write previews, and an execution precheck that loads persisted authority records by reference; no write is dispatched by it, and no persisted decision store or operation ledger exists yet) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. Persisted proposals and decisions, the execution workflow and the UI remain pending. The first T12 component, an accounted and cached embedding foundation (local cl100k counting, one ledger-granted request per frozen batch, exact evidence and a per-workspace vector cache), is implemented and tested offline, plus one bounded live compatibility smoke on 2026-11-05 (below); document ingestion and retrieval are not built yet. No model-quality or performance results are claimed.**
+**Status.** Implemented and tested locally; nothing here has run in hosted CI, and no model-quality, retrieval or performance results are claimed.
+
+Implemented:
+- Locked development environments, publication safeguards and reviewed public-data acquisition.
+- Typed retail, consent and approval contracts, and the deterministic policy and tool gateway: scoped lookups, reads and computed, non-actionable write previews, and an execution precheck that loads persisted authority records by reference. It dispatches no write, and no persisted decision store or operation ledger exists yet.
+- PostgreSQL persistence (ten revisions), an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming, with the OpenAPI document and generated TypeScript types.
+- A model registry with dated prices, an exact cost calculator and a durable usage-budget ledger.
+- Provider adapters for the OpenAI Responses and Anthropic Messages APIs. User-approved, capped live smokes on 2026-11-05 verified the text, tool and structured-output paths for both providers. The Anthropic paths were verified only after the request stopped sending the optional `speed` field named by a diagnostic of the earlier HTTP 400 refusals, which remain recorded. No agent workflow calls the adapters.
+- An evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client tested against the pinned retail fixture.
+- T12 so far: an accounted and cached embedding foundation (local cl100k counting, one ledger-granted request per frozen batch, exact evidence, a per-workspace vector cache) with one bounded live compatibility smoke on 2026-11-05 (below), and a corpus-ingestion command: section-aware parser, source manifest, atomic generation publish, revision `0010`, and an operator CLI whose default is a read-only plan.
+
+Not built yet:
+- Retrieval queries and ranking, and any API or worker caller of the embedding or ingestion code.
+- An investigation runtime: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker.
+- Persisted proposals and decisions, the execution workflow and the UI.
 
 ## Intended architecture
 
@@ -88,8 +102,7 @@ general counting accuracy or performance. No agent workflow calls the adapters y
 downloaded at runtime), a persisted job freezes its batch plan, each batch is one ledger-granted request with an
 explicit float encoding, and its evidence and validated vectors are published atomically to a per-workspace cache.
 Unknown or contradictory billing keeps the hold; a complete body is accounted even if its cleanup is interrupted.
-It is tested offline and on PostgreSQL. Nothing calls it from an API or the worker yet, and document ingestion and
-retrieval are not built (T12 is incomplete).
+It is tested offline and on PostgreSQL. Nothing calls it from an API or the worker; the operator-run ingestion command below is its only caller.
 
 **Live embedding smoke (2026-11-05).** One user-approved, capped compatibility check ran against accepted commit
 `3a037abb`: a single OpenAI `text-embedding-3-small` request (float, 1536 dimensions). The logical job had four ordered input
@@ -102,6 +115,86 @@ USD 0.00000256). That is the cost of this smoke, not evidence of retrieval quali
 general token-count equality or performance. The external smoke ran under its own 300-second process supervisor with
 bounded cleanup; HTTP cleanup is bounded, but a synchronous SQL wait is not interrupted, so this is not a production
 deadline proof. See [docs/architecture.md](docs/architecture.md#embedding-foundation).
+
+**Corpus ingestion (T12).** `policyops.retrieval` imports one corpus into one workspace as a new, atomically
+activated *generation*. It is an operator-run command (no HTTP endpoint, no worker), and there is no retrieval query,
+ranking or caller yet. It was verified locally on Windows with Docker Desktop: the application suite (1,149 default
+cases and 415 PostgreSQL cases), the evaluator suite (168 cases, 35 of them PostgreSQL), strict linting and type
+checks, the upgrade of a genuine populated pre-ingestion database dump to `0010`, and a scripted full-manifest
+import (below). Hosted and Linux CI have not been run. The pieces:
+
+- **Source manifest.** `evals/manifests/tau2-19f13ea3/ingest-corpora.json` is metadata only (no document text): two
+  corpora, `tau2-banking-knowledge` (698 documents, render `tau2-banking/v1`) and `tau2-retail-policy` (1 document,
+  render `identity`), each file with its repository path, Git blob, SHA-256 and size, derived from the committed T03
+  manifests by the evaluator-owned `policyops_evals.ingest_manifest` (the application never imports it). The caller
+  binds the exact manifest bytes by SHA-256; nothing is discovered by listing a directory and nothing is fetched.
+- **Verified reading.** Every path must stay inside an acquisition root free of links, and each file's size, SHA-256
+  and Git blob must match, with strict UTF-8, no BOM and bounded sizes. Any refusal refuses the whole corpus before
+  a database write or provider call.
+- **Parser.** `policyops.md/v1` splits Markdown by ATX headings and fences into sections and paragraphs, packs them
+  into chunks of at most 512 cl100k_base tokens (counted on the exact embedding input, no overlap), and records
+  exact code-point offsets: each chunk's text is `body[start:end]`, with CRLF and tabs preserved.
+- **Stable identities.** A document is identified by `source_uri` (from the corpus domain and document key, with no
+  source commit). Each generation records the source revision, path, Git blob and raw digest of its members, while
+  an immutable document version is identified by its rendered-body digest: changed content creates a new version,
+  and a body that matches an existing version of that document reuses it, even if the revision, path or blob
+  differs. A chunk's `sha256` is a composite identity over its position, section, version and text digest, not the
+  plain text digest. A repeat import changes nothing; changed chunks are embedded, and any already cached exact
+  input is reused.
+- **Publish.** One bounded transaction as `policyops_app_runtime`, with no provider or file I/O inside it. It
+  compare-and-swaps the corpus row, inserts the `building` generation, members and chunks with their cached vectors,
+  retires the previous one, activates the new one, and verifies the exact expected set through the ready-only chunk
+  policy before commit. A failed import leaves the previous generation active.
+- **Citations.** A narrow read port returns a cited span from the immutable version body together with the
+  structural checks it actually performed (run match, version digest, span within the version, generation
+  membership). These are not authorization and do not show that a span supports a claim.
+- **Revision `0010`.** Adds corpora, generation membership and provenance columns, database guards for publication
+  and citations, and refuses legacy data that violates the new constraints; the downgrade is refused while ingested
+  data exists. See [docs/database.md](docs/database.md#migrations).
+
+Operator commands. The default is a **read-only plan**: it verifies, parses, compares with the active generation and
+reports cache misses and a worst-case estimate, with no write, reservation, credential read or request. `--execute`
+allows writes. Any embedding request additionally needs `--paid` with **every** cap given explicitly (there are no
+defaults): `--model`, `--dimensions`, `--max-usd`, `--max-calls`, `--max-input-tokens` and `--max-seconds`, within
+fixed ceilings (USD 1.00, 1,000 calls, 5,120,000 local tokens, 3,600 seconds) and equal to the configured
+`text-embedding-3-small`/1536 actor. An import whose inputs are all cached publishes locally without `--paid`.
+
+```powershell
+# Offline: confirm the committed manifest matches the committed T03 manifests.
+python -B scripts/devenv.py uv --project evals run --frozen python -B -m policyops_evals.ingest_manifest --check
+
+# Acquire the pinned data first (see Data and licensing); the acquisition root is the `tree` directory inside --dest.
+$tree = 'D:\path\outside\tau2-fetch\tree'
+$manifest = 'evals\manifests\tau2-19f13ea3\ingest-corpora.json'
+$digest = (Get-FileHash -Algorithm SHA256 $manifest).Hash.ToLower()
+
+# Read-only plan (default). Connects with the libpq environment (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSFILE) as
+# policyops_app_runtime; prints one JSON object (counts, digests, estimate), never document text or secrets.
+python -B scripts/devenv.py uv run --frozen python -B -m policyops.retrieval.cli ingest --workspace <workspace-uuid> `
+  --corpus-key tau2-banking-knowledge --manifest $manifest --manifest-sha256 $digest --acquisition-root $tree
+
+# Local writes only (all inputs already cached, or a completed job): add --execute.
+# Paid embedding (separate, explicitly authorized operation): add --execute --paid --model text-embedding-3-small
+#   --dimensions 1536 --max-usd <usd> --max-calls <n> --max-input-tokens <n> --max-seconds <n>
+# OPENAI_API_KEY is read only after the paid preflight passed.
+```
+
+Exit codes: 0 planned, unchanged or activated; 1 verification failure or unexpected error; 2 refused; 3 embedding
+incomplete (the previous generation stays active); 4 stale activation (another import changed the corpus). When
+provider work remains, a resume with different caps, a smaller token ceiling than the job's frozen total, or an
+expired incomplete job is refused, never silently widened, reissued or retried. Publishing an already settled job
+from the cache is local: it needs no `--paid` caps and does not validate a paid budget it does not use. No
+full-corpus paid run has been performed, and the earlier one-request embedding smoke above is the only live embedding evidence; no retrieval quality, cache savings
+or performance is claimed.
+
+**Scripted full-manifest import.** One local run imported the whole committed manifest (699 documents: 698 banking
+documents and the retail policy) into a fresh workspace on real PostgreSQL as the runtime role, with a scripted
+provider transport (48 scripted requests, synthetic credentials and deterministic synthetic vectors; no provider was
+contacted). It produced 2,963 chunks and 2,957 distinct cached embedding inputs. It exercises the publish path and
+measures its size only: vectors, prices and usage are synthetic, so it is not corpus-scale live embedding,
+retrieval-quality, cost-saving or speed evidence, and the serialized vector text it recorded (about 95 MB) is neither
+database storage nor billable input tokens. See [docs/architecture.md](docs/architecture.md#corpus-ingestion) and
+[docs/data-provenance.md](docs/data-provenance.md#ingestion-manifest).
 
 ## Retail simulator
 
@@ -149,7 +242,7 @@ authorization deadline, and dispatches nothing.
 
 ## Application database
 
-`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; an eight-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
+`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; a ten-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication; `0009` adds the embedding job/batch/evidence tables and the per-workspace vector cache; `0010` adds corpora, generation membership and provenance, and publication/citation guards. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
 
 ## Development setup
 
@@ -254,7 +347,11 @@ PostgreSQL tests (and the real-issuer tests, which also need the pinned Dex imag
 docker pull pgvector/pgvector@sha256:01215e09bd4bd582d20230e025b6c971deeeffee49ceef1aae167e839cb62a7e
 docker pull ghcr.io/dexidp/dex@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
 python -B scripts/devenv.py uv run --frozen pytest -m postgres
+cd evals
+python -B ../scripts/devenv.py uv run --frozen pytest -m postgres   # the evaluator's retail-simulator database tests
 ```
+
+Both projects' default selection excludes `postgres`; only these explicit runs start the container.
 
 Each session starts its own container: labelled, read-only root filesystem, Docker logging off, TCP only, published on an ephemeral `127.0.0.1` port (never 5432). It does not touch any other container or port. The image's data volume is bind-mounted from a unique directory under `$POLICYOPS_TEMP_DIR/tests/postgres/`, so no anonymous volume is created; PGDATA and the server log live there.
 
@@ -270,7 +367,7 @@ Teardown removes the container by ID after checking its labels and fails if it i
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs on Ubuntu and Windows without secrets or model API keys: publication guard plus gitleaks over full history, both Python environments (frozen sync, lint, strict type checks, tests) and the web checks. Before the application tests, a setup step provisions the pinned cl100k_base vocabulary with `scripts/fetch_tokenizer_vocab.py` (one fixed URL, hash-checked, at most 2 MiB); the tests themselves never download. An Ubuntu-only job pulls the pinned PostgreSQL and Dex images by digest, runs `pytest -m postgres` (database, authentication and real-issuer tests) and then fails if an owned container or a new Docker volume remains; Windows runners have no Linux container engine. Its temporary root is `$RUNNER_TEMP/policyops`, outside the checkout, and each job finishes with `scripts/check_repo_artifacts.py`, which lists every untracked or ignored path individually (including inside ignored directories) and fails on files left in the checkout. The web job records the tree `npm ci` installed (failing if the install wrote anywhere else) and afterwards fails on any new path, including new files under `node_modules/`; it also checks the generated API types against the OpenAPI document. The PostgreSQL job installs the web dependencies the same way, for the TypeScript response check. Actions are pinned to commit SHAs. Container image pins (PostgreSQL 17 with pgvector, Dex, Caddy) are recorded by digest in `infra/images.json`; Compose and Dockerfiles are not implemented yet.
+`.github/workflows/ci.yml` runs on Ubuntu and Windows without secrets or model API keys: publication guard plus gitleaks over full history, both Python environments (frozen sync, lint, strict type checks, tests) and the web checks. Before the application tests, a setup step provisions the pinned cl100k_base vocabulary with `scripts/fetch_tokenizer_vocab.py` (one fixed URL, hash-checked, at most 2 MiB); the tests themselves never download. An Ubuntu-only job pulls the pinned PostgreSQL and Dex images by digest, runs the application's `pytest -m postgres` (database, authentication and real-issuer tests) and the evaluator's (retail simulator database tests), and then fails if an owned container or a new Docker volume remains; Windows runners have no Linux container engine. That job's timeout is 45 minutes (the local full application PostgreSQL run took about 23 minutes on Windows; the hosted job has not been run). Its temporary root is `$RUNNER_TEMP/policyops`, outside the checkout, and each job finishes with `scripts/check_repo_artifacts.py`, which lists every untracked or ignored path individually (including inside ignored directories) and fails on files left in the checkout. The web job records the tree `npm ci` installed (failing if the install wrote anywhere else) and afterwards fails on any new path, including new files under `node_modules/`; it also checks the generated API types against the OpenAPI document. The PostgreSQL job installs the web dependencies the same way, for the TypeScript response check. Actions are pinned to commit SHAs. Container image pins (PostgreSQL 17 with pgvector, Dex, Caddy) are recorded by digest in `infra/images.json`; Compose and Dockerfiles are not implemented yet.
 
 Not implemented yet: `policyops eval`, `docker compose up` and any provider or paid evaluation command. Public-data acquisition is the evaluator-owned `policyops-evals data` command (next section), not part of the application. `.env.example` lists implemented authentication variables alongside proposed provider/deployment settings. Authentication does not automatically load `.env`; export its configured values explicitly or supply them through a deployment secret store. The CI workflow defines checks; hosted CI has not been exercised.
 
@@ -284,6 +381,6 @@ python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data
 python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data check-manifests                              # offline, no data
 ```
 
-The fetch re-hashes every Git object, and verification rebuilds the pinned root tree from the actual file bytes. `evals/manifests/tau2-19f13ea3/` holds only reviewed metadata: hashes, task IDs, counts, the 64-dev/50-held-out retail split (held-out = upstream `retail_50`), the grouped 39/58 banking-knowledge split, a per-file rights audit and tokenizer-specific corpus counts. [docs/data-provenance.md](docs/data-provenance.md) documents the method, results and remaining uncertainty. Held-out tasks are refused for demos, smoke runs and tuning. Hidden task fields never cross the evaluator's runtime projection. The τ²-bench repository license is MIT ([notice](THIRD_PARTY_NOTICES.md)), as is the original [τ-bench license](https://github.com/sierra-research/tau-bench/blob/main/LICENSE). That root license is the only explicit grant found; it does not establish the provenance of every data file. PolicyOps's own distribution license will be selected before publication.
+The fetch re-hashes every Git object, and verification rebuilds the pinned root tree from the actual file bytes. `evals/manifests/tau2-19f13ea3/` holds only reviewed metadata: hashes, task IDs, counts, the 64-dev/50-held-out retail split (held-out = upstream `retail_50`), the grouped 39/58 banking-knowledge split, a per-file rights audit, tokenizer-specific corpus counts and the metadata-only ingestion manifest (`ingest-corpora.json`, no document text). [docs/data-provenance.md](docs/data-provenance.md) documents the method, results and remaining uncertainty. Held-out tasks are refused for demos, smoke runs and tuning. Hidden task fields never cross the evaluator's runtime projection. The τ²-bench repository license is MIT ([notice](THIRD_PARTY_NOTICES.md)), as is the original [τ-bench license](https://github.com/sierra-research/tau-bench/blob/main/LICENSE). That root license is the only explicit grant found; it does not establish the provenance of every data file. PolicyOps's own distribution license will be selected before publication.
 
 `scripts/devenv.py` also enables Python UTF-8 mode, because upstream reads JSON without an explicit encoding. It passes `core.autocrlf=false` to child Git processes, because a CRLF checkout of tau2 changes upstream's code fingerprints. The evaluator therefore has its own versioned uv cache and virtual environment (`cache/uv-evals-raw-v1`, `venvs/evals-raw-v1`); the application keeps `cache/uv` and `venvs/app`. Older evaluator cache and environment directories are left untouched and unused.

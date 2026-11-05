@@ -14,20 +14,23 @@ from decimal import Decimal
 import json
 import time
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import httpx2
 from pydantic import SecretStr
 import pytest
 
 from policyops.budget.config import DEFAULT_ACTORS, Caps, ChatActor, Configuration
-from policyops.budget.ledger import EvalBinding, Ledger, RunBinding
+from policyops.budget.ledger import EvalBinding, Ledger, LedgerConflict, RunBinding
 from policyops.persistence import repositories as repo
 from policyops.persistence.budget import build_app_ledger, build_eval_ledger
 from policyops.persistence.database import transaction, workspace_transaction
 from policyops.persistence.records import NewCase, NewRun, Workspace
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME
 from policyops.providers.calls import CallLimits, CallReport, Providers, call, call_sync
+from policyops.providers.canonical import canonical_bytes, sha256_hex
+from policyops.providers.contract import CONTRACT_VERSION, ENDPOINTS
+from policyops.providers.serialize import prepare
 from policyops_contracts.digest import text_sha256
 from policyops_contracts.model import Message, ModelRequest, ModelResult, OutputSpec, TextPart
 from policyops_testing.app_database import AppDatabase, NewDatabase
@@ -609,3 +612,72 @@ def test_a_malformed_then_valid_cache_split_holds_and_blocks(db: AppDatabase) ->
     assert (report.status, report.reason) == ("contract_gap", "usage_inconsistent")
     assert attempts(db, run) == [("decide.r0.a0", "unresolved", "admitted", "usage_inconsistent", None)]
     assert go(books, binding, Routes(), actor="judge").reason == "blocked_by_contract"
+
+
+# -- the Haiku request omits the optional `speed` field (T11 compatibility repair) -----------------------------------
+
+class Capture:
+    """Records the exact JSON body of every count and create request the real SDK put on the wire."""
+
+    def __init__(self, routes: Routes) -> None:
+        self.routes = routes
+        self.bodies: list[tuple[str, Any]] = []
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        kind = "count" if request.url.path.endswith(("input_tokens", "count_tokens")) else "create"
+        self.bodies.append((kind, json.loads(await request.aread())))
+        return await self.routes.handle_async_request(request)
+
+
+def haiku_go(books: Ledger, binding: Any, transport: Any, key: UUID) -> CallReport:
+    providers_ = Providers(credentials={"openai": KEY, "anthropic": KEY}, transport=lambda provider: transport)
+    return asyncio.run(call(books, providers_, binding, key, "decide", request(), "judge",
+                            deadline=time.monotonic() + 30, limits=CallLimits(backoff_seconds=0.0)))
+
+
+def test_the_sdk_sends_no_speed_for_haiku_and_the_bill_settles_exactly(db: AppDatabase) -> None:
+    books, binding, run = setup(db)
+    wire = Capture(Routes([reply({"input_tokens": 700})], [reply(haiku_message())]))
+    report = haiku_go(books, binding, wire, uuid4())
+    assert report.status == "result" and result_of(report).returned_model == "claude-haiku-5-5"
+    (count_kind, count_body), (create_kind, create_body) = wire.bodies
+    assert (count_kind, create_kind) == ("count", "create")
+    assert "speed" not in count_body and "speed" not in create_body  # the SDK injects no default either
+    assert create_body["service_tier"] == "standard_only" and create_body["thinking"] == {"type": "disabled"}
+    assert create_body["output_config"]["effort"] == "low"
+    assert attempts(db, run) == [("decide.r0.a0", "settled", "admitted", None, HAIKU_USD)]
+
+
+@pytest.mark.parametrize("speed", ["fast", "turbo"])
+def test_a_returned_non_standard_speed_still_holds_and_blocks(db: AppDatabase, speed: str) -> None:
+    books, binding, run = setup(db)
+    message = haiku_message()
+    message["usage"] = {**message["usage"], "speed": speed}
+    report = haiku_go(books, binding, Routes([reply({"input_tokens": 700})], [reply(message)]), uuid4())
+    assert report.reason == "speed_unpriced"
+    assert attempts(db, run) == [("decide.r0.a0", "unresolved", "admitted", "speed_unpriced", None)]
+    assert go(books, binding, Routes(), actor="judge").reason == "blocked_by_contract"
+
+
+def test_an_attempt_reserved_under_the_old_request_identity_is_never_reused_or_rekeyed(db: AppDatabase) -> None:
+    books, binding, _run = setup(db)
+    current = prepare(request(), books.configuration, "judge")
+    old = (current.request_sha256, json.loads(current.body))
+    endpoint = ENDPOINTS["anthropic"]
+    old_sha = sha256_hex(canonical_bytes({"contract": CONTRACT_VERSION, "provider": "anthropic", "method": "POST",
+                                          "host": endpoint.host, "path": endpoint.create_path, "query": {},
+                                          "version_headers": dict(endpoint.version_headers),
+                                          "body": old[1] | {"speed": "standard"}}))
+    assert old_sha != current.request_sha256
+    key = uuid4()
+    books.reserve(binding, uuid5(key, "decide.r0.a0"), "judge", "decide.r0.a0", old_sha)  # as the old source did
+    routes = Routes()
+    with pytest.raises(LedgerConflict):
+        haiku_go(books, binding, routes, key)  # the same stable attempt ID, a different body: refused
+    assert routes.seen == []  # nothing was counted or sent
+    with db.superuser() as conn:
+        assert conn.execute("SELECT request_sha256, state FROM app.usage_attempts WHERE id = %s",
+                            (uuid5(key, "decide.r0.a0"),)).fetchone() == (old_sha, "reserved")
+    fresh_key = uuid4()  # a new logical request gets a new identity and proceeds normally
+    report = haiku_go(books, binding, Routes([reply({"input_tokens": 700})], [reply(haiku_message())]), fresh_key)
+    assert report.status == "result"

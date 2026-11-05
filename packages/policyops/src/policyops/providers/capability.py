@@ -4,12 +4,14 @@ The record separates the kinds of evidence:
 - **`offline_contract`**: exercised by the offline tests through the real SDK clients over a scripted mock transport.
   It says the code serializes, bounds and maps those shapes. It says nothing about any account, model behaviour,
   price or counting accuracy.
-- **`live`**: every live cell is `not_run`. A live result needs a separately approved, bounded smoke run (the
-  manifest below) and is recorded with its artifacts. A mock is never a capability result, and full T11 acceptance
-  stays open until those cells hold real results.
+- **`live`**: this factory returns an **unpopulated template**. Every live cell is `not_run`, whatever has been
+  observed. Actual dated live evidence is recorded externally with its artifacts, for each separately approved,
+  bounded smoke run, and is never hard-coded here as a universal runtime capability. A mock is never a capability
+  result, and full T11 acceptance stays open until real results support it.
 
 The protocol choices are recorded so later comparisons state them: Haiku runs with `thinking: disabled` at effort
-`low` (reviewer primary verification of the effort guide, 2026-11-05); Luna runs at effort `low`.
+`low` (reviewer primary verification of the effort guide, 2026-11-05) and without the optional `speed` field, which
+gives the standard default; Luna runs at effort `low`.
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ PROTOCOL = {
     "openai": {"model": "gpt-6-luna", "api": "responses", "effort": "low", "service_tier": "default",
                "cache_none": "prompt_cache_options.mode=explicit, no breakpoints", "store": False},
     "anthropic": {"model": "claude-haiku-5-5", "api": "messages", "effort": "low", "thinking": "disabled",
-                  "service_tier": "standard_only", "speed": "standard", "anthropic_version": "2026-10-21",
+                  "service_tier": "standard_only", "speed": "omitted (standard default)",
+                  "anthropic_version": "2026-10-21",
                   "cache_none": "no cache_control, no replayed thinking, no per-message effort change"},
 }
 NOT_IMPLEMENTED = {"openai": ["cache 12h (SDK documents 30m only)"],
@@ -45,7 +48,8 @@ def capability_record() -> dict[str, Any]:
         "offline_contract": {provider: [*CELLS[:5], "unknown_usage_hold", "contract_block"]
                              for provider in PROTOCOL},
         "live": live,
-        "live_note": "No live call has been made. Live cells need a separately approved smoke run.",
+        "live_note": ("Unpopulated template: actual dated live evidence is recorded externally per separately "
+                      "approved smoke run, not in this factory."),
     }
 
 

@@ -23,7 +23,10 @@ Both are part of the request identity.
 **Anthropic (Messages, `claude-haiku-5-5`):**
 - `thinking={"type": "disabled"}` with `output_config.effort="low"`. Haiku 5.5's adaptive thinking is otherwise on by
   default, and the effort guide's Haiku 5.5 section accepts `disabled` at effort `high` or below.
-- `service_tier="standard_only"`, `speed="standard"`;
+- `service_tier="standard_only"`. The optional `speed` field is **omitted**, which selects the standard default. The
+  primary docs note that some models need a beta header for any `speed` value; fast mode is opt-in, and its standard
+  fallback omits the field. The approved 2026-11-05 diagnostic's HTTP 400 named `speed`. A returned `usage.speed`
+  other than standard still blocks (`results.py`);
 - no sampling parameters and no `inference_geo`;
 - cache `none` means no `cache_control` anywhere, no replayed thinking blocks and no per-message effort change;
 - the positive cache modes (`5m`, `1h`) are not implemented and are refused.

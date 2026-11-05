@@ -14,8 +14,21 @@ from policyops.budget.config import DEFAULT_ACTORS, ChatActor, Configuration
 from policyops.budget.ledger import Diagnostic, Settlement
 from policyops.budget.prices import SNAPSHOT_2026_11_05
 from policyops.budget.pricing import Usage, cost
-from policyops.providers.canonical import CanonicalError, canonical_bytes, fresh, output_bytes, strict_loads
-from policyops.providers.contract import ContractGap, ambient_settings, require_clean_environment
+from policyops.providers.canonical import (
+    CanonicalError,
+    canonical_bytes,
+    fresh,
+    output_bytes,
+    sha256_hex,
+    strict_loads,
+)
+from policyops.providers.contract import (
+    CONTRACT_VERSION,
+    ENDPOINTS,
+    ContractGap,
+    ambient_settings,
+    require_clean_environment,
+)
 from policyops.providers.results import anthropic_evidence, anthropic_result, openai_evidence, openai_result
 from policyops.providers.schema import SchemaGap, check_schema, validation_errors
 from policyops.providers.serialize import prepare
@@ -31,7 +44,7 @@ from policyops_contracts.model import (
     ToolCall,
     ToolUsePart,
 )
-from policyops_contracts.retail import ExchangeDeliveredOrderItems, ReturnDeliveredOrderItems
+from policyops_contracts.retail import Calculate, ExchangeDeliveredOrderItems, ReturnDeliveredOrderItems
 
 
 def schema(**properties: Any) -> str:
@@ -151,10 +164,82 @@ def test_openai_request_is_the_exact_contracted_body() -> None:
         prepared(configuration=long_cache)
 
 
+# The approved smoke's exact cases (reviewer/live-approved-20261105-1 plan.json; builder live-smoke-v3.1 smoke.cases()),
+# with the request and count fingerprints that the frozen T11 source (93afd3b) produced and the ledger recorded.
+SMOKE_ANSWER = json.dumps({"type": "object", "properties": {"decision": {"type": "string", "enum": ["approve", "deny"]},
+                                                            "reason": {"type": "string", "maxLength": 200}},
+                           "required": ["decision", "reason"], "additionalProperties": False}, sort_keys=True)
+SMOKE_CALCULATE = retail_tool_spec(Calculate, "Evaluate an arithmetic expression. Never call anything else.")
+FROZEN_SMOKE = {
+    ("openai", "text"): ("33a890e99eed6a7b5cf52764158af4e301e7f8d2862a8261cab38dd8cba3f413",
+                         "0b3289288547231c698545b196749c6411018e42a5f2f070cdb24c537d4976e1"),
+    ("openai", "tool"): ("f6386e9bb73f3f843eab02323680af7969300f9ca084166dc97a48b9144175dc",
+                         "1d5be0a0a2ccc041ee238d22952133f10c199c140deeb28afa035aefbba817e3"),
+    ("openai", "structured"): ("7d407edeb586d9a47e48e54993c7c5dd5c98f0235c7a58b1c5632039370eaa69",
+                               "85851916dd465abb93a47d9df94f5aa8679b04b4aadc22c0979a5107ce286c6f"),
+    ("anthropic", "text"): ("c0cdf13a0b891f3e76a121183ecf5d42b30010b6a8826c86f53ea31f5d06eb3e",
+                            "2367409df8eb6e69e3029ccea71a89d0a01528f3c22ce726f170beeeab80be22"),
+    ("anthropic", "tool"): ("ae53becbbc3555f63b45b10fd5d7769fb380c85e8041e5a2a24db058ff4f7a20",
+                            "56538bb19978d60db41b3120497ddfbea9a2aa73db03c09da82a8af1ac722163"),
+    ("anthropic", "structured"): ("232495c5f28d0b0ad114843d8f9da9d8432d51c2ea07709cfe22d80a63ce3aa1",
+                                  "0b11d0d84b6fd7c68addcc512917719efe54d0c7ab557d4ba7e36f95e970d36a"),
+}
+
+
+def smoke_request(name: str) -> ModelRequest:
+    def user(text: str) -> tuple[Message, ...]:
+        return (Message(role="user", parts=(TextPart(text=text),)),)
+    if name == "text":
+        return ModelRequest(instructions="You are a test fixture. Answer in one short sentence.",
+                            messages=user("Say that the smoke test is running."), max_output_tokens=64)
+    if name == "tool":
+        return ModelRequest(instructions="You are a test fixture. Use the calculate tool exactly once and say nothing "
+                            "else.", messages=user("What is 12 * 7?"), tools=(SMOKE_CALCULATE,), tool_choice="required",
+                            max_output_tokens=64)
+    return ModelRequest(instructions="You are a test fixture. Reply with the required JSON object only.",
+                        messages=user("Decide 'approve' with a one-sentence reason."),
+                        output=OutputSpec(name="answer", answer_schema_json=SMOKE_ANSWER), max_output_tokens=128,
+                        stream=True)
+
+
+def envelope_sha256(provider: str, body: dict[str, Any]) -> str:
+    """The request fingerprint `prepare` computes, for an arbitrary body (to reconstruct the frozen one)."""
+    endpoint = ENDPOINTS[provider]
+    return sha256_hex(canonical_bytes({"contract": CONTRACT_VERSION, "provider": provider, "method": "POST",
+                                       "host": endpoint.host, "path": endpoint.create_path, "query": {},
+                                       "version_headers": dict(endpoint.version_headers), "body": body}))
+
+
+@pytest.mark.parametrize(("provider", "name"), sorted(FROZEN_SMOKE))
+def test_only_the_haiku_request_changes_and_only_by_the_omitted_speed_field(provider: str, name: str) -> None:
+    actor = "agent" if provider == "openai" else "judge"
+    current = prepare(smoke_request(name), Configuration(), actor)
+    frozen_request, frozen_count = FROZEN_SMOKE[(provider, name)]
+    assert sha256_hex(current.count_body) == frozen_count  # the count body never carried `speed`
+    body = fresh(current.body)
+    if provider == "openai":
+        assert current.request_sha256 == frozen_request  # Luna bytes are unchanged
+        return
+    assert "speed" not in body and current.request_sha256 != frozen_request  # a new identity, as expected
+    assert envelope_sha256(provider, body | {"speed": "standard"}) == frozen_request  # the only difference
+
+
+@pytest.mark.parametrize("name", ["text", "tool", "structured"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_every_haiku_request_shape_omits_speed_and_keeps_tier_thinking_and_effort(name: str, stream: bool) -> None:
+    request_ = smoke_request(name).model_copy(update={"stream": stream})
+    current = prepare(request_, Configuration(), "judge")
+    body, count = fresh(current.body), fresh(current.count_body)
+    assert "speed" not in body and "speed" not in count and body["stream"] is stream
+    assert body["service_tier"] == "standard_only" and body["thinking"] == {"type": "disabled"}
+    assert body["output_config"]["effort"] == "low"
+    assert not {"temperature", "top_p", "top_k", "inference_geo", "cache_control", "betas", "fallbacks"} & set(body)
+
+
 def test_anthropic_request_disables_thinking_and_pins_the_standard_tier() -> None:
     body = fresh(prepared("judge").body)
     assert body["thinking"] == {"type": "disabled"} and body["output_config"] == {"effort": "low"}
-    assert (body["service_tier"], body["speed"]) == ("standard_only", "standard")
+    assert body["service_tier"] == "standard_only" and "speed" not in body  # the optional field is omitted
     assert not {"temperature", "top_p", "top_k", "inference_geo", "cache_control"} & set(body)
     assert set(fresh(prepared("judge").count_body)) == {"model", "system", "messages", "tools", "tool_choice",
                                                         "output_config", "thinking"}

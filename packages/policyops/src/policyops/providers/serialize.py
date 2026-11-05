@@ -178,7 +178,9 @@ def _anthropic_body(request: ModelRequest, actor: ChatActor, tools: Mapping[str,
         "model": actor.model, "system": request.instructions,
         "messages": [_anthropic_message(message) for message in request.messages],
         "max_tokens": request.max_output_tokens, "thinking": {"type": "disabled"}, "output_config": output_config,
-        "service_tier": "standard_only", "speed": "standard", "stream": request.stream,
+        # No `speed` field: it is optional, and some models refuse any `speed` value without a beta header (T11
+        # diagnostic: the frozen Haiku request's 400 named `speed`). Omitting it keeps the standard default.
+        "service_tier": "standard_only", "stream": request.stream,
     }
     if request.tools:
         body["tools"] = [{"name": tool.name, "description": tool.description,

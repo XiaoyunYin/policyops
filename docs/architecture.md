@@ -408,7 +408,14 @@ one count and one inference per case, no retries and no fallback.
 - **OpenAI.** The text, required-tool and structured-output cases were verified, with known usage. On those three
   small requests the official count equalled the reported input.
 - **Anthropic.** The three count requests were accepted. The three inference requests returned HTTP 400, and their
-  holds stay unresolved. The cause is not yet established, so Anthropic inference is **not** verified.
+  holds stay unresolved.
+  - **Diagnostic.** One separately approved resend of the unchanged text request (one count, one inference, no
+    retry) recorded only a closed error category: `invalid_request_error`, naming the parameter `speed`, with no
+    indicator such as a spend limit or credit balance. The full message was not retained. This implicates the
+    explicit `speed` field; it does not establish the provider's whole reasoning.
+  - **Repair.** The request now omits `speed`, keeping the standard default (below).
+  - **Status.** Anthropic inference is **not** verified. Verifying it needs a separately approved fixed-source
+    smoke.
 
 Earlier, separately documented project work made count-only provider requests that did not use these adapters.
 
@@ -426,7 +433,9 @@ price.
     Cache `none` is sent as `prompt_cache_options.mode=explicit` with no breakpoints; cache `30m` is implicit at 30m;
     `12h` is refused (the SDK documents 30m as the only supported TTL).
   - **Haiku:** `thinking={"type": "disabled"}` with `output_config.effort="low"`, `standard_only` tier,
-    `speed="standard"`, no sampling parameters, no `inference_geo`. Only cache `none` is implemented: no cache
+    no `speed` field (optional; omitting it keeps the standard default, and some models refuse any `speed` value
+    without a beta header), no sampling parameters, no `inference_geo`. A returned `usage.speed` other than standard
+    still holds and blocks. Only cache `none` is implemented: no cache
     markers, no replayed thinking and no per-message effort change.
 - **Identity on the wire** (`transport.BoundedTransport`): each count and each request gets a fresh SDK client
   (`max_retries=0`, explicit timeout) over a fresh `httpx2.AsyncClient` (`trust_env=False`, no redirects). Its

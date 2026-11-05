@@ -2,7 +2,7 @@
 
 An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
 
-**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), and a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger (no provider calls) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. The retail simulator and UI remain pending. No model-quality or performance results are claimed.**
+**Status: locked development environments and publication safeguards, reviewed public-data acquisition, typed retail/consent/approval contracts, PostgreSQL persistence, an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming (with the OpenAPI document and generated TypeScript types), a model registry with dated prices, an exact cost calculator and a durable usage-budget ledger, and offline provider adapters for the OpenAI Responses and Anthropic Messages APIs (exercised only against a scripted mock transport; no live call through these adapters) are implemented. No investigation runtime is installed: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker. The retail simulator and UI remain pending. No model-quality or performance results are claimed.**
 
 ## Intended architecture
 
@@ -51,13 +51,25 @@ non-run operation.
 
 A durable ledger in PostgreSQL reserves the worst case in every applicable scope atomically. It grants at most one
 dispatch per attempt, keeps unknown results held, settles at the original price revision, and blocks a scope after
-any overrun. The typed offline preflight bounds an evaluation study and never authorizes paid execution. Nothing
-calls a provider yet; adapters come with T11. [docs/architecture.md](docs/architecture.md#model-configuration-and-usage-budgets)
-has the rules and limits.
+any overrun or contract violation. The typed offline preflight bounds an evaluation study and never authorizes
+paid execution. [docs/architecture.md](docs/architecture.md#model-configuration-and-usage-budgets) has the rules and
+limits.
+
+## Provider adapters
+
+`policyops.providers` prepares one exact, fingerprinted request per physical attempt. It counts it once through the
+provider's count endpoint, dispatches only with the ledger's single grant, and sends it through the official SDKs
+pinned exactly (`openai` 3.40.0, `anthropic` 2.3.0). SDK retries are disabled, timeouts are explicit, redirects and
+ambient environment settings are refused, and a transport lets only the bound bytes out. Usage settles exactly when
+it is known and priced, stays held when it is not, and a contract violation blocks further progress. Structured
+results are validated locally against the full domain schema. Everything is tested offline against a scripted
+transport; no live call has been made through these adapters, and live capability and counting results remain
+open. See
+[docs/architecture.md](docs/architecture.md#provider-adapters).
 
 ## Application database
 
-`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; a six-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
+`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; a seven-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
 
 ## Development setup
 

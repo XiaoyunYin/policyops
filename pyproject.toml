@@ -54,6 +54,11 @@ files = [
 explicit_package_bases = true
 mypy_path = ["packages/policyops/src", "packages/policyops_contracts/src", "tests/support"]
 
+[[tool.mypy.overrides]]
+# jsonschema ships no type information (T11 uses it only behind policyops.providers.schema).
+module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true

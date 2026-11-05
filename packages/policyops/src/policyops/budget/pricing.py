@@ -36,14 +36,16 @@ class Usage:
     cache_read: int = 0
     cache_writes: Mapping[str, int] = field(default_factory=dict)
     output: int = 0
-    reasoning: int = 0
+    reasoning: int | None = 0  # informational (inside `output`); None means the provider did not report it
 
     def __post_init__(self) -> None:
-        for name in ("input_total", "cache_read", "output", "reasoning"):
+        for name in ("input_total", "cache_read", "output"):
             _count(getattr(self, name), name)
+        if self.reasoning is not None:
+            _count(self.reasoning, "reasoning")
         writes = {str(ttl): _count(n, f"cache write {ttl}") for ttl, n in dict(self.cache_writes).items()}
         object.__setattr__(self, "cache_writes", MappingProxyType(writes))
-        if self.reasoning > self.output:
+        if self.reasoning is not None and self.reasoning > self.output:
             raise InvalidUsage("reasoning is part of the billed output, so cannot exceed it")
         if self.cache_read + sum(writes.values()) > self.input_total:
             raise InvalidUsage("cache reads and writes are parts of the prompt, so cannot exceed it")

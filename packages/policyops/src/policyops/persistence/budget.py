@@ -38,6 +38,7 @@ from policyops.budget.config import Caps, Configuration
 from policyops.budget.ledger import (
     Attempt,
     Binding,
+    Diagnostic,
     EvalBinding,
     Intent,
     Ledger,
@@ -60,9 +61,11 @@ from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, require_test
 
 
 SHA256 = re.compile(r"[0-9a-f]{64}")
-COUNTERS = "id, kind, cap_usd, cap_calls, spent_usd, held_usd, calls_consumed, calls_held, overrun"
+COUNTERS = ("id, kind, cap_usd, cap_calls, spent_usd, held_usd, calls_consumed, calls_held, overrun, cap_counts, "
+            "counts_used, contract_block")
 INTENT = ("actor, provider, model, price_revision, config_sha256, cache_mode, max_input, max_output, operation_id, "
-          "intent_sha256, reserved_usd, state, provider_request_id, usage_sha256, actual_tier, actual_usd, overrun")
+          "intent_sha256, reserved_usd, state, provider_request_id, usage_sha256, actual_tier, actual_usd, overrun, "
+          "intent_version, request_sha256, count_state, counted_input_tokens, count_source, contract_block, diagnostic")
 # Fixed column lists only (no input): S608 does not apply.
 APP_SCOPE = f"SELECT {COUNTERS} FROM app.budget_scopes WHERE id = :id FOR UPDATE"  # noqa: S608
 EVAL_SCOPE = f"SELECT {COUNTERS} FROM evaluation.budget_scopes WHERE id = :id FOR UPDATE"  # noqa: S608
@@ -70,28 +73,33 @@ APP_ATTEMPT = f"SELECT id, scope_id, {INTENT} FROM app.usage_attempts WHERE id =
 EVAL_ATTEMPT = (f"SELECT id, study_scope_id, invocation_scope_id, scenario_scope_id, {INTENT} "  # noqa: S608
                 "FROM evaluation.usage_attempts WHERE id = :id FOR UPDATE")
 SET_SCOPE = ("SET spent_usd = :spent_usd, held_usd = :held_usd, calls_consumed = :calls_consumed, "
-             "calls_held = :calls_held, overrun = :overrun, updated_at = greatest(updated_at, :now), "
+             "calls_held = :calls_held, overrun = :overrun, counts_used = :counts_used, "
+             "contract_block = :contract_block, updated_at = greatest(updated_at, :now), "
              "version = version + 1 WHERE id = :id")
 SET_ATTEMPT = ("SET state = :state, provider_request_id = :provider_request_id, usage = CAST(:usage AS jsonb), "
                "usage_sha256 = :usage_sha256, actual_tier = :actual_tier, actual_usd = :actual_usd, "
-               "overrun = :overrun, updated_at = greatest(updated_at, :now), version = version + 1 WHERE id = :id")
+               "overrun = :overrun, count_state = :count_state, counted_input_tokens = :counted_input_tokens, "
+               "count_source = :count_source, contract_block = :contract_block, "
+               "diagnostic = CAST(:diagnostic AS jsonb), updated_at = greatest(updated_at, :now), "
+               "version = version + 1 WHERE id = :id")
 INSERT_COLUMNS = ("actor, provider, model, price_revision, config_sha256, cache_mode, max_input, max_output, "
-                  "operation_id, intent_sha256, reserved_usd, state, created_at, updated_at")
+                  "operation_id, intent_sha256, reserved_usd, state, intent_version, request_sha256, created_at, "
+                  "updated_at")
 INSERT_VALUES = (":actor, :provider, :model, :price_revision, :config_sha256, :cache_mode, :max_input, :max_output, "
-                 ":operation_id, :intent_sha256, :reserved_usd, 'reserved', :now, :now")
+                 ":operation_id, :intent_sha256, :reserved_usd, 'reserved', 2, :request_sha256, :now, :now")
 APP_INSERT_ATTEMPT = (f"INSERT INTO app.usage_attempts (id, workspace_id, scope_id, {INSERT_COLUMNS}) "  # noqa: S608
                       f"VALUES (:id, app.current_workspace(), :scope_id, {INSERT_VALUES})")
 EVAL_INSERT_ATTEMPT = ("INSERT INTO evaluation.usage_attempts (id, study_scope_id, invocation_scope_id, "  # noqa: S608
                        f"scenario_scope_id, {INSERT_COLUMNS}) VALUES (:id, :study, :invocation, :scenario, "
                        f"{INSERT_VALUES})")
 INSERT_SCOPE = ("INSERT INTO app.budget_scopes (id, workspace_id, kind, run_id, operation_kind, operation_key, "
-                "cap_usd, cap_calls, created_at, updated_at) VALUES (:id, app.current_workspace(), :kind, :run_id, "
-                ":operation_kind, :operation_key, :cap_usd, :cap_calls, :now, :now) ")
+                "cap_usd, cap_calls, cap_counts, created_at, updated_at) VALUES (:id, app.current_workspace(), "
+                ":kind, :run_id, :operation_kind, :operation_key, :cap_usd, :cap_calls, :cap_calls, :now, :now) ")
 INSERT_RUN_SCOPE = INSERT_SCOPE + "ON CONFLICT (workspace_id, run_id) DO NOTHING"
 INSERT_OPERATION_SCOPE = INSERT_SCOPE + "ON CONFLICT (workspace_id, operation_kind, operation_key) DO NOTHING"
-FIND_RUN_SCOPE = "SELECT id, cap_usd, cap_calls FROM app.budget_scopes WHERE run_id = :run_id"
-FIND_OPERATION_SCOPE = ("SELECT id, cap_usd, cap_calls FROM app.budget_scopes WHERE operation_kind = :operation_kind "
-                        "AND operation_key = :operation_key")
+FIND_RUN_SCOPE = "SELECT id, cap_usd, cap_calls, cap_counts FROM app.budget_scopes WHERE run_id = :run_id"
+FIND_OPERATION_SCOPE = ("SELECT id, cap_usd, cap_calls, cap_counts FROM app.budget_scopes "
+                        "WHERE operation_kind = :operation_kind AND operation_key = :operation_key")
 
 
 def _one(connection: Connection, sql: str, params: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -124,15 +132,26 @@ def _kind(value: object) -> ScopeKind:
 
 def _scope(row: Mapping[str, Any]) -> Scope:
     return Scope(row["id"], _kind(row["kind"]), row["cap_usd"], row["cap_calls"], row["spent_usd"], row["held_usd"],
-                 row["calls_consumed"], row["calls_held"], row["overrun"])
+                 row["calls_consumed"], row["calls_held"], row["overrun"], row["cap_counts"], row["counts_used"],
+                 row["contract_block"])
+
+
+def _diagnostic(value: Any) -> Diagnostic | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or value.get("v") != "policyops.usage-diagnostic/v1":
+        raise ValueError("an unrecognised stored diagnostic")
+    return Diagnostic(tuple(value["codes"]), value["counts"])
 
 
 def _attempt(row: Mapping[str, Any], scope_ids: tuple[UUID, ...]) -> Attempt:
     intent = Intent(row["actor"], row["provider"], row["model"], row["price_revision"], row["config_sha256"],
-                    row["cache_mode"],
-                    row["max_input"], row["max_output"], row["operation_id"], row["reserved_usd"], scope_ids)
+                    row["cache_mode"], row["max_input"], row["max_output"], row["operation_id"], row["reserved_usd"],
+                    scope_ids, row["request_sha256"], row["intent_version"])
     return Attempt(row["id"], intent, row["intent_sha256"], row["state"], row["provider_request_id"],
-                   row["usage_sha256"], row["actual_tier"], row["actual_usd"], row["overrun"])
+                   row["usage_sha256"], row["actual_tier"], row["actual_usd"], row["overrun"], row["count_state"],
+                   row["counted_input_tokens"], row["count_source"], row["contract_block"],
+                   _diagnostic(row["diagnostic"]))
 
 
 def _intent_params(attempt: Attempt, now: datetime) -> dict[str, Any]:
@@ -141,24 +160,31 @@ def _intent_params(attempt: Attempt, now: datetime) -> dict[str, Any]:
             "price_revision": intent.price_revision, "config_sha256": intent.config_sha256,
             "cache_mode": intent.cache_mode, "max_input": intent.max_input,
             "max_output": intent.max_output, "operation_id": intent.operation_id,
-            "intent_sha256": attempt.intent_sha256, "reserved_usd": intent.reserved_usd, "now": now}
+            "intent_sha256": attempt.intent_sha256, "reserved_usd": intent.reserved_usd,
+            "request_sha256": intent.request_sha256, "now": now}
 
 
 def _settlement_params(attempt: Attempt, now: datetime, settlement: Settlement | None) -> dict[str, Any]:
     return {"id": attempt.id, "state": attempt.state, "provider_request_id": attempt.provider_request_id,
             "usage": None if settlement is None else json.dumps(settlement.canonical(), sort_keys=True),
             "usage_sha256": attempt.usage_sha256, "actual_tier": attempt.actual_tier,
-            "actual_usd": attempt.actual_usd, "overrun": attempt.overrun, "now": now}
+            "actual_usd": attempt.actual_usd, "overrun": attempt.overrun, "count_state": attempt.count_state,
+            "counted_input_tokens": attempt.counted_input_tokens, "count_source": attempt.count_source,
+            "contract_block": attempt.contract_block,
+            "diagnostic": None if attempt.diagnostic is None else json.dumps(attempt.diagnostic.canonical(),
+                                                                              sort_keys=True),
+            "now": now}
 
 
 def _scope_params(scope: Scope, now: datetime) -> dict[str, Any]:
     return {"id": scope.id, "spent_usd": scope.spent_usd, "held_usd": scope.held_usd,
             "calls_consumed": scope.calls_consumed, "calls_held": scope.calls_held, "overrun": scope.overrun,
-            "now": now}
+            "counts_used": scope.counts_used, "contract_block": scope.contract_block, "now": now}
 
 
 def _same_caps(row: Mapping[str, Any], cap_usd: Decimal, cap_calls: int, what: str) -> None:
-    if row["cap_usd"] != cap_usd or row["cap_calls"] != cap_calls:
+    # The count resource is one count per possible call (cap_counts = cap_calls), also for backfilled 0006 scopes.
+    if row["cap_usd"] != cap_usd or row["cap_calls"] != cap_calls or row["cap_counts"] != cap_calls:
         raise LedgerConflict(f"the {what} budget already exists with different caps")
 
 
@@ -244,7 +270,9 @@ class _AppTransaction:
                   "provider": attempt.intent.provider, "model": attempt.intent.model,
                   "provider_request_id": settlement.provider_request_id, "uncached": usage.ordinary_input,
                   "cache_read": usage.cache_read, "cache_write": sum(usage.cache_writes.values()),
-                  "output": usage.output, "reasoning": usage.reasoning,
+                  # usage_events.reasoning_tokens is NOT NULL (0002): an unreported count is stored as 0 there,
+                  # while the attempt's canonical usage (v2) keeps it as null.
+                  "output": usage.output, "reasoning": usage.reasoning or 0,
                   "price_revision": attempt.intent.price_revision, "cost_usd": attempt.actual_usd, "now": now}
         with _unique_is_conflict(f"provider request {settlement.provider_request_id!r} was already recorded"):
             self.connection.execute(text(
@@ -358,7 +386,8 @@ class _EvalTransaction:
 
 def _eval_scope_row(connection: Connection, scope_id: UUID) -> dict[str, Any] | None:
     return _one(connection, "SELECT id, kind, parent_id, study_key, manifest_sha256, task_id, trial_index, "
-                "config_sha256, cap_usd, cap_calls FROM evaluation.budget_scopes WHERE id = :id", {"id": scope_id})
+                "config_sha256, cap_usd, cap_calls, cap_counts FROM evaluation.budget_scopes WHERE id = :id",
+                {"id": scope_id})
 
 
 class EvalLedgerStore:
@@ -383,11 +412,13 @@ class EvalLedgerStore:
         with transaction(self.engine) as connection:
             connection.execute(text(
                 "INSERT INTO evaluation.budget_scopes (id, kind, study_key, manifest_sha256, cap_usd, cap_calls, "
-                "created_at, updated_at) VALUES (:id, 'study', :key, :manifest, :cap_usd, :cap_calls, :now, :now) "
+                "cap_counts, created_at, updated_at) VALUES (:id, 'study', :key, :manifest, :cap_usd, :cap_calls, "
+                ":cap_calls, :now, :now) "
                 "ON CONFLICT (study_key) DO NOTHING"),
                 {"id": uuid4(), "key": study_key, "manifest": manifest_sha256, "cap_usd": cap_usd,
                  "cap_calls": cap_calls, "now": self.clock.now(connection)})
-            row = _one(connection, "SELECT id, manifest_sha256, cap_usd, cap_calls FROM evaluation.budget_scopes "
+            row = _one(connection, "SELECT id, manifest_sha256, cap_usd, cap_calls, cap_counts FROM "
+                       "evaluation.budget_scopes "
                        "WHERE study_key = :key", {"key": study_key})
         if row is None:
             raise NotFound(f"no study {study_key!r}")
@@ -401,7 +432,8 @@ class EvalLedgerStore:
         with transaction(self.engine) as connection, _unique_is_conflict(f"no study {study_id}"):
             connection.execute(text(
                 "INSERT INTO evaluation.budget_scopes (id, kind, parent_id, parent_kind, cap_usd, cap_calls, "
-                "created_at, updated_at) VALUES (:id, 'invocation', :study, 'study', :cap_usd, :cap_calls, :now, :now) "
+                "cap_counts, created_at, updated_at) VALUES (:id, 'invocation', :study, 'study', :cap_usd, :cap_calls, "
+                ":cap_calls, :now, :now) "
                 "ON CONFLICT (id) DO NOTHING"),
                 {"id": invocation_id, "study": study_id, "cap_usd": caps.invocation_usd,
                  "cap_calls": caps.invocation_calls, "now": self.clock.now(connection)})
@@ -423,11 +455,12 @@ class EvalLedgerStore:
         with transaction(self.engine) as connection, _unique_is_conflict(f"no study {study_id}"):
             connection.execute(text(
                 "INSERT INTO evaluation.budget_scopes (id, kind, parent_id, parent_kind, task_id, trial_index, "
-                "config_sha256, cap_usd, cap_calls, created_at, updated_at) VALUES (:id, 'scenario', :study, 'study', "
-                ":task, :trial, :config, :cap_usd, :cap_calls, :now, :now) "
+                "config_sha256, cap_usd, cap_calls, cap_counts, created_at, updated_at) VALUES (:id, 'scenario', "
+                ":study, 'study', :task, :trial, :config, :cap_usd, :cap_calls, :cap_calls, :now, :now) "
                 "ON CONFLICT (parent_id, task_id, trial_index, config_sha256) DO NOTHING"),
                 params | {"now": self.clock.now(connection)})
-            row = _one(connection, "SELECT id, cap_usd, cap_calls FROM evaluation.budget_scopes WHERE parent_id = "
+            row = _one(connection, "SELECT id, cap_usd, cap_calls, cap_counts FROM evaluation.budget_scopes WHERE "
+                       "parent_id = "
                        ":study AND task_id = :task AND trial_index = :trial AND config_sha256 = :config", params)
         if row is None:
             raise NotFound(f"no study {study_id}")

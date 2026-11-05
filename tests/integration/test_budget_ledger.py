@@ -22,7 +22,9 @@ import pytest
 
 from policyops.budget.config import Caps, Configuration
 from policyops.budget.ledger import (
+    Binding,
     BudgetExhausted,
+    CountGranted,
     DispatchGranted,
     DispatchRefused,
     EvalBinding,
@@ -55,6 +57,28 @@ from policyops_testing.app_database import AppDatabase, NewDatabase
 pytestmark = pytest.mark.postgres
 HOLD = Decimal("0.002624")  # the default agent reservation: 16000 in + 2048 out on Luna, short tier, no cache
 SHA = "a" * 64
+REQUEST = "c" * 64  # a request fingerprint; T11's provider tests bind real prepared requests
+
+
+class Books:
+    """The T10 ledger behaviour under the T11 (v2) API. Each newly reserved attempt is bound to `REQUEST` and
+    counted once (1000 tokens, admitted), so `begin_dispatch` sees an admitted count as T11 requires."""
+
+    def __init__(self, ledger: Ledger) -> None:
+        self.ledger = ledger
+
+    def reserve(self, binding: Binding, attempt_id: UUID, actor: Any, operation_id: str) -> Reserved:
+        reserved = self.ledger.reserve(binding, attempt_id, actor, operation_id, REQUEST)
+        if reserved.created:
+            assert isinstance(self.ledger.claim_count(attempt_id, REQUEST), CountGranted)
+            self.ledger.record_count(attempt_id, tokens=1000, source="test.fixed")
+        return reserved
+
+    def begin_dispatch(self, attempt_id: UUID) -> DispatchGranted | DispatchRefused:
+        return self.ledger.begin_dispatch(attempt_id, REQUEST)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ledger, name)
 
 
 # -- setup -------------------------------------------------------------------------------------------------------
@@ -79,9 +103,9 @@ def new_run(db: AppDatabase, ws: UUID) -> UUID:
     return run
 
 
-def ledger(db: AppDatabase, ws: UUID, caps: Caps | None = None) -> Ledger:
-    return build_app_ledger(env="test", engine=db.engine(APP_RUNTIME, pool_size=6), workspace_id=ws,
-                            configuration=Configuration(caps=caps or Caps()))
+def ledger(db: AppDatabase, ws: UUID, caps: Caps | None = None) -> Books:
+    return Books(build_app_ledger(env="test", engine=db.engine(APP_RUNTIME, pool_size=6), workspace_id=ws,
+                                  configuration=Configuration(caps=caps or Caps())))
 
 
 def scope_row(db: AppDatabase, run: UUID) -> dict[str, Any]:
@@ -139,7 +163,7 @@ def db(new_app_database: NewDatabase) -> AppDatabase:
     return new_app_database("budget")
 
 
-def first_hold(db: AppDatabase, caps: Caps | None = None) -> tuple[UUID, UUID, Ledger, UUID]:
+def first_hold(db: AppDatabase, caps: Caps | None = None) -> tuple[UUID, UUID, Books, UUID]:
     """A workspace and run with one reserved agent attempt (which also creates the run's scope)."""
     ws = workspace(db)
     run = new_run(db, ws)
@@ -182,7 +206,7 @@ def test_reserve_replay_is_idempotent_and_a_changed_intent_conflicts(db: AppData
     assert ledger(db, ws).reserve(RunBinding(run), attempt, "agent", "turn-1").created is False  # a new process
     for actor, operation in (("judge", "turn-1"), ("agent", "turn-2")):
         with pytest.raises(LedgerConflict):
-            books.reserve(RunBinding(run), attempt, actor, operation)  # type: ignore[arg-type]
+            books.reserve(RunBinding(run), attempt, actor, operation)
     other_run = new_run(db, ws)
     with pytest.raises(LedgerConflict):  # the same attempt ID under another run's scope
         books.reserve(RunBinding(other_run), attempt, "agent", "turn-1")
@@ -383,11 +407,11 @@ def test_another_workspace_cannot_see_or_charge_this_ledger(db: AppDatabase) -> 
 
 # -- evaluation ledger -------------------------------------------------------------------------------------------
 
-def eval_ledger(db: AppDatabase, caps: Caps | None = None) -> tuple[Ledger, EvalLedgerStore, Caps]:
+def eval_ledger(db: AppDatabase, caps: Caps | None = None) -> tuple[Books, EvalLedgerStore, Caps]:
     caps = caps or Caps()
     books, store = build_eval_ledger(env="test", engine=db.engine(EVAL_RUNTIME, pool_size=6),
                                      configuration=Configuration(caps=caps))
-    return books, store, caps
+    return Books(books), store, caps
 
 
 def test_eval_attempts_charge_scenario_invocation_and_study(db: AppDatabase) -> None:
@@ -439,9 +463,10 @@ def test_eval_bindings_must_share_one_study(db: AppDatabase) -> None:
     with db.superuser() as conn, pytest.raises(psycopg.errors.ForeignKeyViolation):
         conn.execute("INSERT INTO evaluation.usage_attempts (id, study_scope_id, invocation_scope_id, "
                      "scenario_scope_id, actor, provider, model, price_revision, config_sha256, cache_mode, max_input, "
-                     "max_output, operation_id, intent_sha256, reserved_usd, state, created_at, updated_at) VALUES "
-                     "(gen_random_uuid(), %s, %s, %s, 'agent', 'openai', 'gpt-6-luna', 'r', %s, 'none', 1, 1, 'o', "
-                     "%s, 0, 'reserved', now(), now())", (one, invocation, foreign, SHA, SHA))
+                     "max_output, operation_id, intent_sha256, reserved_usd, state, request_sha256, created_at, "
+                     "updated_at) VALUES (gen_random_uuid(), %s, %s, %s, 'agent', 'openai', 'gpt-6-luna', 'r', %s, "
+                     "'none', 1, 1, 'o', %s, 0, 'reserved', %s, now(), now())",
+                     (one, invocation, foreign, SHA, SHA, SHA))
 
 
 def test_concurrent_eval_holds_respect_the_shared_study(db: AppDatabase) -> None:
@@ -539,6 +564,32 @@ def legacy_event(ws: UUID, request_id: str, output: int = 5) -> UsageEvent:
                       cost_status="known", cost_usd=Decimal("0.000001"), created_at=World.now)
 
 
+def legacy_settled(conn: Any, ws: UUID, run: UUID, request_id: str | None) -> UUID:
+    """A revision-0006 (T10, intent v1) settled attempt and its usage event, written directly as 0006 rows: the 0006
+    downgrade is about data that existed before 0007, which new (v2) code can no longer create."""
+    scope = conn.execute("SELECT id FROM app.budget_scopes WHERE run_id = %s", (run,)).fetchone()
+    if scope is None:
+        scope = conn.execute(
+            "INSERT INTO app.budget_scopes (id, workspace_id, kind, run_id, cap_usd, cap_calls, spent_usd, "
+            "calls_consumed, created_at, updated_at) VALUES (gen_random_uuid(), %s, 'run', %s, 0.05, 12, 0, 0, now(), "
+            "now()) RETURNING id", (ws, run)).fetchone()
+    attempt = uuid4()
+    conn.execute(
+        "INSERT INTO app.usage_attempts (id, workspace_id, scope_id, actor, provider, model, price_revision, "
+        "config_sha256, cache_mode, max_input, max_output, operation_id, intent_sha256, reserved_usd, state, "
+        "provider_request_id, usage, usage_sha256, actual_tier, actual_usd, created_at, updated_at) VALUES "
+        "(%s, %s, %s, 'agent', 'openai', 'gpt-6-luna', 'pricing.2026-11-05.v1', %s, 'none', 16000, 2048, %s, %s, "
+        "0.002624, 'settled', %s, '{}'::jsonb, %s, 'short', 0.0000105, now(), now())",
+        (attempt, ws, scope[0], SHA, f"turn-{attempt}", SHA, request_id, SHA))
+    conn.execute(
+        "INSERT INTO app.usage_events (id, workspace_id, attempt_id, run_id, actor, provider, model, "
+        "provider_request_id, uncached_input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, "
+        "reasoning_tokens, price_revision, cost_status, cost_usd, created_at) VALUES (gen_random_uuid(), %s, %s, %s, "
+        "'agent', 'openai', 'gpt-6-luna', %s, 100, 0, 0, 1, 0, 'pricing.2026-11-05.v1', 'known', 0.0000105, now())",
+        (ws, attempt, run, request_id))
+    return attempt
+
+
 def test_0006_upgrades_populated_data_and_guards_its_downgrade(new_app_database: NewDatabase) -> None:
     database = new_app_database("budget_upgrade", revision="0005")
     import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
@@ -553,12 +604,9 @@ def test_0006_upgrades_populated_data_and_guards_its_downgrade(new_app_database:
         assert repo.record_usage(conn, legacy_event(world.workspace, "legacy-1")) is False  # same content
         with pytest.raises(IdempotencyConflict):
             repo.record_usage(conn, legacy_event(world.workspace, "legacy-1", output=6))
-    books = ledger(database, world.workspace)
-    named, bare = uuid4(), uuid4()
-    for attempt, request in ((named, "resp_kept"), (bare, None)):
-        books.reserve(RunBinding(world.run), attempt, "agent", f"turn-{attempt}")
-        books.begin_dispatch(attempt)
-        books.settle(attempt, Settlement(Usage(100, output=1), provider_request_id=request))
+    with database.superuser() as conn:
+        legacy_settled(conn, world.workspace, world.run, "resp_kept")
+        legacy_settled(conn, world.workspace, world.run, None)
     with pytest.raises(DataLossRefused, match=r"app\.budget_scopes"):
         database.downgrade("0005")
     assert database.current() == "0006"
@@ -570,9 +618,8 @@ def test_0006_upgrades_populated_data_and_guards_its_downgrade(new_app_database:
                             "ON n.oid = c.relnamespace WHERE n.nspname = 'app' AND relkind = 'r'").fetchone() == (True,)
         assert conn.execute("SELECT to_regclass('app.usage_attempts'), to_regclass('evaluation.budget_scopes')"
                             ).fetchone() == (None, None)
-    database.upgrade("0006")
-    assert database.current() == "0006"
-
+    database.upgrade()
+    assert database.current() == "0007"
 
 
 def force_state(database: AppDatabase) -> bool:
@@ -584,14 +631,11 @@ def force_state(database: AppDatabase) -> bool:
 @pytest.mark.parametrize("initially_forced", [True, False])
 def test_0006_downgrade_restores_the_exact_previous_force_state(new_app_database: NewDatabase,
                                                                 initially_forced: bool) -> None:
-    database = new_app_database("budget_force")
+    database = new_app_database("budget_force", revision="0006")
     ws = workspace(database)
     run = new_run(database, ws)
-    books = ledger(database, ws)
-    attempt = uuid4()
-    books.reserve(RunBinding(run), attempt, "agent", "turn-1")
-    books.begin_dispatch(attempt)
-    books.settle(attempt, Settlement(Usage(100, output=1)))  # an attempt-only event, deleted by the lossy path
+    with database.superuser() as conn:
+        legacy_settled(conn, ws, run, None)  # an attempt-only event, deleted by the lossy path
     if not initially_forced:
         with database.superuser() as conn:
             conn.execute("ALTER TABLE app.usage_events NO FORCE ROW LEVEL SECURITY")

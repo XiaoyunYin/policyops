@@ -53,10 +53,14 @@ class ChatActor:
     cache_mode: str = "none"
     max_input: int = 16_000
     max_output: int = 2048
+    # A counted prompt is admitted only if tokens + max(percent of tokens, minimum) fit max_input (T11 counting).
+    count_headroom_percent: int = 10
+    count_headroom_min: int = 256
 
     def __post_init__(self) -> None:
         if self.actor not in CHAT_ACTORS:
             raise ValueError(f"{self.actor!r} is not a chat actor")
+        _headroom(self.count_headroom_percent, self.count_headroom_min)
 
 
 @dataclass(frozen=True)
@@ -66,13 +70,24 @@ class EmbeddingActor:
     max_request_tokens: int
     max_inputs: int
     actor: Actor = "embedding"
+    count_headroom_percent: int = 0  # embedding inputs are counted with the model's own tokenizer (T12)
+    count_headroom_min: int = 0
 
     def __post_init__(self) -> None:
         if self.actor != "embedding":
             raise ValueError("only the embedding actor has an embedding configuration")
+        _headroom(self.count_headroom_percent, self.count_headroom_min)
 
 
 ActorConfig = ChatActor | EmbeddingActor
+
+
+def _headroom(percent: object, minimum: object) -> None:
+    for value, what in ((percent, "count_headroom_percent"), (minimum, "count_headroom_min")):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{what} must be a non-negative integer")
+    if isinstance(percent, int) and percent > 100:
+        raise ValueError("count_headroom_percent is at most 100")
 
 
 def _positive(value: object, what: str) -> int:

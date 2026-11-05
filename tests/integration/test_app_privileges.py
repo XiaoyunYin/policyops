@@ -26,9 +26,11 @@ pytestmark = pytest.mark.postgres
 
 TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
 SI = {"SELECT", "INSERT"}
-SCOPE_COUNTERS = {"spent_usd", "held_usd", "calls_consumed", "calls_held", "overrun", "updated_at", "version"}
+SCOPE_COUNTERS = {"spent_usd", "held_usd", "calls_consumed", "calls_held", "overrun", "updated_at", "version",
+                  "counts_used", "contract_block"}  # the last two from 0007
 ATTEMPT_SETTLEMENT = {"state", "provider_request_id", "usage", "usage_sha256", "actual_tier", "actual_usd", "overrun",
-                      "updated_at", "version"}
+                      "updated_at", "version",
+                      "count_state", "counted_input_tokens", "count_source", "contract_block", "diagnostic"}  # 0007
 
 # role -> table -> (table-level privileges, columns updatable through column grants)
 EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
@@ -137,10 +139,12 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
     functions = _rows(shared_db, "SELECT p.oid::regprocedure::text, p.proacl::text FROM pg_proc p "
                       "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' ORDER BY 1")
     acl = dict(functions)
-    assert set(acl) == {"app.current_workspace()", "app.guard_action_proposal_update()"}
+    assert set(acl) == {"app.current_workspace()", "app.guard_action_proposal_update()",
+                        "app.refuse_legacy_usage_attempt()"}
     # Owner plus the app runtime only; a PUBLIC entry would appear as "=X/...".
     assert acl["app.current_workspace()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR},{APP_RUNTIME}=X/{APP_MIGRATOR}}}"
     assert acl["app.guard_action_proposal_update()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"
+    assert acl["app.refuse_legacy_usage_attempt()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"
 
 
 def test_schema_usage_and_no_runtime_create_anywhere(shared_db: AppDatabase) -> None:

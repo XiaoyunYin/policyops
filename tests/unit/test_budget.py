@@ -10,7 +10,7 @@ from dataclasses import replace
 from decimal import Decimal
 import json
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 import pytest
@@ -215,8 +215,31 @@ def intent(**changes: Any) -> Intent:
                               "price_revision": r.price_revision,
               "config_sha256": r.config_sha256, "cache_mode": r.cache_mode, "max_input": r.max_input,
               "max_output": r.max_output, "operation_id": "op-1", "reserved_usd": r.worst_usd,
-              "scope_ids": (uuid4(),)} | changes
+              "scope_ids": (uuid4(),), "request_sha256": "d" * 64} | changes
     return Intent(**values)
+
+
+# A 0006 (T10) attempt's digest, fixed: version 1 intents are verified with exactly this function after 0007.
+LEGACY: dict[str, Any] = {
+          "actor": "agent", "provider": "openai", "model": "gpt-6-luna", "price_revision": "pricing.2026-11-05.v1",
+          "config_sha256": "e" * 64, "cache_mode": "none", "max_input": 16000, "max_output": 2048,
+          "operation_id": "turn-1", "reserved_usd": Decimal("0.002624"),
+          "scope_ids": (UUID("00000000-0000-0000-0000-000000000001"),)}
+LEGACY_DIGEST = "652e1055abf2013708b355c53ab555617361d83dcfcd0dc655bf0275c767dc85"  # computed by the c6d31f5 code
+
+
+def test_legacy_v1_intents_keep_their_digest_and_v2_binds_the_request() -> None:
+    legacy = Intent(**LEGACY, version=1)
+    assert legacy.digest() == LEGACY_DIGEST
+    with pytest.raises(ValueError, match="request fingerprint"):
+        Intent(**LEGACY, version=1, request_sha256="d" * 64)  # a v1 intent never carries one
+    with pytest.raises(ValueError, match="request fingerprint"):
+        Intent(**LEGACY)  # version 2 is the default, and it requires one
+    with pytest.raises(ValueError, match="64 lowercase hex"):
+        Intent(**LEGACY, request_sha256="D" * 64)
+    v2 = Intent(**LEGACY, request_sha256="d" * 64)
+    assert v2.digest() != legacy.digest()
+    assert replace(v2, request_sha256="f" * 64).digest() != v2.digest()
 
 
 def test_intent_and_settlement_digests() -> None:

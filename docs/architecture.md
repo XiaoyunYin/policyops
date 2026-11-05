@@ -312,7 +312,9 @@ Limits:
 
 `policyops.budget` (T10) holds the allowed models, their dated prices, the cost calculator, the actor configuration,
 the usage ledger rules and the offline evaluation preflight. It imports no provider SDK or HTTP framework and makes
-no provider call; no provider adapter uses it yet (T11 adds the adapters, T21 the runtime).
+no provider call itself. The offline provider adapters (see "Provider adapters" below) account for every physical
+request they make through this ledger. The investigation runtime does not call them yet, and no live call has been
+made through them.
 
 - **Price snapshot.** `pricing.2026-11-05.v1` holds standard first-party text-token rates per million tokens, read
   on 2026-11-05 from the providers' public model, pricing and prompt-caching pages (listed in `prices.SOURCES`).
@@ -327,11 +329,13 @@ no provider call; no provider adapter uses it yet (T11 adds the adapters, T21 th
   effort `low` or `none`; Haiku allows `low`; the embedding model allows 1536 dimensions. Embeddings have their own
   request limits from the provider's documentation (8192 tokens per input, 300000 tokens and 2048 inputs per
   request, no empty input); chat effort, output and cache settings do not apply to them.
-- **Cache mode `none` is a contract with the later serializer.** It is reserved as ordinary input only, which is
+- **Cache mode `none` is a contract with the request serializer.** It is reserved as ordinary input only, which is
   valid only if the request really disables caching. For OpenAI, omitting the cache options does not disable it:
-  implicit caching writes at the 30m lifetime. T11 must send `prompt_cache_options.mode = "explicit"` with no
-  breakpoints, or reserve as a cold write. `registry.CACHE_NONE_CONTRACT` records this per provider (the Anthropic
-  entry is still unverified) and is part of every actor configuration digest.
+  implicit caching writes at the 30m lifetime. The provider adapters (below) implement the contract: OpenAI requests
+  send `prompt_cache_options.mode = "explicit"` with no breakpoints, and Anthropic requests carry no cache markers
+  and no replayed thinking. `registry.CACHE_NONE_CONTRACT` keeps its recorded per-provider descriptor unchanged (its
+  Anthropic text still says "unverified", meaning no live verification). It is part of every actor configuration
+  digest, so it is not rewritten.
 - **Actors and caps.**
   - Defaults: agent, simulator and reranker use Luna with low effort; the judge uses Haiku with low effort; the
     embedding model is called at 1536 dimensions.
@@ -387,6 +391,105 @@ no provider call; no provider adapter uses it yet (T11 adds the adapters, T21 th
     runtime.
   - The 180 active seconds per run are configured but not enforced here.
   - The overrun block has no operator reset.
+- **Provider extensions (revision 0007):** every new attempt is intent version 2 and binds the request fingerprint. It
+  needs exactly one admitted count before `begin_dispatch`, and a contract block (separate from the monetary overrun)
+  stops new holds, counts and dispatches in every charged scope. Version 1 attempts from 0006 can still settle or be
+  released, but never dispatch.
+
+## Provider adapters
+
+`policyops.providers` turns a provider-neutral `ModelRequest` (`policyops_contracts.model`, pydantic only) into one
+exact OpenAI Responses or Anthropic Messages request. It sends that request through the official SDKs, pinned
+exactly (`openai` 3.40.0, `anthropic` 2.3.0, the newest version before the lock's supply-chain cutoff), and accounts
+for every physical request in the usage ledger. **No live call has been made through these adapters.** (Earlier,
+separately documented project work did make count-only provider requests; they did not use these adapters.) The
+offline tests exercise the request boundary, the response mapping and the accounting over a scripted mock transport.
+They are not evidence of provider behaviour, any account's access, model quality, counting accuracy or price.
+
+- **Preparation** (`serialize.prepare`): every local check runs before anything is reserved: the registry, the
+  implemented provider contract (`contract.py`), schema registration, history consistency and the output limit.
+  - The result keeps the request as canonical body **bytes**, integer-only and strict.
+  - `request_sha256` hashes the contract version, method, host, path, version headers and body. Keys and auth
+    headers are never part of it, or of anything stored or logged.
+- **Wire contract:**
+  - **Luna:** effort `low`, `service_tier="default"`, `store=false`, no parallel tool calls, `truncation="disabled"`.
+    Cache `none` is sent as `prompt_cache_options.mode=explicit` with no breakpoints; cache `30m` is implicit at 30m;
+    `12h` is refused (the SDK documents 30m as the only supported TTL).
+  - **Haiku:** `thinking={"type": "disabled"}` with `output_config.effort="low"`, `standard_only` tier,
+    `speed="standard"`, no sampling parameters, no `inference_geo`. Only cache `none` is implemented: no cache
+    markers, no replayed thinking and no per-message effort change.
+- **Identity on the wire** (`transport.BoundedTransport`): each count and each request gets a fresh SDK client
+  (`max_retries=0`, explicit timeout) over a fresh `httpx2.AsyncClient` (`trust_env=False`, no redirects). Its
+  transport lets exactly one request through, and only if all of these hold:
+  - the method, fixed host and path, and the fixed `Host`;
+  - JSON content type, a `Content-Length` matching the body, no duplicated header and only allowlisted header
+    names;
+  - the pinned version headers and exactly the expected bearer credential (compared in constant time);
+  - a body that re-encodes canonically to the bound bytes.
+
+  Responses must be uncompressed and stay within 1 MiB and 64 KiB per line. A client is refused while any
+  `OPENAI_*` / `ANTHROPIC_*` environment variable other than the API key's is set; only the names are checked.
+- **Counting** is required: one supported count per attempt, over the full projection of the same prepared request
+  (instructions/system, messages, tools, output format, effort/thinking). The count is claimed in the ledger before
+  the call and never retried.
+  - It admits the request only if `tokens + max(10%, 256)` fits the actor's maximum prompt, and `begin_dispatch`
+    re-checks that itself.
+  - A known prompt larger than the count plus that headroom settles and blocks (`count_underestimate`).
+  - Count units are finite per scope and never returned.
+- **Usage evidence** (`results.py`):
+  - **OpenAI** `input_tokens` includes cached tokens. **Anthropic** `input_tokens` excludes the cache reads and the
+    cache creation, so the whole prompt is their sum, and the 5m/1h split must account for the creation total.
+  - **Known, fully priced usage settles exactly**, whatever the answer's outcome.
+  - **A known contract mismatch** settles the exact bill and contract-blocks every charged scope; the result becomes
+    a `contract_gap` with no payload. Examples: cache writes under cache `none`, a prompt above the admitted maximum,
+    output above `max_output_tokens`, a thinking block.
+  - **Unpriceable evidence** stays unresolved with its hold and a small allowlisted diagnostic, and is blocked the
+    same way; no bill or TTL is invented. Examples: no TTL split, a non-standard tier, speed or geo, a returned model
+    ID outside the explicit confirmed list, malformed counts.
+  - **Missing usage** stays unresolved, with no block. OpenAI's `total_tokens` must equal input plus output;
+    a missing or malformed total stays unresolved and blocked as `usage_malformed`, a contradictory one as
+    `usage_inconsistent`, and no corrected total is invented. Anthropic's streamed cumulative counters must never
+    decrease or be malformed; otherwise the usage is unknown and blocked (`usage_inconsistent`), never resolved by
+    picking one value. A malformed response envelope (an `output` or `content` that is not an array) is a
+    payload-free `failed`, while its known bill still settles.
+  - **Unreported reasoning** (informational, inside the output) is recorded as unreported (null), never as an
+    observed zero. Settlements that report it keep their exact original (v1) digest. The legacy `usage_events` column
+    cannot hold null, so it stores 0 there, while the attempt's canonical usage (v2) keeps null.
+  - **The evidence comes first.** The usage evidence is computed before the result, so a result that cannot be
+    represented never loses it. Overlong metadata, invalid Unicode or an oversized payload become a typed,
+    payload-free outcome, while the bill still settles or the hold and block are still recorded.
+- **Results:** a `ModelResult` is `completed`, `structured`, `refused`, `truncated`, `invalid_output`,
+  `contract_gap` or `failed`.
+  - Structured answers and tool arguments are parsed strictly, numbers as exact decimals. They are validated
+    locally with the pinned `jsonschema` 4.26.0 (Draft 2020-12, integers are integral numbers and never bools) against
+    the **full domain schema**. The provider sees only a documented wire projection.
+  - `pattern` is matched by pydantic-core's linear-time Rust regex engine, never Python's backtracking `re`, so an
+    untrusted value cannot stall the deadline. Lookaround and backreferences are refused at registration. Matching is
+    a search, and `\d` includes Unicode digits, exactly as the retail DTOs themselves validate.
+  - `tools.to_agent_step` accepts exactly one tool call validated by the retail DTO, or one message; it is still
+    only a proposal.
+- **Calls** (`calls.call`, async; `call_sync` for worker threads):
+  - the per-attempt sequence is prepare, reserve, count, dispatch, one SDK call, then settle or hold;
+  - a retryable failure is retried as a new attempt (`retries_per_request`, default 1), and there is at most one
+    repair for `invalid_output`;
+  - there is no model fallback;
+  - one absolute deadline covers everything, with an absolute cap per count or request (60 s by default) that also
+    stops a stream that keeps trickling bytes;
+  - after a dispatch grant, an attempt is never released;
+  - only the caller that created an attempt touches it, so a duplicate or restarted caller changes nothing;
+  - an unexpected exception after a grant still leaves the attempt unresolved;
+  - a count or request client whose close could not be confirmed within its bound is listed in
+    `CallReport.cleanup_unconfirmed`, and its bill is unaffected.
+- **Capability record** (`capability.py`): the live cells are all `not_run`. Its smoke manifest is **preliminary
+  data only** (`preliminary_not_enforceable`): it is not an executable or approved plan, and no live run happens
+  without a separately reviewed driver and explicit approval.
+- **Limits:**
+  - **No live evidence:** there is no live capability, counting or estimate-versus-usage evidence, so the live
+    acceptance stays open.
+  - **Deferred to the worker runtime:** recovering a stale count or dispatch claim needs the worker fence, as do
+    the 180 active seconds.
+  - **Cancellation:** a provider may keep generating after a local cancel; the hold stays.
+  - **Unimplemented modes:** the Anthropic positive cache modes and OpenAI 12h are refused, not implemented.
 
 ## Dev calibration allowlist and demo seeds
 

@@ -38,6 +38,16 @@ result must already be the very next entry after its call: an inconsistent histo
 (terminal `internal_error`) and is never re-sorted. Equal configuration and equal transcript therefore give equal
 requests; conversation IDs and keys never reach prompt content.
 
+## Visible opening (optional)
+
+`opening=AgentMessage(...)` is the greeting the customer saw before the first turn. It becomes transcript entry 0:
+present in every snapshot and every request, never in a `TurnOutcome.appended`. A T11 request starts with a user
+message, so the history presents it as `[user: OPENING_MARKER][assistant: opener]` before the first customer
+message. The marker is synthetic PolicyOps scaffolding (`OPENING_PRESENTATION`), not a customer turn and not the
+upstream agent's exact history; opening mode binds it into `prompt_sha256` and counts its UTF-8 bytes (it is not a
+transcript entry). The opener is untrusted conversation text, never instructions or configuration, and the
+configuration does not depend on which text it is. Without an opening, every request and digest is unchanged.
+
 ## Limits (not claimed)
 
 Byte limits are not token proofs (T11 count admission decides). A port or synchronous wait that ignores cancellation
@@ -131,6 +141,8 @@ from policyops_contracts.retrieval import QueryText
 
 AGENT_NAMESPACE = uuid5(NAMESPACE_URL, "policyops:agent/v1")
 AGENT_OPERATION = "agent.step"
+OPENING_PRESENTATION = "policyops.agent-opening/v1"
+OPENING_MARKER = "[conversation start]"  # synthetic scaffolding before a visible opener, not a customer turn
 
 BASE_PROMPT = """You are a customer service agent. Follow the policy below exactly.
 
@@ -184,6 +196,8 @@ _STEP_REFUSED: dict[str, NoticeCode] = {
 _COUNT_REASON = re.compile(r"^count[._]")
 _SLUG = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _QUERY: TypeAdapter[str] = TypeAdapter(QueryText)
+_OPENING_TEXT = 4000  # MessageText's bound, in characters
+_OPENING_TRANSCRIPT_MESSAGES = 255  # the marker adds one provider message, and a T11 request holds at most 256
 
 
 class AgentConfigurationError(ValueError):
@@ -228,23 +242,34 @@ def prompt_text(*, knowledge_tool: bool) -> str:
     return BASE_PROMPT + ("\n" + KNOWLEDGE_PROMPT if knowledge_tool else "")
 
 
-def prompt_sha256(*, knowledge_tool: bool) -> str:
-    """The fixed prompt version: the prompt, the policy heading and every runtime notice text."""
-    return sha256_hex(json.dumps({"version": PROMPT_VERSION, "prompt": prompt_text(knowledge_tool=knowledge_tool),
-                                  "policy_heading": POLICY_HEADING, "notices": NOTICE_TEXT},
-                                 sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+def prompt_sha256(*, knowledge_tool: bool, opening: bool = False) -> str:
+    """The fixed prompt version: the prompt, the policy heading and every runtime notice text. Opening mode adds the
+    opener presentation and marker; without it the digest input is exactly the original one."""
+    if type(opening) is not bool:
+        raise TypeError("opening is a bool")
+    fields: dict[str, object] = {"version": PROMPT_VERSION, "prompt": prompt_text(knowledge_tool=knowledge_tool),
+                                 "policy_heading": POLICY_HEADING, "notices": NOTICE_TEXT}
+    if opening:
+        fields |= {"opening_presentation": OPENING_PRESENTATION, "opening_marker": OPENING_MARKER}
+    return sha256_hex(json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
 def agent_config(policy: PolicyContext, catalog: ToolCatalog, configuration: Configuration,
-                 limits: AgentLimits | None = None) -> AgentConfig:
-    """The configuration identity for these inputs (the runtime re-checks every digest)."""
-    return AgentConfig(prompt_sha256=prompt_sha256(knowledge_tool=catalog.knowledge_tool), domain=policy.domain,
-                       policy_sha256=policy.sha256, catalog_sha256=catalog.digest(), limits=limits or AgentLimits(),
+                 limits: AgentLimits | None = None, *, opening: bool = False) -> AgentConfig:
+    """The configuration identity for these inputs (the runtime re-checks every digest). `opening` is the mode, the
+    same for every opener text."""
+    return AgentConfig(prompt_sha256=prompt_sha256(knowledge_tool=catalog.knowledge_tool, opening=opening),
+                       domain=policy.domain, policy_sha256=policy.sha256, catalog_sha256=catalog.digest(),
+                       limits=limits or AgentLimits(),
                        actor_config_sha256=configuration.reservation("agent").config_sha256)
 
 
-def provider_messages(transcript: Sequence[Entry]) -> tuple[Message, ...]:
-    """Chronological provider history. Raises `TranscriptInvariant` instead of reordering anything."""
+def provider_messages(transcript: Sequence[Entry], *, opening: bool = False) -> tuple[Message, ...]:
+    """Chronological provider history. Raises `TranscriptInvariant` instead of reordering anything. In opening mode
+    the transcript starts with the visible opener, presented behind the synthetic marker; otherwise an agent entry
+    cannot come first."""
+    if type(opening) is not bool:
+        raise TypeError("opening is a bool")
     messages: list[Message] = []
     user: list[Part] = []
     open_call: str | None = None  # an assistant tool call whose result must be the very next entry
@@ -255,7 +280,15 @@ def provider_messages(transcript: Sequence[Entry]) -> tuple[Message, ...]:
             user.clear()
 
     try:
-        for entry in transcript:
+        entries = transcript
+        if opening:
+            first = entries[0] if entries else None
+            if not isinstance(first, AgentMessage):
+                raise TranscriptInvariant("an opening-mode transcript starts with the visible opener")
+            messages.append(Message(role="user", parts=(TextPart(text=OPENING_MARKER),)))
+            messages.append(Message(role="assistant", parts=(TextPart(text=first.text),)))
+            entries = entries[1:]
+        for entry in entries:
             if open_call is not None:
                 if not (isinstance(entry, ToolResult) and entry.call_id == open_call):
                     raise TranscriptInvariant("a tool call is not directly followed by its result")
@@ -290,11 +323,11 @@ def provider_messages(transcript: Sequence[Entry]) -> tuple[Message, ...]:
 
 
 def build_request(policy: PolicyContext, catalog: ToolCatalog, limits: AgentLimits,
-                  transcript: Sequence[Entry]) -> ModelRequest:
-    """The exact request for this configuration and transcript (pure)."""
+                  transcript: Sequence[Entry], *, opening: bool = False) -> ModelRequest:
+    """The exact request for this configuration, transcript and opening mode (pure)."""
     return ModelRequest(
         instructions=prompt_text(knowledge_tool=catalog.knowledge_tool) + POLICY_HEADING + policy.text,
-        messages=provider_messages(transcript),
+        messages=provider_messages(transcript, opening=opening),
         tools=tuple(ToolSpec(name=tool.name, description=tool.description,
                              parameters_schema_json=tool.parameters_schema_json) for tool in catalog.all_tools()),
         tool_choice="auto", max_output_tokens=limits.max_output_tokens, stream=False)
@@ -397,10 +430,40 @@ def _revalidated[M: (AgentConfig, PolicyContext, ToolCatalog)](value: object, mo
         raise AgentConfigurationError(f"the {model.__name__} is invalid") from error
 
 
+def _validated_opening(opening: object) -> tuple[AgentMessage, int]:
+    """The visible opener and its accounted UTF-8 bytes (text plus marker). Every check is bounded and runs before
+    any serialization; a refusal names no content and chains no cause."""
+    if type(opening) is not AgentMessage:
+        raise AgentConfigurationError("the opening is an AgentMessage")
+    try:
+        fields, extra = opening.__dict__, opening.__pydantic_extra__
+    except AttributeError:
+        raise AgentConfigurationError("the opening has exactly the AgentMessage fields") from None
+    if (type(fields) is not dict or len(fields) != 2 or extra is not None  # O(1): the size before any key
+            or "kind" not in fields or "text" not in fields):
+        raise AgentConfigurationError("the opening has exactly the AgentMessage fields")
+    kind, text = fields["kind"], fields["text"]
+    if type(kind) is not str or kind != "agent":
+        raise AgentConfigurationError("the opening is an agent message")
+    if type(text) is not str or not 1 <= len(text) <= _OPENING_TEXT:  # before any encoding
+        raise AgentConfigurationError("the opening text is 1 to 4000 characters")
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise AgentConfigurationError("the opening text is not valid UTF-8 text") from None
+    try:  # the typed round trip applies MessageText's remaining rules
+        checked = AgentMessage.model_validate_json(opening.model_dump_json())
+    except ValueError:
+        raise AgentConfigurationError("the opening is invalid") from None
+    return checked, size + len(OPENING_MARKER.encode("utf-8"))
+
+
 class MinimalAgent:
     def __init__(self, config: AgentConfig, policy: PolicyContext, catalog: ToolCatalog, *, conversation_id: UUID,
                  model: ModelPort, tools: ToolPort, knowledge: KnowledgePort | None,
-                 configuration: Configuration, env: str | None = None) -> None:
+                 configuration: Configuration, env: str | None = None,
+                 opening: AgentMessage | None = None) -> None:
+        opener = None if opening is None else _validated_opening(opening)  # before anything else reads it
         config = _revalidated(config, AgentConfig)
         policy = _revalidated(policy, PolicyContext)
         catalog = _revalidated(catalog, ToolCatalog)
@@ -416,8 +479,8 @@ class MinimalAgent:
             raise AgentConfigurationError("retail mode uses exactly the typed retail tools with a retail policy")
         if config.catalog_sha256 != catalog.digest():
             raise AgentConfigurationError("the configuration does not bind this tool catalog")
-        if config.prompt_sha256 != prompt_sha256(knowledge_tool=catalog.knowledge_tool):
-            raise AgentConfigurationError("the configuration does not bind this prompt")
+        if config.prompt_sha256 != prompt_sha256(knowledge_tool=catalog.knowledge_tool, opening=opener is not None):
+            raise AgentConfigurationError("the configuration does not bind this prompt")  # or this opening mode
         actor = configuration.actors.get("agent")
         if not isinstance(actor, ChatActor):
             raise AgentConfigurationError("the agent actor is not a chat actor")
@@ -430,6 +493,15 @@ class MinimalAgent:
             raise AgentConfigurationError("the knowledge tool and the knowledge port go together")
         if catalog.knowledge_tool != (limits.knowledge_steps > 0):
             raise AgentConfigurationError("knowledge_steps is positive exactly when the knowledge tool is enabled")
+        start: tuple[Entry, ...] = ()
+        if opener is not None:
+            if catalog.mode == "retail" and opener[0].text == HANDOFF_MESSAGE:
+                raise AgentConfigurationError("a retail-mode opening cannot be the handoff message")
+            if limits.transcript_messages > _OPENING_TRANSCRIPT_MESSAGES:
+                raise AgentConfigurationError("with an opening, transcript_messages is at most 255")
+            if limits.transcript_messages < 2 or opener[1] + 1 > limits.transcript_bytes:
+                raise AgentConfigurationError("the opening leaves no room for a first customer message")
+            start = (opener[0],)
         if is_agent_model_port(model):
             if bound_actor_sha256(model) != config.actor_config_sha256:
                 raise AgentConfigurationError("the model adapter's ledger does not bind this agent actor")
@@ -438,7 +510,8 @@ class MinimalAgent:
         _require_test_only(tools, env, "tool")
         _require_test_only(knowledge, env, "knowledge")
         try:  # pure: capability, schemas and output cap; no count, network or reservation
-            prepare(build_request(policy, catalog, limits, (UserMessage(text="x"),)), configuration, "agent")
+            prepare(build_request(policy, catalog, limits, (*start, UserMessage(text="x")), opening=opener is not None),
+                    configuration, "agent")
         except ContractGap as error:
             raise AgentConfigurationError(f"the agent request cannot be prepared: {error}") from error
 
@@ -448,8 +521,9 @@ class MinimalAgent:
         self._model, self._tools, self._knowledge = model, tools, knowledge
         self._retail = catalog.mode == "retail"
         self._names = {tool.name: tool.read_only for tool in catalog.all_tools()}
-        self._transcript: tuple[Entry, ...] = ()
-        self._bytes = 0
+        self._opening = opener is not None
+        self._transcript: tuple[Entry, ...] = start  # the opener is entry 0, before any turn's slice
+        self._bytes = 0 if opener is None else opener[1]
         self._turns = 0
         self._model_calls = 0
         self._knowledge_steps = 0
@@ -530,7 +604,7 @@ class MinimalAgent:
                 return done("model_calls_exhausted")
             if time.monotonic() >= deadline:
                 return done("deadline")
-            request = build_request(self._policy, self._catalog, limits, self._transcript)
+            request = build_request(self._policy, self._catalog, limits, self._transcript, opening=self._opening)
             key = uuid5(AGENT_NAMESPACE, f"{self._conversation_id}:{self._model_calls}")
             self._model_calls += 1  # before the await: a key is never reissued, even after a cancellation
             work.calls += 1

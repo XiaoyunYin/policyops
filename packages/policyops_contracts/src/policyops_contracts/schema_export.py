@@ -25,6 +25,7 @@ from policyops_contracts.consent import (
     ProposalPresentationRecord,
     SimulatorConfirmationEvent,
 )
+from policyops_contracts.e01 import E01Manifest, E01Report, E01Selection, TrajectoryRecord
 from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
 from policyops_contracts.evidence import EvidenceManifest
@@ -106,6 +107,11 @@ MODELS: dict[str, type[BaseModel]] = {
     "citation-bundle": CitationBundle,
     "citation-record": RecordOutcome,
     "citation-reconcile": ReconcileOutcome,
+    # E01 retrieval selection (T15a offline machinery): proposed manifests, the selection decision, records, reports.
+    "e01-manifest": E01Manifest,
+    "e01-selection": E01Selection,
+    "e01-trajectory": TrajectoryRecord,
+    "e01-report": E01Report,
 }
 ADAPTERS: dict[str, TypeAdapter[object]] = {
     "agent-step": TypeAdapter(AgentStep),

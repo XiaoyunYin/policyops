@@ -173,6 +173,8 @@ exactly the same ordered labels per task.
 
 These are task-level labels for a whole multi-turn trajectory, not per-turn or per-chunk relevance judgments.
 
+The offline T15a metric engine reads these labels for the 39 development tasks only. It takes the dev IDs from the committed split manifest (checking its digest and count and that dev and test do not overlap), then opens exactly those pinned task files, verifies each against its recorded SHA-256 and keeps only the task ID and its required documents. Test-split and aggregate payloads are not opened, and the labels never enter the application runtime, prompts, records or logs. Coverage counts a labelled document as covered when it appears among the documents actually delivered across a trajectory; documents merely considered as candidates are reported separately and are not headline coverage. The frequent-document and grouping facts above are why the metrics also report a document-weighted view and a scenario-group sensitivity; neither turns task-level labels into per-turn relevance.
+
 Grouping: tasks are linked when their required-document sets have Jaccard ≥ 0.5 or their user-scenario texts share
 ≥ 0.5 of their character 5-grams, and connected components become groups, so near-duplicates under this
 heuristic never straddle dev and test (semantic duplicates it misses are not validated). This gives 41 groups (20 singletons;

@@ -1,0 +1,46 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "The one immutable confirmation decision of a study, taken after the replay screen: which declared optional arms\nbecome scheduled. Every other declared optional slot is `not_selected` (reported, never a failed measurement).",
+  "properties": {
+    "confirmation_arms": {
+      "items": {
+        "enum": [
+          "A0",
+          "A1",
+          "A2",
+          "A3",
+          "R0",
+          "R1"
+        ],
+        "type": "string"
+      },
+      "maxItems": 2,
+      "title": "Confirmation Arms",
+      "type": "array"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "replay_report_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Replay Report Sha256",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.e01-selection/v1",
+      "default": "policyops.e01-selection/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_sha256",
+    "replay_report_sha256",
+    "confirmation_arms"
+  ],
+  "title": "E01Selection",
+  "type": "object"
+}

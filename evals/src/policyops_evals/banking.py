@@ -19,11 +19,15 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 import hashlib
+import json
+from pathlib import Path
 import statistics
 from typing import Any
 
 from policyops_evals import upstream
+from policyops_evals.acquire import safe_target
 from policyops_evals.canonical import ManifestError, id_list_digest
 from policyops_evals.retail import jaccard, shingles
 from policyops_evals.sources import SourceTree
@@ -247,3 +251,59 @@ def build_banking_split(tree: SourceTree) -> dict[str, Any]:
             "note": "the corpus is shared by design; labels and answers are not",
         },
     }
+
+
+# -- dev-only label access (T15a) -----------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DevLabels:
+    """Task-level required-document stems of the DEV split only, with each task's heuristic group.
+
+    Built by `dev_labels`, which selects the dev task IDs from the reviewed split manifest first and then opens and
+    verifies exactly those task files (pinned SHA-256 from the source manifest). No test or aggregate payload is read,
+    and nothing but `id` and `required_documents` is kept from a task: these are evaluator-side labels and never cross
+    into the application runtime, prompts or records."""
+
+    labels: Mapping[str, tuple[str, ...]]
+    groups: Mapping[str, str]
+    split_digest: str
+
+    def digest(self) -> str:
+        body = {"labels": {t: list(self.labels[t]) for t in sorted(self.labels)},
+                "groups": {t: self.groups[t] for t in sorted(self.groups)}, "split_digest": self.split_digest}
+        return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def dev_labels(acquired_root: Path, split_manifest: Mapping[str, Any],
+               source_manifest: Mapping[str, Any]) -> DevLabels:
+    """Dev labels from a materialized pinned tree (the caller validated both committed manifests)."""
+    dev = split_manifest["splits"]["dev"]
+    task_ids = [str(t) for t in dev["task_ids"]]
+    if id_list_digest(task_ids) != dev["digest"] or len(task_ids) != dev["count"]:
+        raise ManifestError("the dev task list does not match its recorded digest and count")
+    test_ids = {str(t) for t in split_manifest["splits"]["test"]["task_ids"]}
+    if test_ids & set(task_ids):
+        raise ManifestError("the dev and test splits overlap")
+    pinned = {item["path"]: item["sha256"] for item in source_manifest["consumed"]}
+    labelled: dict[str, tuple[str, ...]] = {}
+    for task_id in task_ids:  # the split was chosen before any task file is opened
+        path = f"{upstream.BANKING_TASKS_DIR}/{task_id}.json"
+        expected = pinned.get(path)
+        if expected is None:
+            raise ManifestError(f"{path} is outside the pinned consumed scope")
+        data = safe_target(acquired_root, path).read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected:
+            raise ManifestError(f"{path} does not match its pinned SHA-256")
+        task = json.loads(data.decode("utf-8"))
+        if task.get("id") != task_id:
+            raise ManifestError(f"{path}: task id does not match its file name")
+        labelled[task_id] = tuple(sorted(labels([task])[task_id]))
+        del task, data
+    groups: dict[str, str] = {}
+    for member in split_manifest["grouping"]["members"]:
+        if member["split"] == "dev":
+            for task_id in member["task_ids"]:
+                groups[str(task_id)] = str(member["group"])
+    if set(groups) != set(labelled):
+        raise ManifestError("every dev task belongs to exactly one dev group")
+    return DevLabels(labelled, groups, dev["digest"])

@@ -246,6 +246,31 @@ def _grounding_examples(world: World) -> dict[str, Any]:
             "validated-answer.grounded": validated}
 
 
+def _e01_examples(world: World) -> dict[str, Any]:
+    """A fictional E01 trajectory record (T15a): synthetic IDs, stems and digests only; not a measurement."""
+    from policyops_contracts.e01 import (
+        CandidateDocument,
+        DeliveredDocument,
+        RetrievalStepRecord,
+        TrajectoryRecord,
+        slot_id_for,
+    )
+
+    study, document, version = UUID(int=8001), UUID(int=8002), UUID(int=8003)
+    step = RetrievalStepRecord(
+        step=1, trace_id=UUID(int=8004), payload_sha256="1" * 64, request_sha256="2" * 64, query_sha256="3" * 64,
+        config_sha256="5" * 64, generation_id=UUID(int=8005), generation_current_at_export=True, mode="hybrid",
+        delivered=(DeliveredDocument(evidence_number=1, document_id=document, document_version_id=version,
+                                     stem="doc_example_refunds_001"),),
+        candidates=(CandidateDocument(rank=1, document_id=document, stem="doc_example_refunds_001"),),
+        ranked=("doc_example_refunds_001",), evidence_tokens=42)
+    record = TrajectoryRecord(manifest_sha256="4" * 64, slot_id=slot_id_for(study, "acquisition", "A2",
+                                                                           "task_example", 0),
+                              phase="acquisition", arm_id="A2", task_id="task_example", trial=0, status="completed",
+                              steps=(step,))
+    return {"e01-trajectory.fictional": record}
+
+
 def build_examples() -> dict[str, bytes]:
     """Canonical JSON documents for one fictional exchange flow, plus small standalone examples."""
     from policyops.domain.approval_rules import Decided, decide
@@ -328,6 +353,7 @@ def build_examples() -> dict[str, bytes]:
         **_retail_service_examples(world),
         **_retrieval_examples(world),
         **_grounding_examples(world),
+        **_e01_examples(world),
     }
     return {f"{name}.json": (json.dumps(json.loads(model.model_dump_json()), indent=2, sort_keys=True) + "\n").encode()
             for name, model in sorted(documents.items()) if model is not None}

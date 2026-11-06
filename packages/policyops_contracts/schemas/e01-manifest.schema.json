@@ -1,0 +1,602 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "ActorReservation": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "enum": [
+            "agent",
+            "simulator",
+            "judge",
+            "reranker",
+            "embedding"
+          ],
+          "title": "Actor",
+          "type": "string"
+        },
+        "config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Sha256",
+          "type": "string"
+        },
+        "model": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "worst_usd": {
+          "pattern": "^(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+          "title": "Worst Usd",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor",
+        "model",
+        "config_sha256",
+        "worst_usd"
+      ],
+      "title": "ActorReservation",
+      "type": "object"
+    },
+    "Bounds": {
+      "additionalProperties": false,
+      "description": "Per-trajectory actor bounds, identical for every comparable arm.",
+      "properties": {
+        "investigator_calls": {
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Investigator Calls",
+          "type": "integer"
+        },
+        "retrieval_steps": {
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Retrieval Steps",
+          "type": "integer"
+        },
+        "simulator_turns": {
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Simulator Turns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "simulator_turns",
+        "investigator_calls",
+        "retrieval_steps"
+      ],
+      "title": "Bounds",
+      "type": "object"
+    },
+    "E01Arm": {
+      "additionalProperties": false,
+      "description": "One arm: its exact retrieval configuration and that configuration's digest (checked).",
+      "properties": {
+        "arm_id": {
+          "enum": [
+            "A0",
+            "A1",
+            "A2",
+            "A3",
+            "R0",
+            "R1"
+          ],
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/$defs/RetrievalConfig"
+        },
+        "config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "arm_id",
+        "config",
+        "config_sha256"
+      ],
+      "title": "E01Arm",
+      "type": "object"
+    },
+    "Envelope": {
+      "additionalProperties": false,
+      "description": "One common outer per-slot ledger ceiling for a group of comparable arms (reservation maxima, not spend). A\nprovider envelope's USD cap is positive (ledger caps require it); a no-provider slot has no envelope at all.",
+      "properties": {
+        "cap_calls": {
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Cap Calls",
+          "type": "integer"
+        },
+        "cap_usd": {
+          "pattern": "^(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+          "title": "Cap Usd",
+          "type": "string"
+        },
+        "chat_calls": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Chat Calls",
+          "type": "integer"
+        },
+        "embedding_batches": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Embedding Batches",
+          "type": "integer"
+        },
+        "group": {
+          "enum": [
+            "banking_insitu",
+            "replay_provider",
+            "retail"
+          ],
+          "title": "Group",
+          "type": "string"
+        },
+        "max_input_tokens_per_chat_call": {
+          "maximum": 128000,
+          "minimum": 1,
+          "title": "Max Input Tokens Per Chat Call",
+          "type": "integer"
+        },
+        "max_input_tokens_per_embedding_batch": {
+          "maximum": 300000,
+          "minimum": 1,
+          "title": "Max Input Tokens Per Embedding Batch",
+          "type": "integer"
+        },
+        "max_output_tokens_per_chat_call": {
+          "maximum": 128000,
+          "minimum": 1,
+          "title": "Max Output Tokens Per Chat Call",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group",
+        "cap_calls",
+        "cap_usd",
+        "chat_calls",
+        "embedding_batches",
+        "max_input_tokens_per_chat_call",
+        "max_output_tokens_per_chat_call",
+        "max_input_tokens_per_embedding_batch"
+      ],
+      "title": "Envelope",
+      "type": "object"
+    },
+    "RerankConfig": {
+      "additionalProperties": false,
+      "description": "The optional rerank stage (T14): one bounded structured request ordering the first `documents` fused\ndocuments. `seconds` is the stage's own sub-deadline length; `max_output_tokens` is the request's output limit\n(at most the reranker actor's maximum, checked before any work).",
+      "properties": {
+        "documents": {
+          "default": 20,
+          "maximum": 20,
+          "minimum": 2,
+          "title": "Documents",
+          "type": "integer"
+        },
+        "excerpt_bytes": {
+          "default": 500,
+          "maximum": 1000,
+          "minimum": 64,
+          "title": "Excerpt Bytes",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "default": 512,
+          "maximum": 1024,
+          "minimum": 64,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "policy": {
+          "default": "baseline_fallback",
+          "enum": [
+            "baseline_fallback",
+            "refuse"
+          ],
+          "title": "Policy",
+          "type": "string"
+        },
+        "prompt": {
+          "const": "policyops.rerank-prompt/v1",
+          "default": "policyops.rerank-prompt/v1",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "seconds": {
+          "default": 10,
+          "maximum": 30,
+          "minimum": 1,
+          "title": "Seconds",
+          "type": "integer"
+        },
+        "v": {
+          "const": "policyops.rerank-config/v1",
+          "default": "policyops.rerank-config/v1",
+          "title": "V",
+          "type": "string"
+        }
+      },
+      "title": "RerankConfig",
+      "type": "object"
+    },
+    "RetrievalConfig": {
+      "additionalProperties": false,
+      "description": "Versioned, caller-supplied configuration. Every field is in `sha256()` and therefore in the step's request\nfingerprint and trace. `full_policy_max_chunks` is the explicit baseline exception to `max_chunks`; both modes\nshare `max_evidence_tokens` (the whole formatted, concatenated evidence string counted with cl100k).\n\n`rerank` (T14) is omitted from the serialization, and therefore from `sha256()`, when it is None: every T13\nconfiguration keeps its digest and request fingerprint.",
+      "properties": {
+        "branch_documents": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Branch Documents",
+          "type": "integer"
+        },
+        "chunks_per_document": {
+          "default": 2,
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Chunks Per Document",
+          "type": "integer"
+        },
+        "dense_policy": {
+          "default": "lexical_fallback",
+          "enum": [
+            "lexical_fallback",
+            "refuse"
+          ],
+          "title": "Dense Policy",
+          "type": "string"
+        },
+        "embedding_dimensions": {
+          "const": 1536,
+          "default": 1536,
+          "title": "Embedding Dimensions",
+          "type": "integer"
+        },
+        "embedding_model": {
+          "const": "text-embedding-3-small",
+          "default": "text-embedding-3-small",
+          "title": "Embedding Model",
+          "type": "string"
+        },
+        "evidence_format": {
+          "const": "policyops.evidence-format/v1",
+          "default": "policyops.evidence-format/v1",
+          "title": "Evidence Format",
+          "type": "string"
+        },
+        "fts_config": {
+          "const": "english",
+          "default": "english",
+          "title": "Fts Config",
+          "type": "string"
+        },
+        "fts_rank": {
+          "const": "ts_rank_cd/32",
+          "default": "ts_rank_cd/32",
+          "title": "Fts Rank",
+          "type": "string"
+        },
+        "full_policy_max_chunks": {
+          "default": 16,
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Full Policy Max Chunks",
+          "type": "integer"
+        },
+        "max_admission_attempts": {
+          "default": 64,
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Max Admission Attempts",
+          "type": "integer"
+        },
+        "max_chunks": {
+          "default": 6,
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Max Chunks",
+          "type": "integer"
+        },
+        "max_evidence_tokens": {
+          "default": 4096,
+          "maximum": 16000,
+          "minimum": 1,
+          "title": "Max Evidence Tokens",
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "full_policy",
+            "lexical",
+            "dense",
+            "hybrid"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "rerank": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RerankConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rrf_k": {
+          "default": 60,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Rrf K",
+          "type": "integer"
+        },
+        "v": {
+          "const": "policyops.retrieval-config/v2",
+          "default": "policyops.retrieval-config/v2",
+          "title": "V",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "RetrievalConfig",
+      "type": "object"
+    },
+    "SlotSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "arm_id": {
+          "enum": [
+            "A0",
+            "A1",
+            "A2",
+            "A3",
+            "R0",
+            "R1"
+          ],
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "envelope": {
+          "anyOf": [
+            {
+              "enum": [
+                "banking_insitu",
+                "replay_provider",
+                "retail"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Envelope"
+        },
+        "phase": {
+          "enum": [
+            "acquisition",
+            "replay",
+            "confirmation",
+            "retail_control"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "plan": {
+          "enum": [
+            "scheduled",
+            "declared_optional"
+          ],
+          "title": "Plan",
+          "type": "string"
+        },
+        "provider_path": {
+          "title": "Provider Path",
+          "type": "boolean"
+        },
+        "slot_id": {
+          "format": "uuid",
+          "title": "Slot Id",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^[A-Za-z0-9_\\-]{1,64}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "trial": {
+          "maximum": 15,
+          "minimum": 0,
+          "title": "Trial",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "slot_id",
+        "phase",
+        "arm_id",
+        "task_id",
+        "trial",
+        "plan",
+        "provider_path",
+        "envelope"
+      ],
+      "title": "SlotSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The immutable, finite slot enumeration of one study. `status` is `proposed` for every T15a artifact.",
+  "properties": {
+    "actors": {
+      "items": {
+        "$ref": "#/$defs/ActorReservation"
+      },
+      "maxItems": 5,
+      "minItems": 1,
+      "title": "Actors",
+      "type": "array"
+    },
+    "arms": {
+      "items": {
+        "$ref": "#/$defs/E01Arm"
+      },
+      "maxItems": 6,
+      "minItems": 1,
+      "title": "Arms",
+      "type": "array"
+    },
+    "bootstrap_resamples": {
+      "default": 10000,
+      "maximum": 100000,
+      "minimum": 100,
+      "title": "Bootstrap Resamples",
+      "type": "integer"
+    },
+    "bootstrap_seed": {
+      "maximum": 9223372036854775807,
+      "minimum": 0,
+      "title": "Bootstrap Seed",
+      "type": "integer"
+    },
+    "bounds": {
+      "$ref": "#/$defs/Bounds"
+    },
+    "dev_task_ids_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Dev Task Ids Digest",
+      "type": "string"
+    },
+    "domain": {
+      "enum": [
+        "banking_knowledge",
+        "retail"
+      ],
+      "title": "Domain",
+      "type": "string"
+    },
+    "envelopes": {
+      "items": {
+        "$ref": "#/$defs/Envelope"
+      },
+      "maxItems": 3,
+      "title": "Envelopes",
+      "type": "array"
+    },
+    "margin": {
+      "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+      "title": "Margin",
+      "type": "string"
+    },
+    "price_revision": {
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "title": "Price Revision",
+      "type": "string"
+    },
+    "purpose": {
+      "enum": [
+        "dev_selection",
+        "retail_dev_control"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "seeds": {
+      "items": {
+        "type": "integer"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Seeds",
+      "type": "array"
+    },
+    "selection_rule": {
+      "const": "policyops.e01-selection/v1",
+      "default": "policyops.e01-selection/v1",
+      "title": "Selection Rule",
+      "type": "string"
+    },
+    "slots": {
+      "items": {
+        "$ref": "#/$defs/SlotSpec"
+      },
+      "maxItems": 4096,
+      "minItems": 1,
+      "title": "Slots",
+      "type": "array"
+    },
+    "split_manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Split Manifest Sha256",
+      "type": "string"
+    },
+    "status": {
+      "const": "proposed",
+      "default": "proposed",
+      "title": "Status",
+      "type": "string"
+    },
+    "study_id": {
+      "format": "uuid",
+      "title": "Study Id",
+      "type": "string"
+    },
+    "task_ids": {
+      "items": {
+        "pattern": "^[A-Za-z0-9_\\-]{1,64}$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Task Ids",
+      "type": "array"
+    },
+    "trials": {
+      "maximum": 16,
+      "minimum": 1,
+      "title": "Trials",
+      "type": "integer"
+    },
+    "v": {
+      "const": "policyops.e01-manifest/v1",
+      "default": "policyops.e01-manifest/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "study_id",
+    "purpose",
+    "domain",
+    "split_manifest_sha256",
+    "dev_task_ids_digest",
+    "task_ids",
+    "trials",
+    "seeds",
+    "arms",
+    "bounds",
+    "envelopes",
+    "actors",
+    "price_revision",
+    "margin",
+    "bootstrap_seed",
+    "slots"
+  ],
+  "title": "E01Manifest",
+  "type": "object"
+}

@@ -215,6 +215,45 @@ def read_spans(connection: Connection, entries: Sequence[tuple[UUID, int, int]])
     return [found.get(position) for position in range(1, len(entries) + 1)]
 
 
+@dataclass(frozen=True)
+class DocumentSource:
+    """A document's stable source identity, read from the workspace's own `app.documents` row."""
+
+    document_id: UUID
+    corpus_key: str | None
+    source_uri: str
+
+
+@dataclass(frozen=True)
+class GenerationMembers:
+    """A generation's corpus and which of the asked versions it contains (`generation_documents`; no chunk read, so
+    it works for any historical generation)."""
+
+    corpus_key: str | None
+    versions: frozenset[UUID]
+
+
+def read_document_sources(connection: Connection, document_ids: Sequence[UUID]) -> dict[UUID, DocumentSource]:
+    if not document_ids:
+        return {}
+    rows = connection.execute(text(
+        "SELECT id, corpus_key, source_uri FROM app.documents WHERE id = ANY(CAST(:ids AS uuid[]))"),
+        {"ids": list(document_ids)}).mappings().all()
+    return {r["id"]: DocumentSource(r["id"], r["corpus_key"], r["source_uri"]) for r in rows}
+
+
+def read_generation_members(connection: Connection, generation_id: UUID,
+                            version_ids: Sequence[UUID]) -> GenerationMembers | None:
+    corpus = connection.execute(text("SELECT corpus_key FROM app.index_generations WHERE id = :g"),
+                                {"g": generation_id}).mappings().first()
+    if corpus is None:
+        return None
+    members = connection.execute(text(
+        "SELECT document_version_id FROM app.generation_documents WHERE generation_id = :g "
+        "AND document_version_id = ANY(CAST(:v AS uuid[]))"), {"g": generation_id, "v": list(version_ids)}).scalars()
+    return GenerationMembers(corpus["corpus_key"], frozenset(members))
+
+
 def read_step_record(connection: Connection, trace_id: UUID) -> StepRecord:
     """A step's trace and full intent row on the caller's workspace-scoped connection (read-only, static SQL)."""
     trace = _one(connection, (
@@ -295,6 +334,16 @@ class RetrievalStore:
         """Read-only: the step's trace and its full intent row (T14 query-less verification)."""
         with self._tx() as connection:
             return read_step_record(connection, trace_id)
+
+    def document_sources(self, document_ids: Sequence[UUID]) -> dict[UUID, DocumentSource]:
+        """Read-only (T15a export): source identities of this workspace's documents; others read as absent."""
+        with self._tx() as connection:
+            return read_document_sources(connection, document_ids)
+
+    def generation_members(self, generation_id: UUID, version_ids: Sequence[UUID]) -> GenerationMembers | None:
+        """Read-only (T15a export): the generation's corpus and which given versions it contains."""
+        with self._tx() as connection:
+            return read_generation_members(connection, generation_id, version_ids)
 
     # -- the intent transaction ------------------------------------------------------------------------------------
 

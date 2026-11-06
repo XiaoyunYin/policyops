@@ -1,0 +1,444 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "ArmMetrics": {
+      "additionalProperties": false,
+      "description": "Coverage values are None (undefined), never a synthetic 0, when the variant includes no slot (for example\ncomplete-case with no completed slot); `included_slots` then says 0.",
+      "properties": {
+        "all_required_rate": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "All Required Rate"
+        },
+        "arm_id": {
+          "enum": [
+            "A0",
+            "A1",
+            "A2",
+            "A3",
+            "R0",
+            "R1"
+          ],
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "candidate_task_macro_coverage": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Candidate Task Macro Coverage"
+        },
+        "cost_unknown_slots": {
+          "maximum": 4096,
+          "minimum": 0,
+          "title": "Cost Unknown Slots",
+          "type": "integer"
+        },
+        "delivered_documents": {
+          "minimum": 0,
+          "title": "Delivered Documents",
+          "type": "integer"
+        },
+        "document_macro_coverage": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Document Macro Coverage"
+        },
+        "evidence_tokens": {
+          "minimum": 0,
+          "title": "Evidence Tokens",
+          "type": "integer"
+        },
+        "held_usd": {
+          "anyOf": [
+            {
+              "pattern": "^(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Held Usd"
+        },
+        "included_slots": {
+          "maximum": 4096,
+          "minimum": 0,
+          "title": "Included Slots",
+          "type": "integer"
+        },
+        "phase": {
+          "enum": [
+            "acquisition",
+            "replay",
+            "confirmation",
+            "retail_control"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "query_mrr_at_10": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Mrr At 10"
+        },
+        "query_r_precision": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query R Precision"
+        },
+        "query_recall_at_10": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Recall At 10"
+        },
+        "query_recall_at_10_ceiling": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Recall At 10 Ceiling"
+        },
+        "query_recall_at_20": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Recall At 20"
+        },
+        "query_recall_at_20_ceiling": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Recall At 20 Ceiling"
+        },
+        "retrieval_steps": {
+          "minimum": 0,
+          "title": "Retrieval Steps",
+          "type": "integer"
+        },
+        "scheduled_slots": {
+          "maximum": 4096,
+          "minimum": 0,
+          "title": "Scheduled Slots",
+          "type": "integer"
+        },
+        "spent_usd": {
+          "anyOf": [
+            {
+              "pattern": "^(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Spent Usd"
+        },
+        "status_counts": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "enum": [
+                  "completed",
+                  "budget_stop",
+                  "interrupted",
+                  "infra_error",
+                  "simulator_error",
+                  "retrieval_error"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array"
+          },
+          "maxItems": 6,
+          "title": "Status Counts",
+          "type": "array"
+        },
+        "task_macro_coverage": {
+          "anyOf": [
+            {
+              "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Task Macro Coverage"
+        },
+        "variant": {
+          "enum": [
+            "strict",
+            "observed_progress",
+            "complete_case"
+          ],
+          "title": "Variant",
+          "type": "string"
+        }
+      },
+      "required": [
+        "arm_id",
+        "phase",
+        "variant",
+        "scheduled_slots",
+        "included_slots",
+        "status_counts",
+        "task_macro_coverage",
+        "document_macro_coverage",
+        "all_required_rate",
+        "candidate_task_macro_coverage",
+        "delivered_documents",
+        "retrieval_steps",
+        "evidence_tokens",
+        "spent_usd",
+        "held_usd",
+        "cost_unknown_slots"
+      ],
+      "title": "ArmMetrics",
+      "type": "object"
+    },
+    "Interval": {
+      "additionalProperties": false,
+      "description": "Paired task-cluster bootstrap: B resamples of clusters with replacement (trials stay inside their task), each\ndraw the exact mean difference; the bounds are the type-7 (linear interpolation) empirical quantiles at 2.5% and\n97.5% of the sorted draws (h = (B - 1) p). Computed with exact fractions; rendered ROUND_HALF_EVEN to 12 places.",
+      "properties": {
+        "clusters": {
+          "enum": [
+            "task",
+            "group"
+          ],
+          "title": "Clusters",
+          "type": "string"
+        },
+        "estimate": {
+          "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+          "title": "Estimate",
+          "type": "string"
+        },
+        "lower": {
+          "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+          "title": "Lower",
+          "type": "string"
+        },
+        "resamples": {
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Resamples",
+          "type": "integer"
+        },
+        "upper": {
+          "pattern": "^-?(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+          "title": "Upper",
+          "type": "string"
+        }
+      },
+      "required": [
+        "estimate",
+        "lower",
+        "upper",
+        "resamples",
+        "clusters"
+      ],
+      "title": "Interval",
+      "type": "object"
+    },
+    "PairedComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "arm_id": {
+          "enum": [
+            "A0",
+            "A1",
+            "A2",
+            "A3",
+            "R0",
+            "R1"
+          ],
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "baseline_arm_id": {
+          "enum": [
+            "A0",
+            "A1",
+            "A2",
+            "A3",
+            "R0",
+            "R1"
+          ],
+          "title": "Baseline Arm Id",
+          "type": "string"
+        },
+        "group_sensitivity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Interval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metric": {
+          "const": "strict_task_macro_coverage",
+          "default": "strict_task_macro_coverage",
+          "title": "Metric",
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "acquisition",
+            "replay",
+            "confirmation",
+            "retail_control"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "task_cluster": {
+          "$ref": "#/$defs/Interval"
+        }
+      },
+      "required": [
+        "arm_id",
+        "baseline_arm_id",
+        "phase",
+        "task_cluster"
+      ],
+      "title": "PairedComparison",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "arms": {
+      "items": {
+        "$ref": "#/$defs/ArmMetrics"
+      },
+      "maxItems": 64,
+      "title": "Arms",
+      "type": "array"
+    },
+    "comparisons": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PairedComparison"
+      },
+      "maxItems": 16,
+      "title": "Comparisons",
+      "type": "array"
+    },
+    "interpretation": {
+      "const": "dev selection aid; task-level labels; not per-turn relevance; not confirmatory",
+      "default": "dev selection aid; task-level labels; not per-turn relevance; not confirmatory",
+      "title": "Interpretation",
+      "type": "string"
+    },
+    "labels_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Labels Sha256",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "not_scheduled_slots": {
+      "default": 0,
+      "maximum": 4096,
+      "minimum": 0,
+      "title": "Not Scheduled Slots",
+      "type": "integer"
+    },
+    "records_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Records Sha256",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.e01-report/v1",
+      "default": "policyops.e01-report/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_sha256",
+    "records_sha256",
+    "labels_sha256",
+    "arms"
+  ],
+  "title": "E01Report",
+  "type": "object"
+}

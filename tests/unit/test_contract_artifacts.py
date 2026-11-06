@@ -8,6 +8,7 @@ from policyops.domain.examples import build_examples
 from policyops.domain.retail_rules import rules_for
 from policyops_contracts.agent import AgentStep
 from policyops_contracts.consent import ApprovalDecision, CaseMessage, CustomerConsent, ProposalPresentationRecord
+from policyops_contracts.e01 import TrajectoryRecord
 from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
 from policyops_contracts.evidence import EvidenceManifest
@@ -35,7 +36,7 @@ EXAMPLE_MODELS: dict[str, type[BaseModel]] = {
     "retail-service-lookup-result.unknown": LookupResult,
     "retrieval-query.hybrid": RetrievalQuery, "retrieval-result.hybrid": RetrievalResult,
     "retrieval-query.hybrid-rerank": RetrievalQuery, "grounded-answer.answer": GroundedAnswer,
-    "validated-answer.grounded": ValidatedAnswer,
+    "validated-answer.grounded": ValidatedAnswer, "e01-trajectory.fictional": TrajectoryRecord,
 }
 HIDDEN_FIELD_NAMES = ("user_scenario", "instructions", "known_info", "unknown_info", "reason_for_call",
                       "evaluation_criteria", "nl_assertions", "reward_basis", "required_documents", "initial_state")

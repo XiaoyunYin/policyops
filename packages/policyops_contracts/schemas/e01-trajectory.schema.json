@@ -1,0 +1,347 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "ActorCalls": {
+      "additionalProperties": false,
+      "properties": {
+        "embedding": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Embedding",
+          "type": "integer"
+        },
+        "investigator": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Investigator",
+          "type": "integer"
+        },
+        "reranker": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Reranker",
+          "type": "integer"
+        },
+        "simulator": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Simulator",
+          "type": "integer"
+        }
+      },
+      "title": "ActorCalls",
+      "type": "object"
+    },
+    "CandidateDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "format": "uuid",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "rank": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "stem": {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f/]+$",
+          "title": "Stem",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rank",
+        "document_id",
+        "stem"
+      ],
+      "title": "CandidateDocument",
+      "type": "object"
+    },
+    "DeliveredDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "format": "uuid",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "document_version_id": {
+          "format": "uuid",
+          "title": "Document Version Id",
+          "type": "string"
+        },
+        "evidence_number": {
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Evidence Number",
+          "type": "integer"
+        },
+        "stem": {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f/]+$",
+          "title": "Stem",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_number",
+        "document_id",
+        "document_version_id",
+        "stem"
+      ],
+      "title": "DeliveredDocument",
+      "type": "object"
+    },
+    "RetrievalStepRecord": {
+      "additionalProperties": false,
+      "description": "One stored step, exported only after the immutable trace, intent, bodies, spans and generation membership were\nverified and every document UUID was mapped through the workspace's own document rows.",
+      "properties": {
+        "candidates": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CandidateDocument"
+          },
+          "maxItems": 100,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Sha256",
+          "type": "string"
+        },
+        "delivered": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DeliveredDocument"
+          },
+          "maxItems": 16,
+          "title": "Delivered",
+          "type": "array"
+        },
+        "evidence_tokens": {
+          "maximum": 16000,
+          "minimum": 0,
+          "title": "Evidence Tokens",
+          "type": "integer"
+        },
+        "generation_current_at_export": {
+          "title": "Generation Current At Export",
+          "type": "boolean"
+        },
+        "generation_id": {
+          "format": "uuid",
+          "title": "Generation Id",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "full_policy",
+            "lexical",
+            "dense",
+            "hybrid"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "payload_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Payload Sha256",
+          "type": "string"
+        },
+        "query_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Query Sha256",
+          "type": "string"
+        },
+        "ranked": {
+          "default": [],
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f/]+$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Ranked",
+          "type": "array"
+        },
+        "request_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Sha256",
+          "type": "string"
+        },
+        "rerank_status": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z_]{1,32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Status"
+        },
+        "step": {
+          "maximum": 9999,
+          "minimum": 0,
+          "title": "Step",
+          "type": "integer"
+        },
+        "trace_id": {
+          "format": "uuid",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step",
+        "trace_id",
+        "payload_sha256",
+        "request_sha256",
+        "query_sha256",
+        "config_sha256",
+        "generation_id",
+        "generation_current_at_export",
+        "mode",
+        "evidence_tokens"
+      ],
+      "title": "RetrievalStepRecord",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One slot's outcome. Never carries labels, instructions, reference actions or query text.\n\n`calls`, `spent_usd` and `held_usd` are None (unknown) unless the slot's own ledger scope supplied them: a stored\ntrace (or a winning trace replayed by a paid losing writer) is never per-invocation cost authority, so an export\nnever invents zero work or infers study cost from traces.",
+  "properties": {
+    "arm_id": {
+      "enum": [
+        "A0",
+        "A1",
+        "A2",
+        "A3",
+        "R0",
+        "R1"
+      ],
+      "title": "Arm Id",
+      "type": "string"
+    },
+    "calls": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActorCalls"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "held_usd": {
+      "anyOf": [
+        {
+          "pattern": "^(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Held Usd"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "phase": {
+      "enum": [
+        "acquisition",
+        "replay",
+        "confirmation",
+        "retail_control"
+      ],
+      "title": "Phase",
+      "type": "string"
+    },
+    "slot_id": {
+      "format": "uuid",
+      "title": "Slot Id",
+      "type": "string"
+    },
+    "spent_usd": {
+      "anyOf": [
+        {
+          "pattern": "^(0|[1-9][0-9]{0,6})(\\.[0-9]{1,12})?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Spent Usd"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "budget_stop",
+        "interrupted",
+        "infra_error",
+        "simulator_error",
+        "retrieval_error"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "steps": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RetrievalStepRecord"
+      },
+      "maxItems": 64,
+      "title": "Steps",
+      "type": "array"
+    },
+    "task_id": {
+      "pattern": "^[A-Za-z0-9_\\-]{1,64}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "trial": {
+      "maximum": 15,
+      "minimum": 0,
+      "title": "Trial",
+      "type": "integer"
+    },
+    "v": {
+      "const": "policyops.e01-trajectory/v1",
+      "default": "policyops.e01-trajectory/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_sha256",
+    "slot_id",
+    "phase",
+    "arm_id",
+    "task_id",
+    "trial",
+    "status"
+  ],
+  "title": "TrajectoryRecord",
+  "type": "object"
+}

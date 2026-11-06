@@ -1,0 +1,46 @@
+{
+  "arm_id": "A2",
+  "calls": null,
+  "held_usd": null,
+  "manifest_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "phase": "acquisition",
+  "slot_id": "a746b997-6c0e-56a2-a3c3-eac7dbced1d2",
+  "spent_usd": null,
+  "status": "completed",
+  "steps": [
+    {
+      "candidates": [
+        {
+          "document_id": "00000000-0000-0000-0000-000000001f42",
+          "rank": 1,
+          "stem": "doc_example_refunds_001"
+        }
+      ],
+      "config_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "delivered": [
+        {
+          "document_id": "00000000-0000-0000-0000-000000001f42",
+          "document_version_id": "00000000-0000-0000-0000-000000001f43",
+          "evidence_number": 1,
+          "stem": "doc_example_refunds_001"
+        }
+      ],
+      "evidence_tokens": 42,
+      "generation_current_at_export": true,
+      "generation_id": "00000000-0000-0000-0000-000000001f45",
+      "mode": "hybrid",
+      "payload_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "query_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "ranked": [
+        "doc_example_refunds_001"
+      ],
+      "request_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "rerank_status": null,
+      "step": 1,
+      "trace_id": "00000000-0000-0000-0000-000000001f44"
+    }
+  ],
+  "task_id": "task_example",
+  "trial": 0,
+  "v": "policyops.e01-trajectory/v1"
+}

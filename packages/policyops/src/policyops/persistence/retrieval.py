@@ -13,8 +13,10 @@ all short, with no provider, file or tokenizer work inside:
 - **trace** (read-write): the actual JSONB sizes checked against the column limits, then the trace inserted with its
   deterministic ID (`ON CONFLICT DO NOTHING`).
 
-Plus read-only lookups: an existing trace and its intent (replay), the step's own query job, and the immutable version
-spans for replay (with the body digest checked).
+Plus read-only lookups: an existing trace and its intent (replay), the step's own query job, the immutable version
+spans for replay (with the body digest checked) and, for T14 query-less verification, the step's trace with its full
+intent row (`step_record`). The span and step-record reads are also available on a caller's own connection
+(`read_spans`, `read_step_record`) for the citation recorder's single transaction.
 
 SQL waits are not interrupted by any deadline (the documented synchronous SQL-wait exception).
 """
@@ -107,6 +109,29 @@ class Span:
     version_number: int
     text: str | None  # None when the span lies outside the body
     body_digest_ok: bool
+    version_sha256: str | None = None  # the stored body digest (verified against the body by `body_digest_ok`)
+
+
+@dataclass(frozen=True)
+class IntentRecord:
+    """The immutable `retrieval_steps` row of a step (digests only, no query text)."""
+
+    run_id: UUID
+    step: int
+    trace_id: UUID
+    request_sha256: str
+    query_sha256: str
+    scope_sha256: str
+    config_sha256: str
+
+
+@dataclass(frozen=True)
+class StepRecord:
+    """A step's stored trace (with its intent's request digest, as `find_trace` returns it) and its full intent row;
+    either may be absent."""
+
+    trace: StoredTrace | None
+    intent: IntentRecord | None
 
 
 _ROW_COLUMNS = ("k.id AS chunk_id, d.id AS document_id, v.id AS version_id, d.source_uri, v.version, k.heading, "
@@ -166,6 +191,48 @@ def _chunk_row(r: Any) -> ChunkRow:
                     r["start_offset"], r["end_offset"], r["text"])
 
 
+SPANS_SQL = (
+    "SELECT e.ordinal, v.id, v.document_id, d.source_uri, v.version, v.sha256, "
+    "CASE WHEN e.span_end <= char_length(v.body) THEN "
+    "substring(v.body FROM e.span_start + 1 FOR e.span_end - e.span_start) END AS span, "
+    "encode(sha256(convert_to(v.body, 'UTF8')), 'hex') = v.sha256 AS digest_ok "
+    "FROM unnest(CAST(:versions AS uuid[]), CAST(:starts AS integer[]), CAST(:ends AS integer[])) "
+    "WITH ORDINALITY AS e(version_id, span_start, span_end, ordinal) "
+    "JOIN app.document_versions v ON v.workspace_id = app.current_workspace() AND v.id = e.version_id "
+    "JOIN app.documents d ON d.workspace_id = v.workspace_id AND d.id = v.document_id ORDER BY e.ordinal")
+
+
+def read_spans(connection: Connection, entries: Sequence[tuple[UUID, int, int]]) -> list[Span | None]:
+    """Immutable version slices on the caller's workspace-scoped connection: `(document_version_id, start, end)`
+    each, with the stored body digest verified against the actual body. Reads versions and documents only (never
+    `app.chunks`), so it works for any historical generation."""
+    if not entries:
+        return []
+    rows = connection.execute(text(SPANS_SQL), {"versions": [e[0] for e in entries], "starts": [e[1] for e in entries],
+                                                "ends": [e[2] for e in entries]}).mappings().all()
+    found: dict[int, Span] = {r["ordinal"]: Span(r["id"], r["document_id"], r["source_uri"], r["version"], r["span"],
+                                                 bool(r["digest_ok"]), r["sha256"]) for r in rows}
+    return [found.get(position) for position in range(1, len(entries) + 1)]
+
+
+def read_step_record(connection: Connection, trace_id: UUID) -> StepRecord:
+    """A step's trace and full intent row on the caller's workspace-scoped connection (read-only, static SQL)."""
+    trace = _one(connection, (
+        "SELECT t.run_id, t.generation_id, t.query_sha256, t.authorized_scope::text AS authorized_scope, "
+        "t.candidates::text AS candidates, t.final_chunk_ids, s.request_sha256 AS intent_request_sha256 "
+        "FROM app.retrieval_traces t LEFT JOIN app.retrieval_steps s ON s.workspace_id = t.workspace_id "
+        "AND s.trace_id = t.id WHERE t.id = :id"), {"id": trace_id})
+    intent = _one(connection, (
+        "SELECT run_id, step, trace_id, request_sha256, query_sha256, scope_sha256, config_sha256 "
+        "FROM app.retrieval_steps WHERE trace_id = :id"), {"id": trace_id})
+    stored = None if trace is None else StoredTrace(
+        trace["run_id"], trace["generation_id"], trace["query_sha256"], trace["authorized_scope"],
+        trace["candidates"], tuple(trace["final_chunk_ids"]), trace["intent_request_sha256"])
+    return StepRecord(stored, None if intent is None else IntentRecord(
+        intent["run_id"], intent["step"], intent["trace_id"], intent["request_sha256"], intent["query_sha256"],
+        intent["scope_sha256"], intent["config_sha256"]))
+
+
 class RetrievalStore:
     def __init__(self, engine: Engine, workspace_id: UUID) -> None:
         if not isinstance(workspace_id, UUID):
@@ -222,20 +289,12 @@ class RetrievalStore:
         if not entries:
             return []
         with self._tx() as connection:
-            rows = connection.execute(text(
-                "SELECT e.ordinal, v.id, v.document_id, d.source_uri, v.version, "
-                "CASE WHEN e.span_end <= char_length(v.body) THEN "
-                "substring(v.body FROM e.span_start + 1 FOR e.span_end - e.span_start) END AS span, "
-                "encode(sha256(convert_to(v.body, 'UTF8')), 'hex') = v.sha256 AS digest_ok "
-                "FROM unnest(CAST(:versions AS uuid[]), CAST(:starts AS integer[]), CAST(:ends AS integer[])) "
-                "WITH ORDINALITY AS e(version_id, span_start, span_end, ordinal) "
-                "JOIN app.document_versions v ON v.workspace_id = app.current_workspace() AND v.id = e.version_id "
-                "JOIN app.documents d ON d.workspace_id = v.workspace_id AND d.id = v.document_id ORDER BY e.ordinal"),
-                {"versions": [e[0] for e in entries], "starts": [e[1] for e in entries],
-                 "ends": [e[2] for e in entries]}).mappings().all()
-        found: dict[int, Span] = {r["ordinal"]: Span(r["id"], r["document_id"], r["source_uri"], r["version"],
-                                                     r["span"], bool(r["digest_ok"])) for r in rows}
-        return [found.get(position) for position in range(1, len(entries) + 1)]
+            return read_spans(connection, entries)
+
+    def step_record(self, trace_id: UUID) -> StepRecord:
+        """Read-only: the step's trace and its full intent row (T14 query-less verification)."""
+        with self._tx() as connection:
+            return read_step_record(connection, trace_id)
 
     # -- the intent transaction ------------------------------------------------------------------------------------
 

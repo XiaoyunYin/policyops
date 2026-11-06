@@ -172,9 +172,162 @@
       ],
       "title": "FusedDocument",
       "type": "object"
+    },
+    "InvocationWork": {
+      "additionalProperties": false,
+      "description": "What THIS invocation itself did, never stored in a trace and never replayed. Grants are ledger grants this\ncall obtained (not proof that bytes left the process); the ledger stays the billing authority.",
+      "properties": {
+        "cleanup_unconfirmed": {
+          "default": false,
+          "title": "Cleanup Unconfirmed",
+          "type": "boolean"
+        },
+        "embedding_requests": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Embedding Requests",
+          "type": "integer"
+        },
+        "rerank_counts_claimed": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Rerank Counts Claimed",
+          "type": "integer"
+        },
+        "rerank_inferences_dispatched": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Rerank Inferences Dispatched",
+          "type": "integer"
+        }
+      },
+      "title": "InvocationWork",
+      "type": "object"
+    },
+    "RerankAttempt": {
+      "additionalProperties": false,
+      "description": "A pointer into the ledger (the billing authority): the attempt, its fate and whether its client closed.",
+      "properties": {
+        "attempt_id": {
+          "format": "uuid",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "cleanup_confirmed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cleanup Confirmed"
+        },
+        "fate": {
+          "enum": [
+            "settled",
+            "unresolved",
+            "released",
+            "replayed",
+            "refused",
+            "not_reserved"
+          ],
+          "title": "Fate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "fate"
+      ],
+      "title": "RerankAttempt",
+      "type": "object"
+    },
+    "RerankSummary": {
+      "additionalProperties": false,
+      "description": "The step's rerank outcome as stored in its trace (historical, the same for every replay).",
+      "properties": {
+        "applied": {
+          "title": "Applied",
+          "type": "boolean"
+        },
+        "attempts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RerankAttempt"
+          },
+          "maxItems": 1,
+          "title": "Attempts",
+          "type": "array"
+        },
+        "model": {
+          "enum": [
+            "gpt-6-luna",
+            "claude-haiku-5-5"
+          ],
+          "title": "Model",
+          "type": "string"
+        },
+        "order": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Order",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "applied",
+            "skipped_few_candidates",
+            "skipped_input_bound",
+            "skipped_deadline",
+            "timeout",
+            "budget",
+            "count_failed",
+            "failed",
+            "refused",
+            "truncated",
+            "invalid_output",
+            "invalid_ranking",
+            "contract_block",
+            "prior_attempt"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "applied",
+        "model"
+      ],
+      "title": "RerankSummary",
+      "type": "object"
     }
   },
   "additionalProperties": false,
+  "description": "`replayed` means only that the returned trace was stored earlier (by another writer or call); it is never\nevidence that this invocation did no work. `provider_requests` is this invocation's embedding requests;\n`invocation` (present for rerank-configured steps) adds this invocation's rerank grants.",
   "properties": {
     "caller_authorized_scope": {
       "const": "required",
@@ -274,6 +427,17 @@
       "title": "Generation Id",
       "type": "string"
     },
+    "invocation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InvocationWork"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "lexical": {
       "default": [],
       "items": {
@@ -322,6 +486,17 @@
       "pattern": "^[0-9a-f]{64}$",
       "title": "Request Sha256",
       "type": "string"
+    },
+    "rerank": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RerankSummary"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "run_id": {
       "format": "uuid",

@@ -1,0 +1,607 @@
+{
+ "description": "Genuine records of the accepted T13 C5 retrieval service (commit base_commit, clean tree) on a real PostgreSQL as the app runtime: synthetic corpus, scripted embeddings transports, no external HTTP. Values are verbatim copies of the capture; never regenerate them with newer code.",
+ "generations": {
+  "banking_1": "9d64af89-de16-446b-8852-52ba32d26dc1",
+  "banking_2": "fdc0fcda-91ea-475c-9e13-6a013592f617",
+  "retail_1": "e6c0a0e8-1344-4d51-b3e4-cc0ecb7ce228"
+ },
+ "provenance": {
+  "base_commit": "988718b21c4e011552b4c9aa1237acfc42aa21a7",
+  "base_tree": "083f7cf579013ec5aa9d474eba90cc9dee2772f8",
+  "generator": "accepted C5 Retriever on an owned real PostgreSQL as the app runtime; synthetic corpus; scripted embeddings transports; no external HTTP or key",
+  "postgres_image": "pgvector/pgvector@sha256:01215e09bd4bd582d20230e025b6c971deeeffee49ceef1aae167e839cb62a7e",
+  "python": "3.12.16",
+  "source_binding": {
+   "packages/policyops/src/policyops/persistence/retrieval.py": {
+    "head_blob": "5e946bb4d7d73bc8bbfd27b82befcccafe77d587",
+    "sha256": "adf942985f14283423fac365b1ae643fab4d0210776bd765f87c0ed39db31c3b",
+    "worktree_blob": "5e946bb4d7d73bc8bbfd27b82befcccafe77d587"
+   },
+   "packages/policyops/src/policyops/providers/calls.py": {
+    "head_blob": "ed4981f94d87dccd0939c19fa2938f92602464fa",
+    "sha256": "4853c93aa736bb20155159123ed5efa1ad00b6f17e695fded739c2bfb852c13e",
+    "worktree_blob": "ed4981f94d87dccd0939c19fa2938f92602464fa"
+   },
+   "packages/policyops/src/policyops/retrieval/counting.py": {
+    "head_blob": "404b007c45cf4b039513dba5ea03ab7442732368",
+    "sha256": "40563b4d14627965badb9110b7f908a6f61610fd3cb2445edc70d017648cc4c0",
+    "worktree_blob": "404b007c45cf4b039513dba5ea03ab7442732368"
+   },
+   "packages/policyops/src/policyops/retrieval/rank.py": {
+    "head_blob": "a41e522f5ef813f2addab4b9657e13c21108611d",
+    "sha256": "25679c6a695ee7c4a692a84df31b5c49fe2a3d70423404aca7ecc5d1d0e60d44",
+    "worktree_blob": "a41e522f5ef813f2addab4b9657e13c21108611d"
+   },
+   "packages/policyops/src/policyops/retrieval/search.py": {
+    "head_blob": "a429c733fa5a01a0dcdde6a9c383241bcca378f6",
+    "sha256": "78894836086593eefb9567ca893dc7708595552b4bfc83ce16a305099ca0dc5d",
+    "worktree_blob": "a429c733fa5a01a0dcdde6a9c383241bcca378f6"
+   },
+   "packages/policyops_contracts/src/policyops_contracts/retrieval.py": {
+    "head_blob": "1bb728273062fe0a916129d1cea7fe8a88ebc9ba",
+    "sha256": "65cf57695189276e5ada4cc08a7edf92c7d9d87731663a415e5860dc0904fa83",
+    "worktree_blob": "1bb728273062fe0a916129d1cea7fe8a88ebc9ba"
+   }
+  }
+ },
+ "steps": [
+  {
+   "bodies": [
+    {
+     "body": "## Refund exceptions\n\nRefunds for opened items need a manager review; gift card refunds are instant.",
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "sha256": "ee0fb2b3f06c6d71f4824900809836a9c0a55ed56010dbac3ca61816463cd0f4",
+     "version": 1
+    }
+   ],
+   "config_json": "{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"lexical\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}",
+   "config_sha256": "37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee",
+   "first_result_json": "{\"trace_id\":\"a3220aef-2295-5762-b1cb-4986cfba5639\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":false,\"mode\":\"lexical\",\"lexical_status\":\"ok\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"score\":\"0.1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"dense\":[],\"fused\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":1,\"dense_rank\":null}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\",\"evidence_tokens\":41,\"config_sha256\":\"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\",\"request_sha256\":\"b2e4a03814e2e19dc607b254b3894871697869ad2f955e844af479e4f4ede79b\",\"payload_sha256\":\"947d337ee5da95498d4220826aad67ebb3e58fa511ec103a02ce879c835fc74e\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "first_transport_requests": 0,
+   "intent": {
+    "config_sha256": "37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee",
+    "query_sha256": "b452ed5ea4edc68652e12bf6b4a877245376df53bac14441a89069d0776a060e",
+    "request_sha256": "b2e4a03814e2e19dc607b254b3894871697869ad2f955e844af479e4f4ede79b",
+    "run_id": "70f5fe8d-1660-412b-996e-d74ceccedb38",
+    "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+    "step": 1,
+    "trace_id": "a3220aef-2295-5762-b1cb-4986cfba5639"
+   },
+   "name": "lexical-default",
+   "post_activation_replay_json": "{\"trace_id\":\"a3220aef-2295-5762-b1cb-4986cfba5639\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":false,\"replayed\":true,\"mode\":\"lexical\",\"lexical_status\":\"ok\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"score\":\"0.1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"dense\":[],\"fused\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":1,\"dense_rank\":null}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\",\"evidence_tokens\":41,\"config_sha256\":\"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\",\"request_sha256\":\"b2e4a03814e2e19dc607b254b3894871697869ad2f955e844af479e4f4ede79b\",\"payload_sha256\":\"947d337ee5da95498d4220826aad67ebb3e58fa511ec103a02ce879c835fc74e\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "query_json": "{\"text\":\"refund to my card\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":1,\"scope\":{\"corpus_key\":\"legacy-banking\",\"document_allowlist\":[]},\"config\":{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"lexical\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}}",
+   "query_sha256": "b452ed5ea4edc68652e12bf6b4a877245376df53bac14441a89069d0776a060e",
+   "replay_result_json": "{\"trace_id\":\"a3220aef-2295-5762-b1cb-4986cfba5639\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":true,\"mode\":\"lexical\",\"lexical_status\":\"ok\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"score\":\"0.1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"dense\":[],\"fused\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":1,\"dense_rank\":null}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\",\"evidence_tokens\":41,\"config_sha256\":\"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\",\"request_sha256\":\"b2e4a03814e2e19dc607b254b3894871697869ad2f955e844af479e4f4ede79b\",\"payload_sha256\":\"947d337ee5da95498d4220826aad67ebb3e58fa511ec103a02ce879c835fc74e\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "request_sha256": "b2e4a03814e2e19dc607b254b3894871697869ad2f955e844af479e4f4ede79b",
+   "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+   "spans": [
+    {
+     "body_digest_ok": true,
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "source_uri": "tau2:banking_knowledge/e",
+     "text": "Refunds for opened items need a manager review; gift card refunds are instant.",
+     "version_number": 1
+    }
+   ],
+   "trace": {
+    "authorized_scope": "{\"v\": \"policyops.retrieval-scope/v1\", \"step\": 1, \"corpus_key\": \"legacy-banking\", \"document_ids\": [], \"query_sha256\": \"b452ed5ea4edc68652e12bf6b4a877245376df53bac14441a89069d0776a060e\", \"config_sha256\": \"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\", \"allowlist_sha256\": \"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\", \"embedding_job_id\": null}",
+    "candidates": "{\"v\": \"policyops.retrieval-trace/v1\", \"mode\": \"lexical\", \"dense\": [], \"fused\": [{\"rrf\": \"1/61\", \"rank\": 1, \"dense_rank\": null, \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"lexical_rank\": 1}], \"lexical\": [{\"rank\": 1, \"score\": \"0.1\", \"chunk_ids\": [\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"], \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\"}], \"delivered\": [{\"end\": 100, \"start\": 22, \"heading\": \"Refund exceptions\", \"chunk_id\": \"206ea6cc-e33a-43b8-9116-bf919cd004a6\", \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"text_sha256\": \"9ac1eb87b1bbd4f4c18877f0cc38a0833707e12afa1576cc6534bfce4d697e03\", \"version_number\": 1, \"evidence_number\": 1, \"document_version_id\": \"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\"}], \"exclusions\": {\"count_refused\": 0, \"text_oversized\": 0, \"dense_nan_distance\": 0}, \"dense_status\": \"not_used\", \"generation_id\": \"9d64af89-de16-446b-8852-52ba32d26dc1\", \"lexical_status\": \"ok\", \"payload_sha256\": \"947d337ee5da95498d4220826aad67ebb3e58fa511ec103a02ce879c835fc74e\", \"request_sha256\": \"b2e4a03814e2e19dc607b254b3894871697869ad2f955e844af479e4f4ede79b\", \"evidence_tokens\": 41, \"dense_unavailable\": null, \"admission_attempts\": 1, \"evidence_text_sha256\": \"69d5e5de4f66497307a0e7064086eb6bee9dee9f31d15a15d50e5c5ea4a2e513\"}",
+    "final_chunk_ids": [
+     "206ea6cc-e33a-43b8-9116-bf919cd004a6"
+    ],
+    "generation_id": "9d64af89-de16-446b-8852-52ba32d26dc1",
+    "query_sha256": "b452ed5ea4edc68652e12bf6b4a877245376df53bac14441a89069d0776a060e",
+    "run_id": "70f5fe8d-1660-412b-996e-d74ceccedb38",
+    "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc"
+   },
+   "trace_id": "a3220aef-2295-5762-b1cb-4986cfba5639",
+   "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc",
+   "worst_case_candidates_sha256": "e297ac6c64d2e85990a223767cf532c72a842a31bf003cf4e70b14a1c4288fb4",
+   "worst_case_scope_sha256": "ffe613ed45e560635443b871cd64cc6a1fac2abdd437e3c9bc00c9e10f0ff20d"
+  },
+  {
+   "bodies": [
+    {
+     "body": "## Shipping\n\nOrders ship within five business days.",
+     "document_id": "84545e71-d50c-4936-8626-c22dde792374",
+     "document_version_id": "9998bb3b-3e79-42e8-8391-29713f752364",
+     "sha256": "0c206dea046b3b634d72b1c6428f3151c333c345c5aaf1b221c7f6eee76af6e4",
+     "version": 1
+    }
+   ],
+   "config_json": "{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"lexical\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}",
+   "config_sha256": "37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee",
+   "first_result_json": "{\"trace_id\":\"73d18621-3abf-57b0-a434-50b0c2a7db97\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":2,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":false,\"mode\":\"lexical\",\"lexical_status\":\"ok\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":1,\"score\":\"0.024390245\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]}],\"dense\":[],\"fused\":[{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":1,\"dense_rank\":null}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\",\"evidence_tokens\":30,\"config_sha256\":\"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\",\"request_sha256\":\"b9d45f6e4dcb923d38954ff65ed4881a97d6e195713791ac7c551d4dd0a396d5\",\"payload_sha256\":\"f46bfc0a51531e01b005527f8f23bd589e13746075fb0c9aed7de75d088f5212\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "first_transport_requests": 0,
+   "intent": {
+    "config_sha256": "37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee",
+    "query_sha256": "38d241a65d0f8a85fbfc4d429180cf0d4be5dd3d69ced384038b6c6974f8338b",
+    "request_sha256": "b9d45f6e4dcb923d38954ff65ed4881a97d6e195713791ac7c551d4dd0a396d5",
+    "run_id": "70f5fe8d-1660-412b-996e-d74ceccedb38",
+    "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+    "step": 2,
+    "trace_id": "73d18621-3abf-57b0-a434-50b0c2a7db97"
+   },
+   "name": "lexical-step2-same-run",
+   "post_activation_replay_json": "{\"trace_id\":\"73d18621-3abf-57b0-a434-50b0c2a7db97\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":2,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":false,\"replayed\":true,\"mode\":\"lexical\",\"lexical_status\":\"ok\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":1,\"score\":\"0.024390245\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]}],\"dense\":[],\"fused\":[{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":1,\"dense_rank\":null}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\",\"evidence_tokens\":30,\"config_sha256\":\"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\",\"request_sha256\":\"b9d45f6e4dcb923d38954ff65ed4881a97d6e195713791ac7c551d4dd0a396d5\",\"payload_sha256\":\"f46bfc0a51531e01b005527f8f23bd589e13746075fb0c9aed7de75d088f5212\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "query_json": "{\"text\":\"shipping days\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":2,\"scope\":{\"corpus_key\":\"legacy-banking\",\"document_allowlist\":[]},\"config\":{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"lexical\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}}",
+   "query_sha256": "38d241a65d0f8a85fbfc4d429180cf0d4be5dd3d69ced384038b6c6974f8338b",
+   "replay_result_json": "{\"trace_id\":\"73d18621-3abf-57b0-a434-50b0c2a7db97\",\"run_id\":\"70f5fe8d-1660-412b-996e-d74ceccedb38\",\"step\":2,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":true,\"mode\":\"lexical\",\"lexical_status\":\"ok\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":1,\"score\":\"0.024390245\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]}],\"dense\":[],\"fused\":[{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":1,\"dense_rank\":null}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\",\"evidence_tokens\":30,\"config_sha256\":\"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\",\"request_sha256\":\"b9d45f6e4dcb923d38954ff65ed4881a97d6e195713791ac7c551d4dd0a396d5\",\"payload_sha256\":\"f46bfc0a51531e01b005527f8f23bd589e13746075fb0c9aed7de75d088f5212\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "request_sha256": "b9d45f6e4dcb923d38954ff65ed4881a97d6e195713791ac7c551d4dd0a396d5",
+   "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+   "spans": [
+    {
+     "body_digest_ok": true,
+     "document_id": "84545e71-d50c-4936-8626-c22dde792374",
+     "document_version_id": "9998bb3b-3e79-42e8-8391-29713f752364",
+     "source_uri": "tau2:banking_knowledge/d",
+     "text": "Orders ship within five business days.",
+     "version_number": 1
+    }
+   ],
+   "trace": {
+    "authorized_scope": "{\"v\": \"policyops.retrieval-scope/v1\", \"step\": 2, \"corpus_key\": \"legacy-banking\", \"document_ids\": [], \"query_sha256\": \"38d241a65d0f8a85fbfc4d429180cf0d4be5dd3d69ced384038b6c6974f8338b\", \"config_sha256\": \"37ae429aada5a80ce533cf0f95f2c60a4f05861d730a52ebe91f9614abecf0ee\", \"allowlist_sha256\": \"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\", \"embedding_job_id\": null}",
+    "candidates": "{\"v\": \"policyops.retrieval-trace/v1\", \"mode\": \"lexical\", \"dense\": [], \"fused\": [{\"rrf\": \"1/61\", \"rank\": 1, \"dense_rank\": null, \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\", \"lexical_rank\": 1}], \"lexical\": [{\"rank\": 1, \"score\": \"0.024390245\", \"chunk_ids\": [\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"], \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\"}], \"delivered\": [{\"end\": 51, \"start\": 13, \"heading\": \"Shipping\", \"chunk_id\": \"6cf6ef10-de57-4f29-ba19-852a749de0fb\", \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\", \"text_sha256\": \"f02e4571c07cb9c69f6b92c812abdc79939a85e19627d6566ffb74e144fd83de\", \"version_number\": 1, \"evidence_number\": 1, \"document_version_id\": \"9998bb3b-3e79-42e8-8391-29713f752364\"}], \"exclusions\": {\"count_refused\": 0, \"text_oversized\": 0, \"dense_nan_distance\": 0}, \"dense_status\": \"not_used\", \"generation_id\": \"9d64af89-de16-446b-8852-52ba32d26dc1\", \"lexical_status\": \"ok\", \"payload_sha256\": \"f46bfc0a51531e01b005527f8f23bd589e13746075fb0c9aed7de75d088f5212\", \"request_sha256\": \"b9d45f6e4dcb923d38954ff65ed4881a97d6e195713791ac7c551d4dd0a396d5\", \"evidence_tokens\": 30, \"dense_unavailable\": null, \"admission_attempts\": 1, \"evidence_text_sha256\": \"d2f027330d6ac9cf6d67e8ae7e05e2f12b5b9b683c4ba83071529d6f30611b6c\"}",
+    "final_chunk_ids": [
+     "6cf6ef10-de57-4f29-ba19-852a749de0fb"
+    ],
+    "generation_id": "9d64af89-de16-446b-8852-52ba32d26dc1",
+    "query_sha256": "38d241a65d0f8a85fbfc4d429180cf0d4be5dd3d69ced384038b6c6974f8338b",
+    "run_id": "70f5fe8d-1660-412b-996e-d74ceccedb38",
+    "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc"
+   },
+   "trace_id": "73d18621-3abf-57b0-a434-50b0c2a7db97",
+   "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc",
+   "worst_case_candidates_sha256": "e297ac6c64d2e85990a223767cf532c72a842a31bf003cf4e70b14a1c4288fb4",
+   "worst_case_scope_sha256": "ffe613ed45e560635443b871cd64cc6a1fac2abdd437e3c9bc00c9e10f0ff20d"
+  },
+  {
+   "bodies": [
+    {
+     "body": "## Exchanges\n\nExchanges keep the same product type and size. Na\u00efve swaps are refused.",
+     "document_id": "1674f63b-48bc-4bb3-985a-02e97c9f6273",
+     "document_version_id": "43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7",
+     "sha256": "a3c327c572bf686ff450e756d1718cde33e545f9397ff4acf34a7103d631d4e2",
+     "version": 1
+    },
+    {
+     "body": "## Refund exceptions\n\nRefunds for opened items need a manager review; gift card refunds are instant.",
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "sha256": "ee0fb2b3f06c6d71f4824900809836a9c0a55ed56010dbac3ca61816463cd0f4",
+     "version": 1
+    },
+    {
+     "body": "## Shipping\n\nOrders ship within five business days.",
+     "document_id": "84545e71-d50c-4936-8626-c22dde792374",
+     "document_version_id": "9998bb3b-3e79-42e8-8391-29713f752364",
+     "sha256": "0c206dea046b3b634d72b1c6428f3151c333c345c5aaf1b221c7f6eee76af6e4",
+     "version": 1
+    },
+    {
+     "body": "## Refunds\n\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.",
+     "document_id": "94259c63-0cb0-4fc4-91ec-e5418e5f55ba",
+     "document_version_id": "b69c8da4-34a8-4ea9-a54b-ff8af9bf6489",
+     "sha256": "48c4dd71469764f85d38118e0039072e0cf27cc4c7cd3446dac76689798ff21f",
+     "version": 1
+    },
+    {
+     "body": "## Gift cards\n\nStore credit is added to an existing gift card \ud83c\udf81 balance.",
+     "document_id": "019e95e3-e9ac-4273-ac39-2bb5f538f4d0",
+     "document_version_id": "ce7a9c2e-298b-4cfc-9891-ff5990b9550b",
+     "sha256": "8f264f15384890bc17a05f05b9d3aca9cdcc0f2a76b4f4855c52731c05488a75",
+     "version": 1
+    }
+   ],
+   "config_json": "{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"hybrid\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}",
+   "config_sha256": "0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee",
+   "first_result_json": "{\"trace_id\":\"fc7d4e0c-a15a-5302-ae7a-1081a2491280\",\"run_id\":\"d1dfe01c-0055-4830-90a3-64737cff2cd9\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":false,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"ccee9789-119b-46e0-91d1-454b4dae05bb\"]},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":3,\"score\":\"1\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":4,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":5,\"score\":\"2\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]}],\"fused\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":2,\"rrf\":\"1/62\",\"lexical_rank\":null,\"dense_rank\":2},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":3,\"rrf\":\"1/63\",\"lexical_rank\":null,\"dense_rank\":3},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":4,\"rrf\":\"1/64\",\"lexical_rank\":null,\"dense_rank\":4},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":5,\"rrf\":\"1/65\",\"lexical_rank\":null,\"dense_rank\":5}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"ccee9789-119b-46e0-91d1-454b4dae05bb\",\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"document_version_id\":\"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\",\"source_uri\":\"tau2:banking_knowledge/b\",\"version_number\":1,\"heading\":\"Exchanges\",\"start\":14,\"end\":85,\"text\":\"Exchanges keep the same product type and size. Na\u00efve swaps are refused.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"978234ca-e8cc-4b82-adc3-fae355bdee08\",\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"document_version_id\":\"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\",\"source_uri\":\"tau2:banking_knowledge/c\",\"version_number\":1,\"heading\":\"Gift cards\",\"start\":15,\"end\":72,\"text\":\"Store credit is added to an existing gift card \ud83c\udf81 balance.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\\n\\n[E2] tau2:banking_knowledge/b version 1 | Exchanges | chars 14-85\\nExchanges keep the same product type and size. Na\u00efve swaps are refused.\\n\\n[E3] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\\n\\n[E4] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\\n\\n[E5] tau2:banking_knowledge/c version 1 | Gift cards | chars 15-72\\nStore credit is added to an existing gift card \ud83c\udf81 balance.\",\"evidence_tokens\":191,\"config_sha256\":\"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\",\"request_sha256\":\"440f58bbc49e6dff160b0bd6ba41a6d5b42fac7292bab8755c597d5fdc1731d6\",\"payload_sha256\":\"a1a22d7c8797c343b4fa698463e9ee41c96c2f33125c6462392e42fedb5847f6\",\"provider_requests\":1,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "first_transport_requests": 1,
+   "intent": {
+    "config_sha256": "0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee",
+    "query_sha256": "5c7f6e0f34308a6973ce29b3ef24830d9947f88dbf199d0bfbf5b2c6ae3e039d",
+    "request_sha256": "440f58bbc49e6dff160b0bd6ba41a6d5b42fac7292bab8755c597d5fdc1731d6",
+    "run_id": "d1dfe01c-0055-4830-90a3-64737cff2cd9",
+    "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+    "step": 1,
+    "trace_id": "fc7d4e0c-a15a-5302-ae7a-1081a2491280"
+   },
+   "name": "hybrid-default-dense-ok",
+   "post_activation_replay_json": "{\"trace_id\":\"fc7d4e0c-a15a-5302-ae7a-1081a2491280\",\"run_id\":\"d1dfe01c-0055-4830-90a3-64737cff2cd9\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":false,\"replayed\":true,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"ccee9789-119b-46e0-91d1-454b4dae05bb\"]},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":3,\"score\":\"1\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":4,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":5,\"score\":\"2\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]}],\"fused\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":2,\"rrf\":\"1/62\",\"lexical_rank\":null,\"dense_rank\":2},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":3,\"rrf\":\"1/63\",\"lexical_rank\":null,\"dense_rank\":3},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":4,\"rrf\":\"1/64\",\"lexical_rank\":null,\"dense_rank\":4},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":5,\"rrf\":\"1/65\",\"lexical_rank\":null,\"dense_rank\":5}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"ccee9789-119b-46e0-91d1-454b4dae05bb\",\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"document_version_id\":\"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\",\"source_uri\":\"tau2:banking_knowledge/b\",\"version_number\":1,\"heading\":\"Exchanges\",\"start\":14,\"end\":85,\"text\":\"Exchanges keep the same product type and size. Na\u00efve swaps are refused.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"978234ca-e8cc-4b82-adc3-fae355bdee08\",\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"document_version_id\":\"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\",\"source_uri\":\"tau2:banking_knowledge/c\",\"version_number\":1,\"heading\":\"Gift cards\",\"start\":15,\"end\":72,\"text\":\"Store credit is added to an existing gift card \ud83c\udf81 balance.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\\n\\n[E2] tau2:banking_knowledge/b version 1 | Exchanges | chars 14-85\\nExchanges keep the same product type and size. Na\u00efve swaps are refused.\\n\\n[E3] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\\n\\n[E4] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\\n\\n[E5] tau2:banking_knowledge/c version 1 | Gift cards | chars 15-72\\nStore credit is added to an existing gift card \ud83c\udf81 balance.\",\"evidence_tokens\":191,\"config_sha256\":\"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\",\"request_sha256\":\"440f58bbc49e6dff160b0bd6ba41a6d5b42fac7292bab8755c597d5fdc1731d6\",\"payload_sha256\":\"a1a22d7c8797c343b4fa698463e9ee41c96c2f33125c6462392e42fedb5847f6\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "query_json": "{\"text\":\"money back to my card\",\"run_id\":\"d1dfe01c-0055-4830-90a3-64737cff2cd9\",\"step\":1,\"scope\":{\"corpus_key\":\"legacy-banking\",\"document_allowlist\":[]},\"config\":{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"hybrid\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}}",
+   "query_sha256": "5c7f6e0f34308a6973ce29b3ef24830d9947f88dbf199d0bfbf5b2c6ae3e039d",
+   "replay_result_json": "{\"trace_id\":\"fc7d4e0c-a15a-5302-ae7a-1081a2491280\",\"run_id\":\"d1dfe01c-0055-4830-90a3-64737cff2cd9\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":true,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"ccee9789-119b-46e0-91d1-454b4dae05bb\"]},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":3,\"score\":\"1\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":4,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":5,\"score\":\"2\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]}],\"fused\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":2,\"rrf\":\"1/62\",\"lexical_rank\":null,\"dense_rank\":2},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":3,\"rrf\":\"1/63\",\"lexical_rank\":null,\"dense_rank\":3},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":4,\"rrf\":\"1/64\",\"lexical_rank\":null,\"dense_rank\":4},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":5,\"rrf\":\"1/65\",\"lexical_rank\":null,\"dense_rank\":5}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"ccee9789-119b-46e0-91d1-454b4dae05bb\",\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"document_version_id\":\"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\",\"source_uri\":\"tau2:banking_knowledge/b\",\"version_number\":1,\"heading\":\"Exchanges\",\"start\":14,\"end\":85,\"text\":\"Exchanges keep the same product type and size. Na\u00efve swaps are refused.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"978234ca-e8cc-4b82-adc3-fae355bdee08\",\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"document_version_id\":\"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\",\"source_uri\":\"tau2:banking_knowledge/c\",\"version_number\":1,\"heading\":\"Gift cards\",\"start\":15,\"end\":72,\"text\":\"Store credit is added to an existing gift card \ud83c\udf81 balance.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\\n\\n[E2] tau2:banking_knowledge/b version 1 | Exchanges | chars 14-85\\nExchanges keep the same product type and size. Na\u00efve swaps are refused.\\n\\n[E3] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\\n\\n[E4] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\\n\\n[E5] tau2:banking_knowledge/c version 1 | Gift cards | chars 15-72\\nStore credit is added to an existing gift card \ud83c\udf81 balance.\",\"evidence_tokens\":191,\"config_sha256\":\"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\",\"request_sha256\":\"440f58bbc49e6dff160b0bd6ba41a6d5b42fac7292bab8755c597d5fdc1731d6\",\"payload_sha256\":\"a1a22d7c8797c343b4fa698463e9ee41c96c2f33125c6462392e42fedb5847f6\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "request_sha256": "440f58bbc49e6dff160b0bd6ba41a6d5b42fac7292bab8755c597d5fdc1731d6",
+   "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+   "spans": [
+    {
+     "body_digest_ok": true,
+     "document_id": "94259c63-0cb0-4fc4-91ec-e5418e5f55ba",
+     "document_version_id": "b69c8da4-34a8-4ea9-a54b-ff8af9bf6489",
+     "source_uri": "tau2:banking_knowledge/a",
+     "text": "Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "1674f63b-48bc-4bb3-985a-02e97c9f6273",
+     "document_version_id": "43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7",
+     "source_uri": "tau2:banking_knowledge/b",
+     "text": "Exchanges keep the same product type and size. Na\u00efve swaps are refused.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "84545e71-d50c-4936-8626-c22dde792374",
+     "document_version_id": "9998bb3b-3e79-42e8-8391-29713f752364",
+     "source_uri": "tau2:banking_knowledge/d",
+     "text": "Orders ship within five business days.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "source_uri": "tau2:banking_knowledge/e",
+     "text": "Refunds for opened items need a manager review; gift card refunds are instant.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "019e95e3-e9ac-4273-ac39-2bb5f538f4d0",
+     "document_version_id": "ce7a9c2e-298b-4cfc-9891-ff5990b9550b",
+     "source_uri": "tau2:banking_knowledge/c",
+     "text": "Store credit is added to an existing gift card \ud83c\udf81 balance.",
+     "version_number": 1
+    }
+   ],
+   "trace": {
+    "authorized_scope": "{\"v\": \"policyops.retrieval-scope/v1\", \"step\": 1, \"corpus_key\": \"legacy-banking\", \"document_ids\": [], \"query_sha256\": \"5c7f6e0f34308a6973ce29b3ef24830d9947f88dbf199d0bfbf5b2c6ae3e039d\", \"config_sha256\": \"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\", \"allowlist_sha256\": \"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\", \"embedding_job_id\": \"1768ed03-df39-4b36-87d7-eff1c91d75bc\"}",
+    "candidates": "{\"v\": \"policyops.retrieval-trace/v1\", \"mode\": \"hybrid\", \"dense\": [{\"rank\": 1, \"score\": \"0\", \"chunk_ids\": [\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"], \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\"}, {\"rank\": 2, \"score\": \"1\", \"chunk_ids\": [\"ccee9789-119b-46e0-91d1-454b4dae05bb\"], \"document_id\": \"1674f63b-48bc-4bb3-985a-02e97c9f6273\"}, {\"rank\": 3, \"score\": \"1\", \"chunk_ids\": [\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"], \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\"}, {\"rank\": 4, \"score\": \"1\", \"chunk_ids\": [\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"], \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\"}, {\"rank\": 5, \"score\": \"2\", \"chunk_ids\": [\"978234ca-e8cc-4b82-adc3-fae355bdee08\"], \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\"}], \"fused\": [{\"rrf\": \"1/61\", \"rank\": 1, \"dense_rank\": 1, \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\", \"lexical_rank\": null}, {\"rrf\": \"1/62\", \"rank\": 2, \"dense_rank\": 2, \"document_id\": \"1674f63b-48bc-4bb3-985a-02e97c9f6273\", \"lexical_rank\": null}, {\"rrf\": \"1/63\", \"rank\": 3, \"dense_rank\": 3, \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\", \"lexical_rank\": null}, {\"rrf\": \"1/64\", \"rank\": 4, \"dense_rank\": 4, \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"lexical_rank\": null}, {\"rrf\": \"1/65\", \"rank\": 5, \"dense_rank\": 5, \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\", \"lexical_rank\": null}], \"lexical\": [], \"delivered\": [{\"end\": 93, \"start\": 12, \"heading\": \"Refunds\", \"chunk_id\": \"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\", \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\", \"text_sha256\": \"0cfe3427ee141ff9e3de6d8128681bc3369b48b02aba13a99b2c51fe10d4976a\", \"version_number\": 1, \"evidence_number\": 1, \"document_version_id\": \"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\"}, {\"end\": 85, \"start\": 14, \"heading\": \"Exchanges\", \"chunk_id\": \"ccee9789-119b-46e0-91d1-454b4dae05bb\", \"document_id\": \"1674f63b-48bc-4bb3-985a-02e97c9f6273\", \"text_sha256\": \"5779f57bfdd60e842bc9757ac12422fec172c2caaab71330932d6883902c1261\", \"version_number\": 1, \"evidence_number\": 2, \"document_version_id\": \"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\"}, {\"end\": 51, \"start\": 13, \"heading\": \"Shipping\", \"chunk_id\": \"6cf6ef10-de57-4f29-ba19-852a749de0fb\", \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\", \"text_sha256\": \"f02e4571c07cb9c69f6b92c812abdc79939a85e19627d6566ffb74e144fd83de\", \"version_number\": 1, \"evidence_number\": 3, \"document_version_id\": \"9998bb3b-3e79-42e8-8391-29713f752364\"}, {\"end\": 100, \"start\": 22, \"heading\": \"Refund exceptions\", \"chunk_id\": \"206ea6cc-e33a-43b8-9116-bf919cd004a6\", \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"text_sha256\": \"9ac1eb87b1bbd4f4c18877f0cc38a0833707e12afa1576cc6534bfce4d697e03\", \"version_number\": 1, \"evidence_number\": 4, \"document_version_id\": \"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\"}, {\"end\": 72, \"start\": 15, \"heading\": \"Gift cards\", \"chunk_id\": \"978234ca-e8cc-4b82-adc3-fae355bdee08\", \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\", \"text_sha256\": \"7c7e1713913d2bf988ce4c8a0c9775b4ad5bb7b8caa38d8c875b2c71956d2aaf\", \"version_number\": 1, \"evidence_number\": 5, \"document_version_id\": \"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\"}], \"exclusions\": {\"count_refused\": 0, \"text_oversized\": 0, \"dense_nan_distance\": 0}, \"dense_status\": \"ok\", \"generation_id\": \"9d64af89-de16-446b-8852-52ba32d26dc1\", \"lexical_status\": \"ok\", \"payload_sha256\": \"a1a22d7c8797c343b4fa698463e9ee41c96c2f33125c6462392e42fedb5847f6\", \"request_sha256\": \"440f58bbc49e6dff160b0bd6ba41a6d5b42fac7292bab8755c597d5fdc1731d6\", \"evidence_tokens\": 191, \"dense_unavailable\": null, \"admission_attempts\": 5, \"evidence_text_sha256\": \"9ad762552cf5d0897f6b817b0f177740113cede0c8004df76ce5e2795dc45950\"}",
+    "final_chunk_ids": [
+     "7ed3ebe2-146c-458d-b210-cc33bdfb04f9",
+     "ccee9789-119b-46e0-91d1-454b4dae05bb",
+     "6cf6ef10-de57-4f29-ba19-852a749de0fb",
+     "206ea6cc-e33a-43b8-9116-bf919cd004a6",
+     "978234ca-e8cc-4b82-adc3-fae355bdee08"
+    ],
+    "generation_id": "9d64af89-de16-446b-8852-52ba32d26dc1",
+    "query_sha256": "5c7f6e0f34308a6973ce29b3ef24830d9947f88dbf199d0bfbf5b2c6ae3e039d",
+    "run_id": "d1dfe01c-0055-4830-90a3-64737cff2cd9",
+    "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc"
+   },
+   "trace_id": "fc7d4e0c-a15a-5302-ae7a-1081a2491280",
+   "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc",
+   "worst_case_candidates_sha256": "6f227019aa9b21b388b09a41e2585107fed6ff914e938259d755f36400c1507d",
+   "worst_case_scope_sha256": "ffe613ed45e560635443b871cd64cc6a1fac2abdd437e3c9bc00c9e10f0ff20d"
+  },
+  {
+   "bodies": [
+    {
+     "body": "## Refund exceptions\n\nRefunds for opened items need a manager review; gift card refunds are instant.",
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "sha256": "ee0fb2b3f06c6d71f4824900809836a9c0a55ed56010dbac3ca61816463cd0f4",
+     "version": 1
+    },
+    {
+     "body": "## Refunds\n\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.",
+     "document_id": "94259c63-0cb0-4fc4-91ec-e5418e5f55ba",
+     "document_version_id": "b69c8da4-34a8-4ea9-a54b-ff8af9bf6489",
+     "sha256": "48c4dd71469764f85d38118e0039072e0cf27cc4c7cd3446dac76689798ff21f",
+     "version": 1
+    }
+   ],
+   "config_json": "{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"hybrid\",\"branch_documents\":3,\"chunks_per_document\":1,\"rrf_k\":10,\"max_chunks\":2,\"max_evidence_tokens\":2000,\"full_policy_max_chunks\":16,\"max_admission_attempts\":8,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}",
+   "config_sha256": "dfcbd387800bc9ea6509e4b1238e8e66f5ba442141ae0d36412d5da2218ef146",
+   "first_result_json": "{\"trace_id\":\"a9d48d8d-4d68-50d0-9553-acde6a761058\",\"run_id\":\"1a3f9cca-1619-4afe-8b41-c031eb4996a6\",\"step\":7,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":false,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"score\":\"0.101123594\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"dense\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"score\":\"2\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]}],\"fused\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"rrf\":\"23/132\",\"lexical_rank\":1,\"dense_rank\":2},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"rrf\":\"1/11\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"rrf\":\"1/13\",\"lexical_rank\":null,\"dense_rank\":3}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\\n\\n[E2] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\",\"evidence_tokens\":82,\"config_sha256\":\"dfcbd387800bc9ea6509e4b1238e8e66f5ba442141ae0d36412d5da2218ef146\",\"request_sha256\":\"6b4e706ccb78f53033c31090511507115277651d0fea0da9a2766e2d07d88db0\",\"payload_sha256\":\"e81a5f74f7526de378f22437bfa309af810085153dc858a1a336a7fb5c521eb4\",\"provider_requests\":1,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "first_transport_requests": 1,
+   "intent": {
+    "config_sha256": "dfcbd387800bc9ea6509e4b1238e8e66f5ba442141ae0d36412d5da2218ef146",
+    "query_sha256": "34fbd856b0766a5ed1625643558adf43d174961988218a809cabbc79d2cdf745",
+    "request_sha256": "6b4e706ccb78f53033c31090511507115277651d0fea0da9a2766e2d07d88db0",
+    "run_id": "1a3f9cca-1619-4afe-8b41-c031eb4996a6",
+    "scope_sha256": "ed048d42627f257e61d91f2fc58f5b971fea585b9a08b2ea2b481df286c10af8",
+    "step": 7,
+    "trace_id": "a9d48d8d-4d68-50d0-9553-acde6a761058"
+   },
+   "name": "hybrid-nondefault-allowlist",
+   "post_activation_replay_json": "{\"trace_id\":\"a9d48d8d-4d68-50d0-9553-acde6a761058\",\"run_id\":\"1a3f9cca-1619-4afe-8b41-c031eb4996a6\",\"step\":7,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":false,\"replayed\":true,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"score\":\"0.101123594\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"dense\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"score\":\"2\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]}],\"fused\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"rrf\":\"23/132\",\"lexical_rank\":1,\"dense_rank\":2},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"rrf\":\"1/11\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"rrf\":\"1/13\",\"lexical_rank\":null,\"dense_rank\":3}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\\n\\n[E2] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\",\"evidence_tokens\":82,\"config_sha256\":\"dfcbd387800bc9ea6509e4b1238e8e66f5ba442141ae0d36412d5da2218ef146\",\"request_sha256\":\"6b4e706ccb78f53033c31090511507115277651d0fea0da9a2766e2d07d88db0\",\"payload_sha256\":\"e81a5f74f7526de378f22437bfa309af810085153dc858a1a336a7fb5c521eb4\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "query_json": "{\"text\":\"gift card refund\",\"run_id\":\"1a3f9cca-1619-4afe-8b41-c031eb4996a6\",\"step\":7,\"scope\":{\"corpus_key\":\"legacy-banking\",\"document_allowlist\":[\"tau2:banking_knowledge/a\",\"tau2:banking_knowledge/c\",\"tau2:banking_knowledge/e\"]},\"config\":{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"hybrid\",\"branch_documents\":3,\"chunks_per_document\":1,\"rrf_k\":10,\"max_chunks\":2,\"max_evidence_tokens\":2000,\"full_policy_max_chunks\":16,\"max_admission_attempts\":8,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}}",
+   "query_sha256": "34fbd856b0766a5ed1625643558adf43d174961988218a809cabbc79d2cdf745",
+   "replay_result_json": "{\"trace_id\":\"a9d48d8d-4d68-50d0-9553-acde6a761058\",\"run_id\":\"1a3f9cca-1619-4afe-8b41-c031eb4996a6\",\"step\":7,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":true,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"score\":\"0.101123594\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"dense\":[{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"score\":\"2\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]}],\"fused\":[{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":1,\"rrf\":\"23/132\",\"lexical_rank\":1,\"dense_rank\":2},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"rrf\":\"1/11\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"rrf\":\"1/13\",\"lexical_rank\":null,\"dense_rank\":3}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\\n\\n[E2] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\",\"evidence_tokens\":82,\"config_sha256\":\"dfcbd387800bc9ea6509e4b1238e8e66f5ba442141ae0d36412d5da2218ef146\",\"request_sha256\":\"6b4e706ccb78f53033c31090511507115277651d0fea0da9a2766e2d07d88db0\",\"payload_sha256\":\"e81a5f74f7526de378f22437bfa309af810085153dc858a1a336a7fb5c521eb4\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "request_sha256": "6b4e706ccb78f53033c31090511507115277651d0fea0da9a2766e2d07d88db0",
+   "scope_sha256": "ed048d42627f257e61d91f2fc58f5b971fea585b9a08b2ea2b481df286c10af8",
+   "spans": [
+    {
+     "body_digest_ok": true,
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "source_uri": "tau2:banking_knowledge/e",
+     "text": "Refunds for opened items need a manager review; gift card refunds are instant.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "94259c63-0cb0-4fc4-91ec-e5418e5f55ba",
+     "document_version_id": "b69c8da4-34a8-4ea9-a54b-ff8af9bf6489",
+     "source_uri": "tau2:banking_knowledge/a",
+     "text": "Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.",
+     "version_number": 1
+    }
+   ],
+   "trace": {
+    "authorized_scope": "{\"v\": \"policyops.retrieval-scope/v1\", \"step\": 7, \"corpus_key\": \"legacy-banking\", \"document_ids\": [\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\", \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\", \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\"], \"query_sha256\": \"34fbd856b0766a5ed1625643558adf43d174961988218a809cabbc79d2cdf745\", \"config_sha256\": \"dfcbd387800bc9ea6509e4b1238e8e66f5ba442141ae0d36412d5da2218ef146\", \"allowlist_sha256\": \"716045c4f0db74a2855f5c12965b65ae15442c03e47da7127a9d527d1f6d3b02\", \"embedding_job_id\": \"09e3f7ca-bfa0-448c-b554-103a86399d0b\"}",
+    "candidates": "{\"v\": \"policyops.retrieval-trace/v1\", \"mode\": \"hybrid\", \"dense\": [{\"rank\": 1, \"score\": \"0\", \"chunk_ids\": [\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"], \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\"}, {\"rank\": 2, \"score\": \"1\", \"chunk_ids\": [\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"], \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\"}, {\"rank\": 3, \"score\": \"2\", \"chunk_ids\": [\"978234ca-e8cc-4b82-adc3-fae355bdee08\"], \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\"}], \"fused\": [{\"rrf\": \"23/132\", \"rank\": 1, \"dense_rank\": 2, \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"lexical_rank\": 1}, {\"rrf\": \"1/11\", \"rank\": 2, \"dense_rank\": 1, \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\", \"lexical_rank\": null}, {\"rrf\": \"1/13\", \"rank\": 3, \"dense_rank\": 3, \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\", \"lexical_rank\": null}], \"lexical\": [{\"rank\": 1, \"score\": \"0.101123594\", \"chunk_ids\": [\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"], \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\"}], \"delivered\": [{\"end\": 100, \"start\": 22, \"heading\": \"Refund exceptions\", \"chunk_id\": \"206ea6cc-e33a-43b8-9116-bf919cd004a6\", \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"text_sha256\": \"9ac1eb87b1bbd4f4c18877f0cc38a0833707e12afa1576cc6534bfce4d697e03\", \"version_number\": 1, \"evidence_number\": 1, \"document_version_id\": \"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\"}, {\"end\": 93, \"start\": 12, \"heading\": \"Refunds\", \"chunk_id\": \"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\", \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\", \"text_sha256\": \"0cfe3427ee141ff9e3de6d8128681bc3369b48b02aba13a99b2c51fe10d4976a\", \"version_number\": 1, \"evidence_number\": 2, \"document_version_id\": \"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\"}], \"exclusions\": {\"count_refused\": 0, \"text_oversized\": 0, \"dense_nan_distance\": 0}, \"dense_status\": \"ok\", \"generation_id\": \"9d64af89-de16-446b-8852-52ba32d26dc1\", \"lexical_status\": \"ok\", \"payload_sha256\": \"e81a5f74f7526de378f22437bfa309af810085153dc858a1a336a7fb5c521eb4\", \"request_sha256\": \"6b4e706ccb78f53033c31090511507115277651d0fea0da9a2766e2d07d88db0\", \"evidence_tokens\": 82, \"dense_unavailable\": null, \"admission_attempts\": 2, \"evidence_text_sha256\": \"f5663d7be7268bb518d17c0ad28d243b7ba2738c2d87faad9a0b24c4402dd5f8\"}",
+    "final_chunk_ids": [
+     "206ea6cc-e33a-43b8-9116-bf919cd004a6",
+     "7ed3ebe2-146c-458d-b210-cc33bdfb04f9"
+    ],
+    "generation_id": "9d64af89-de16-446b-8852-52ba32d26dc1",
+    "query_sha256": "34fbd856b0766a5ed1625643558adf43d174961988218a809cabbc79d2cdf745",
+    "run_id": "1a3f9cca-1619-4afe-8b41-c031eb4996a6",
+    "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc"
+   },
+   "trace_id": "a9d48d8d-4d68-50d0-9553-acde6a761058",
+   "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc",
+   "worst_case_candidates_sha256": "ae63e1508c4f2ceb0ffa8f07bb493c14262fd83edb6372334e4cf594a3316e21",
+   "worst_case_scope_sha256": "ffe613ed45e560635443b871cd64cc6a1fac2abdd437e3c9bc00c9e10f0ff20d"
+  },
+  {
+   "bodies": [],
+   "config_json": "{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"hybrid\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}",
+   "config_sha256": "0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee",
+   "first_result_json": "{\"trace_id\":\"fff96bab-addc-5639-9ccf-3e99709cbbb0\",\"run_id\":\"9a5120d3-9bd1-4699-abbb-07fe487d5595\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":false,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"unavailable\",\"dense_unavailable\":\"unresolved\",\"lexical\":[],\"dense\":[],\"fused\":[],\"evidence\":[],\"evidence_text\":\"\",\"evidence_tokens\":0,\"config_sha256\":\"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\",\"request_sha256\":\"f961a71a98380f3db39fd1e7b808bbfca604a3759af1079651dd3eae2156f70c\",\"payload_sha256\":\"3b6ae81f57a221009dfb648d4f1f1e465a63681e1693dd43d6353c169aa6b5ab\",\"provider_requests\":1,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "first_transport_requests": 1,
+   "intent": {
+    "config_sha256": "0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee",
+    "query_sha256": "f105c20abc51ca4073972ef1a3005f4bbe3ed815ad910ff76524a8ad3a21b3fd",
+    "request_sha256": "f961a71a98380f3db39fd1e7b808bbfca604a3759af1079651dd3eae2156f70c",
+    "run_id": "9a5120d3-9bd1-4699-abbb-07fe487d5595",
+    "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+    "step": 1,
+    "trace_id": "fff96bab-addc-5639-9ccf-3e99709cbbb0"
+   },
+   "name": "hybrid-lexical-fallback-unresolved",
+   "post_activation_replay_json": "{\"trace_id\":\"fff96bab-addc-5639-9ccf-3e99709cbbb0\",\"run_id\":\"9a5120d3-9bd1-4699-abbb-07fe487d5595\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":false,\"replayed\":true,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"unavailable\",\"dense_unavailable\":\"unresolved\",\"lexical\":[],\"dense\":[],\"fused\":[],\"evidence\":[],\"evidence_text\":\"\",\"evidence_tokens\":0,\"config_sha256\":\"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\",\"request_sha256\":\"f961a71a98380f3db39fd1e7b808bbfca604a3759af1079651dd3eae2156f70c\",\"payload_sha256\":\"3b6ae81f57a221009dfb648d4f1f1e465a63681e1693dd43d6353c169aa6b5ab\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "query_json": "{\"text\":\"refund exceptions\",\"run_id\":\"9a5120d3-9bd1-4699-abbb-07fe487d5595\",\"step\":1,\"scope\":{\"corpus_key\":\"legacy-banking\",\"document_allowlist\":[]},\"config\":{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"hybrid\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}}",
+   "query_sha256": "f105c20abc51ca4073972ef1a3005f4bbe3ed815ad910ff76524a8ad3a21b3fd",
+   "replay_result_json": "{\"trace_id\":\"fff96bab-addc-5639-9ccf-3e99709cbbb0\",\"run_id\":\"9a5120d3-9bd1-4699-abbb-07fe487d5595\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":true,\"mode\":\"hybrid\",\"lexical_status\":\"ok\",\"dense_status\":\"unavailable\",\"dense_unavailable\":\"unresolved\",\"lexical\":[],\"dense\":[],\"fused\":[],\"evidence\":[],\"evidence_text\":\"\",\"evidence_tokens\":0,\"config_sha256\":\"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\",\"request_sha256\":\"f961a71a98380f3db39fd1e7b808bbfca604a3759af1079651dd3eae2156f70c\",\"payload_sha256\":\"3b6ae81f57a221009dfb648d4f1f1e465a63681e1693dd43d6353c169aa6b5ab\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "request_sha256": "f961a71a98380f3db39fd1e7b808bbfca604a3759af1079651dd3eae2156f70c",
+   "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+   "spans": [],
+   "trace": {
+    "authorized_scope": "{\"v\": \"policyops.retrieval-scope/v1\", \"step\": 1, \"corpus_key\": \"legacy-banking\", \"document_ids\": [], \"query_sha256\": \"f105c20abc51ca4073972ef1a3005f4bbe3ed815ad910ff76524a8ad3a21b3fd\", \"config_sha256\": \"0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee\", \"allowlist_sha256\": \"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\", \"embedding_job_id\": \"f8bcbe4c-b4eb-4707-8637-d637864ac621\"}",
+    "candidates": "{\"v\": \"policyops.retrieval-trace/v1\", \"mode\": \"hybrid\", \"dense\": [], \"fused\": [], \"lexical\": [], \"delivered\": [], \"exclusions\": {\"count_refused\": 0, \"text_oversized\": 0, \"dense_nan_distance\": 0}, \"dense_status\": \"unavailable\", \"generation_id\": \"9d64af89-de16-446b-8852-52ba32d26dc1\", \"lexical_status\": \"ok\", \"payload_sha256\": \"3b6ae81f57a221009dfb648d4f1f1e465a63681e1693dd43d6353c169aa6b5ab\", \"request_sha256\": \"f961a71a98380f3db39fd1e7b808bbfca604a3759af1079651dd3eae2156f70c\", \"evidence_tokens\": 0, \"dense_unavailable\": \"unresolved\", \"admission_attempts\": 0, \"evidence_text_sha256\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}",
+    "final_chunk_ids": [],
+    "generation_id": "9d64af89-de16-446b-8852-52ba32d26dc1",
+    "query_sha256": "f105c20abc51ca4073972ef1a3005f4bbe3ed815ad910ff76524a8ad3a21b3fd",
+    "run_id": "9a5120d3-9bd1-4699-abbb-07fe487d5595",
+    "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc"
+   },
+   "trace_id": "fff96bab-addc-5639-9ccf-3e99709cbbb0",
+   "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc",
+   "worst_case_candidates_sha256": "6f227019aa9b21b388b09a41e2585107fed6ff914e938259d755f36400c1507d",
+   "worst_case_scope_sha256": "ffe613ed45e560635443b871cd64cc6a1fac2abdd437e3c9bc00c9e10f0ff20d"
+  },
+  {
+   "bodies": [
+    {
+     "body": "## Exchanges\n\nExchanges keep the same product type and size. Na\u00efve swaps are refused.",
+     "document_id": "1674f63b-48bc-4bb3-985a-02e97c9f6273",
+     "document_version_id": "43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7",
+     "sha256": "a3c327c572bf686ff450e756d1718cde33e545f9397ff4acf34a7103d631d4e2",
+     "version": 1
+    },
+    {
+     "body": "## Refund exceptions\n\nRefunds for opened items need a manager review; gift card refunds are instant.",
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "sha256": "ee0fb2b3f06c6d71f4824900809836a9c0a55ed56010dbac3ca61816463cd0f4",
+     "version": 1
+    },
+    {
+     "body": "## Shipping\n\nOrders ship within five business days.",
+     "document_id": "84545e71-d50c-4936-8626-c22dde792374",
+     "document_version_id": "9998bb3b-3e79-42e8-8391-29713f752364",
+     "sha256": "0c206dea046b3b634d72b1c6428f3151c333c345c5aaf1b221c7f6eee76af6e4",
+     "version": 1
+    },
+    {
+     "body": "## Refunds\n\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.",
+     "document_id": "94259c63-0cb0-4fc4-91ec-e5418e5f55ba",
+     "document_version_id": "b69c8da4-34a8-4ea9-a54b-ff8af9bf6489",
+     "sha256": "48c4dd71469764f85d38118e0039072e0cf27cc4c7cd3446dac76689798ff21f",
+     "version": 1
+    },
+    {
+     "body": "## Gift cards\n\nStore credit is added to an existing gift card \ud83c\udf81 balance.",
+     "document_id": "019e95e3-e9ac-4273-ac39-2bb5f538f4d0",
+     "document_version_id": "ce7a9c2e-298b-4cfc-9891-ff5990b9550b",
+     "sha256": "8f264f15384890bc17a05f05b9d3aca9cdcc0f2a76b4f4855c52731c05488a75",
+     "version": 1
+    }
+   ],
+   "config_json": "{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"dense\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}",
+   "config_sha256": "5bee284f715bf219ab4e4f3d49827445bdec241c48ec3c777a95cbb48ecd735a",
+   "first_result_json": "{\"trace_id\":\"559a505b-708b-5524-8afd-eb447679e108\",\"run_id\":\"9b927119-6589-48a2-a917-5ab1af37c70e\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":false,\"mode\":\"dense\",\"lexical_status\":\"not_used\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"ccee9789-119b-46e0-91d1-454b4dae05bb\"]},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"score\":\"1\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":4,\"score\":\"1\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":5,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"fused\":[{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"rrf\":\"1/62\",\"lexical_rank\":null,\"dense_rank\":2},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"rrf\":\"1/63\",\"lexical_rank\":null,\"dense_rank\":3},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":4,\"rrf\":\"1/64\",\"lexical_rank\":null,\"dense_rank\":4},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":5,\"rrf\":\"1/65\",\"lexical_rank\":null,\"dense_rank\":5}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"ccee9789-119b-46e0-91d1-454b4dae05bb\",\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"document_version_id\":\"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\",\"source_uri\":\"tau2:banking_knowledge/b\",\"version_number\":1,\"heading\":\"Exchanges\",\"start\":14,\"end\":85,\"text\":\"Exchanges keep the same product type and size. Na\u00efve swaps are refused.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"978234ca-e8cc-4b82-adc3-fae355bdee08\",\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"document_version_id\":\"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\",\"source_uri\":\"tau2:banking_knowledge/c\",\"version_number\":1,\"heading\":\"Gift cards\",\"start\":15,\"end\":72,\"text\":\"Store credit is added to an existing gift card \ud83c\udf81 balance.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/b version 1 | Exchanges | chars 14-85\\nExchanges keep the same product type and size. Na\u00efve swaps are refused.\\n\\n[E2] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\\n\\n[E3] tau2:banking_knowledge/c version 1 | Gift cards | chars 15-72\\nStore credit is added to an existing gift card \ud83c\udf81 balance.\\n\\n[E4] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\\n\\n[E5] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\",\"evidence_tokens\":191,\"config_sha256\":\"5bee284f715bf219ab4e4f3d49827445bdec241c48ec3c777a95cbb48ecd735a\",\"request_sha256\":\"94057ef0b4debf70a94fde0f56af0eb85ccefd39c325c79d86a92e67f99bdfbc\",\"payload_sha256\":\"f54514f3eaafb97c9e0cc785dbc31e8c750de41799188b904e65430089015f44\",\"provider_requests\":1,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "first_transport_requests": 1,
+   "intent": {
+    "config_sha256": "5bee284f715bf219ab4e4f3d49827445bdec241c48ec3c777a95cbb48ecd735a",
+    "query_sha256": "936cfc6b3de4c00339580cd3dd2109cd72c95c0645b66ee14e3bc3ecbceff8f7",
+    "request_sha256": "94057ef0b4debf70a94fde0f56af0eb85ccefd39c325c79d86a92e67f99bdfbc",
+    "run_id": "9b927119-6589-48a2-a917-5ab1af37c70e",
+    "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+    "step": 1,
+    "trace_id": "559a505b-708b-5524-8afd-eb447679e108"
+   },
+   "name": "dense-default",
+   "post_activation_replay_json": "{\"trace_id\":\"559a505b-708b-5524-8afd-eb447679e108\",\"run_id\":\"9b927119-6589-48a2-a917-5ab1af37c70e\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":false,\"replayed\":true,\"mode\":\"dense\",\"lexical_status\":\"not_used\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"ccee9789-119b-46e0-91d1-454b4dae05bb\"]},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"score\":\"1\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":4,\"score\":\"1\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":5,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"fused\":[{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"rrf\":\"1/62\",\"lexical_rank\":null,\"dense_rank\":2},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"rrf\":\"1/63\",\"lexical_rank\":null,\"dense_rank\":3},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":4,\"rrf\":\"1/64\",\"lexical_rank\":null,\"dense_rank\":4},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":5,\"rrf\":\"1/65\",\"lexical_rank\":null,\"dense_rank\":5}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"ccee9789-119b-46e0-91d1-454b4dae05bb\",\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"document_version_id\":\"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\",\"source_uri\":\"tau2:banking_knowledge/b\",\"version_number\":1,\"heading\":\"Exchanges\",\"start\":14,\"end\":85,\"text\":\"Exchanges keep the same product type and size. Na\u00efve swaps are refused.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"978234ca-e8cc-4b82-adc3-fae355bdee08\",\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"document_version_id\":\"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\",\"source_uri\":\"tau2:banking_knowledge/c\",\"version_number\":1,\"heading\":\"Gift cards\",\"start\":15,\"end\":72,\"text\":\"Store credit is added to an existing gift card \ud83c\udf81 balance.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/b version 1 | Exchanges | chars 14-85\\nExchanges keep the same product type and size. Na\u00efve swaps are refused.\\n\\n[E2] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\\n\\n[E3] tau2:banking_knowledge/c version 1 | Gift cards | chars 15-72\\nStore credit is added to an existing gift card \ud83c\udf81 balance.\\n\\n[E4] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\\n\\n[E5] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\",\"evidence_tokens\":191,\"config_sha256\":\"5bee284f715bf219ab4e4f3d49827445bdec241c48ec3c777a95cbb48ecd735a\",\"request_sha256\":\"94057ef0b4debf70a94fde0f56af0eb85ccefd39c325c79d86a92e67f99bdfbc\",\"payload_sha256\":\"f54514f3eaafb97c9e0cc785dbc31e8c750de41799188b904e65430089015f44\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "query_json": "{\"text\":\"exchange sizes\",\"run_id\":\"9b927119-6589-48a2-a917-5ab1af37c70e\",\"step\":1,\"scope\":{\"corpus_key\":\"legacy-banking\",\"document_allowlist\":[]},\"config\":{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"dense\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}}",
+   "query_sha256": "936cfc6b3de4c00339580cd3dd2109cd72c95c0645b66ee14e3bc3ecbceff8f7",
+   "replay_result_json": "{\"trace_id\":\"559a505b-708b-5524-8afd-eb447679e108\",\"run_id\":\"9b927119-6589-48a2-a917-5ab1af37c70e\",\"step\":1,\"generation_id\":\"9d64af89-de16-446b-8852-52ba32d26dc1\",\"generation_current\":true,\"replayed\":true,\"mode\":\"dense\",\"lexical_status\":\"not_used\",\"dense_status\":\"ok\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":1,\"score\":\"0\",\"chunk_ids\":[\"ccee9789-119b-46e0-91d1-454b4dae05bb\"]},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"score\":\"1\",\"chunk_ids\":[\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"]},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"score\":\"1\",\"chunk_ids\":[\"978234ca-e8cc-4b82-adc3-fae355bdee08\"]},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":4,\"score\":\"1\",\"chunk_ids\":[\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"]},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":5,\"score\":\"1\",\"chunk_ids\":[\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"]}],\"fused\":[{\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"rank\":1,\"rrf\":\"1/61\",\"lexical_rank\":null,\"dense_rank\":1},{\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"rank\":2,\"rrf\":\"1/62\",\"lexical_rank\":null,\"dense_rank\":2},{\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"rank\":3,\"rrf\":\"1/63\",\"lexical_rank\":null,\"dense_rank\":3},{\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"rank\":4,\"rrf\":\"1/64\",\"lexical_rank\":null,\"dense_rank\":4},{\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"rank\":5,\"rrf\":\"1/65\",\"lexical_rank\":null,\"dense_rank\":5}],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"ccee9789-119b-46e0-91d1-454b4dae05bb\",\"document_id\":\"1674f63b-48bc-4bb3-985a-02e97c9f6273\",\"document_version_id\":\"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\",\"source_uri\":\"tau2:banking_knowledge/b\",\"version_number\":1,\"heading\":\"Exchanges\",\"start\":14,\"end\":85,\"text\":\"Exchanges keep the same product type and size. Na\u00efve swaps are refused.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\",\"document_id\":\"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\",\"document_version_id\":\"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\",\"source_uri\":\"tau2:banking_knowledge/a\",\"version_number\":1,\"heading\":\"Refunds\",\"start\":12,\"end\":93,\"text\":\"Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"978234ca-e8cc-4b82-adc3-fae355bdee08\",\"document_id\":\"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\",\"document_version_id\":\"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\",\"source_uri\":\"tau2:banking_knowledge/c\",\"version_number\":1,\"heading\":\"Gift cards\",\"start\":15,\"end\":72,\"text\":\"Store credit is added to an existing gift card \ud83c\udf81 balance.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"6cf6ef10-de57-4f29-ba19-852a749de0fb\",\"document_id\":\"84545e71-d50c-4936-8626-c22dde792374\",\"document_version_id\":\"9998bb3b-3e79-42e8-8391-29713f752364\",\"source_uri\":\"tau2:banking_knowledge/d\",\"version_number\":1,\"heading\":\"Shipping\",\"start\":13,\"end\":51,\"text\":\"Orders ship within five business days.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"206ea6cc-e33a-43b8-9116-bf919cd004a6\",\"document_id\":\"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\",\"document_version_id\":\"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\",\"source_uri\":\"tau2:banking_knowledge/e\",\"version_number\":1,\"heading\":\"Refund exceptions\",\"start\":22,\"end\":100,\"text\":\"Refunds for opened items need a manager review; gift card refunds are instant.\"}],\"evidence_text\":\"[E1] tau2:banking_knowledge/b version 1 | Exchanges | chars 14-85\\nExchanges keep the same product type and size. Na\u00efve swaps are refused.\\n\\n[E2] tau2:banking_knowledge/a version 1 | Refunds | chars 12-93\\nRefunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.\\n\\n[E3] tau2:banking_knowledge/c version 1 | Gift cards | chars 15-72\\nStore credit is added to an existing gift card \ud83c\udf81 balance.\\n\\n[E4] tau2:banking_knowledge/d version 1 | Shipping | chars 13-51\\nOrders ship within five business days.\\n\\n[E5] tau2:banking_knowledge/e version 1 | Refund exceptions | chars 22-100\\nRefunds for opened items need a manager review; gift card refunds are instant.\",\"evidence_tokens\":191,\"config_sha256\":\"5bee284f715bf219ab4e4f3d49827445bdec241c48ec3c777a95cbb48ecd735a\",\"request_sha256\":\"94057ef0b4debf70a94fde0f56af0eb85ccefd39c325c79d86a92e67f99bdfbc\",\"payload_sha256\":\"f54514f3eaafb97c9e0cc785dbc31e8c750de41799188b904e65430089015f44\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "request_sha256": "94057ef0b4debf70a94fde0f56af0eb85ccefd39c325c79d86a92e67f99bdfbc",
+   "scope_sha256": "984be33defc9749da151e9d105766319df6d5fe82d80538a8f50525926381615",
+   "spans": [
+    {
+     "body_digest_ok": true,
+     "document_id": "1674f63b-48bc-4bb3-985a-02e97c9f6273",
+     "document_version_id": "43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7",
+     "source_uri": "tau2:banking_knowledge/b",
+     "text": "Exchanges keep the same product type and size. Na\u00efve swaps are refused.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "94259c63-0cb0-4fc4-91ec-e5418e5f55ba",
+     "document_version_id": "b69c8da4-34a8-4ea9-a54b-ff8af9bf6489",
+     "source_uri": "tau2:banking_knowledge/a",
+     "text": "Refunds go back to the original payment method within ten days \u2014 caf\u00e9 orders too.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "019e95e3-e9ac-4273-ac39-2bb5f538f4d0",
+     "document_version_id": "ce7a9c2e-298b-4cfc-9891-ff5990b9550b",
+     "source_uri": "tau2:banking_knowledge/c",
+     "text": "Store credit is added to an existing gift card \ud83c\udf81 balance.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "84545e71-d50c-4936-8626-c22dde792374",
+     "document_version_id": "9998bb3b-3e79-42e8-8391-29713f752364",
+     "source_uri": "tau2:banking_knowledge/d",
+     "text": "Orders ship within five business days.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "1957866c-de71-42f8-9d3e-9ba8b9e4b5a6",
+     "document_version_id": "76920fbe-5f1e-4490-a6e2-0ee49634ec7f",
+     "source_uri": "tau2:banking_knowledge/e",
+     "text": "Refunds for opened items need a manager review; gift card refunds are instant.",
+     "version_number": 1
+    }
+   ],
+   "trace": {
+    "authorized_scope": "{\"v\": \"policyops.retrieval-scope/v1\", \"step\": 1, \"corpus_key\": \"legacy-banking\", \"document_ids\": [], \"query_sha256\": \"936cfc6b3de4c00339580cd3dd2109cd72c95c0645b66ee14e3bc3ecbceff8f7\", \"config_sha256\": \"5bee284f715bf219ab4e4f3d49827445bdec241c48ec3c777a95cbb48ecd735a\", \"allowlist_sha256\": \"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\", \"embedding_job_id\": \"ec7a30eb-d58f-4678-8ee5-15780990d0b0\"}",
+    "candidates": "{\"v\": \"policyops.retrieval-trace/v1\", \"mode\": \"dense\", \"dense\": [{\"rank\": 1, \"score\": \"0\", \"chunk_ids\": [\"ccee9789-119b-46e0-91d1-454b4dae05bb\"], \"document_id\": \"1674f63b-48bc-4bb3-985a-02e97c9f6273\"}, {\"rank\": 2, \"score\": \"1\", \"chunk_ids\": [\"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\"], \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\"}, {\"rank\": 3, \"score\": \"1\", \"chunk_ids\": [\"978234ca-e8cc-4b82-adc3-fae355bdee08\"], \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\"}, {\"rank\": 4, \"score\": \"1\", \"chunk_ids\": [\"6cf6ef10-de57-4f29-ba19-852a749de0fb\"], \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\"}, {\"rank\": 5, \"score\": \"1\", \"chunk_ids\": [\"206ea6cc-e33a-43b8-9116-bf919cd004a6\"], \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\"}], \"fused\": [{\"rrf\": \"1/61\", \"rank\": 1, \"dense_rank\": 1, \"document_id\": \"1674f63b-48bc-4bb3-985a-02e97c9f6273\", \"lexical_rank\": null}, {\"rrf\": \"1/62\", \"rank\": 2, \"dense_rank\": 2, \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\", \"lexical_rank\": null}, {\"rrf\": \"1/63\", \"rank\": 3, \"dense_rank\": 3, \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\", \"lexical_rank\": null}, {\"rrf\": \"1/64\", \"rank\": 4, \"dense_rank\": 4, \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\", \"lexical_rank\": null}, {\"rrf\": \"1/65\", \"rank\": 5, \"dense_rank\": 5, \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"lexical_rank\": null}], \"lexical\": [], \"delivered\": [{\"end\": 85, \"start\": 14, \"heading\": \"Exchanges\", \"chunk_id\": \"ccee9789-119b-46e0-91d1-454b4dae05bb\", \"document_id\": \"1674f63b-48bc-4bb3-985a-02e97c9f6273\", \"text_sha256\": \"5779f57bfdd60e842bc9757ac12422fec172c2caaab71330932d6883902c1261\", \"version_number\": 1, \"evidence_number\": 1, \"document_version_id\": \"43da4aa6-b5f9-4ca7-b688-80c8ff7c39d7\"}, {\"end\": 93, \"start\": 12, \"heading\": \"Refunds\", \"chunk_id\": \"7ed3ebe2-146c-458d-b210-cc33bdfb04f9\", \"document_id\": \"94259c63-0cb0-4fc4-91ec-e5418e5f55ba\", \"text_sha256\": \"0cfe3427ee141ff9e3de6d8128681bc3369b48b02aba13a99b2c51fe10d4976a\", \"version_number\": 1, \"evidence_number\": 2, \"document_version_id\": \"b69c8da4-34a8-4ea9-a54b-ff8af9bf6489\"}, {\"end\": 72, \"start\": 15, \"heading\": \"Gift cards\", \"chunk_id\": \"978234ca-e8cc-4b82-adc3-fae355bdee08\", \"document_id\": \"019e95e3-e9ac-4273-ac39-2bb5f538f4d0\", \"text_sha256\": \"7c7e1713913d2bf988ce4c8a0c9775b4ad5bb7b8caa38d8c875b2c71956d2aaf\", \"version_number\": 1, \"evidence_number\": 3, \"document_version_id\": \"ce7a9c2e-298b-4cfc-9891-ff5990b9550b\"}, {\"end\": 51, \"start\": 13, \"heading\": \"Shipping\", \"chunk_id\": \"6cf6ef10-de57-4f29-ba19-852a749de0fb\", \"document_id\": \"84545e71-d50c-4936-8626-c22dde792374\", \"text_sha256\": \"f02e4571c07cb9c69f6b92c812abdc79939a85e19627d6566ffb74e144fd83de\", \"version_number\": 1, \"evidence_number\": 4, \"document_version_id\": \"9998bb3b-3e79-42e8-8391-29713f752364\"}, {\"end\": 100, \"start\": 22, \"heading\": \"Refund exceptions\", \"chunk_id\": \"206ea6cc-e33a-43b8-9116-bf919cd004a6\", \"document_id\": \"1957866c-de71-42f8-9d3e-9ba8b9e4b5a6\", \"text_sha256\": \"9ac1eb87b1bbd4f4c18877f0cc38a0833707e12afa1576cc6534bfce4d697e03\", \"version_number\": 1, \"evidence_number\": 5, \"document_version_id\": \"76920fbe-5f1e-4490-a6e2-0ee49634ec7f\"}], \"exclusions\": {\"count_refused\": 0, \"text_oversized\": 0, \"dense_nan_distance\": 0}, \"dense_status\": \"ok\", \"generation_id\": \"9d64af89-de16-446b-8852-52ba32d26dc1\", \"lexical_status\": \"not_used\", \"payload_sha256\": \"f54514f3eaafb97c9e0cc785dbc31e8c750de41799188b904e65430089015f44\", \"request_sha256\": \"94057ef0b4debf70a94fde0f56af0eb85ccefd39c325c79d86a92e67f99bdfbc\", \"evidence_tokens\": 191, \"dense_unavailable\": null, \"admission_attempts\": 5, \"evidence_text_sha256\": \"73113bb58aaf089118e3a8465469e0bb28bea109cd278ff2de890591062e9834\"}",
+    "final_chunk_ids": [
+     "ccee9789-119b-46e0-91d1-454b4dae05bb",
+     "7ed3ebe2-146c-458d-b210-cc33bdfb04f9",
+     "978234ca-e8cc-4b82-adc3-fae355bdee08",
+     "6cf6ef10-de57-4f29-ba19-852a749de0fb",
+     "206ea6cc-e33a-43b8-9116-bf919cd004a6"
+    ],
+    "generation_id": "9d64af89-de16-446b-8852-52ba32d26dc1",
+    "query_sha256": "936cfc6b3de4c00339580cd3dd2109cd72c95c0645b66ee14e3bc3ecbceff8f7",
+    "run_id": "9b927119-6589-48a2-a917-5ab1af37c70e",
+    "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc"
+   },
+   "trace_id": "559a505b-708b-5524-8afd-eb447679e108",
+   "workspace_id": "3af77bb9-72eb-45eb-b308-8fc911aa48fc",
+   "worst_case_candidates_sha256": "dd76f0c4ba7b12b8e639e57dcf922f9b19339ffb37bb86a1ed2e33cda2a81e61",
+   "worst_case_scope_sha256": "ffe613ed45e560635443b871cd64cc6a1fac2abdd437e3c9bc00c9e10f0ff20d"
+  },
+  {
+   "bodies": [
+    {
+     "body": "# Retail policy\n\n## Rule 0\n\nRule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.\n\n## Rule 1\n\nRule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.\n\n## Rule 2\n\nRule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.\n\n## Rule 3\n\nRule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.\n\n## Rule 4\n\nRule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.",
+     "document_id": "c6522bcc-89df-441a-8bd2-d4659b63d75f",
+     "document_version_id": "d8f00113-5dfa-46e3-a168-7eed57ad2d8a",
+     "sha256": "2e86401a751ee2d6a58d9523003e95c6eac859f965ca845e2322ca47a13997fe",
+     "version": 1
+    }
+   ],
+   "config_json": "{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"full_policy\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}",
+   "config_sha256": "f153fefb0b346cf7019c397d4f3d260f5344bb14b473cf8eedf9e108965402c0",
+   "first_result_json": "{\"trace_id\":\"c76dfdb7-4262-5a70-ad15-15f8df09eccb\",\"run_id\":\"376dba80-1da5-4967-96a8-9a83396f470d\",\"step\":1,\"generation_id\":\"e6c0a0e8-1344-4d51-b3e4-cc0ecb7ce228\",\"generation_current\":true,\"replayed\":false,\"mode\":\"full_policy\",\"lexical_status\":\"not_used\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[],\"fused\":[],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"86403d8f-0854-4e8c-ac12-5bbc552d8816\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 0\",\"start\":28,\"end\":79,\"text\":\"Rule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"3aa50723-902a-4e3a-9163-1b0cdb7cb21e\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 1\",\"start\":92,\"end\":143,\"text\":\"Rule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"d6766c6f-5a64-4d0b-a623-e02344fdcf40\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 2\",\"start\":156,\"end\":207,\"text\":\"Rule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"2c070a75-3c62-4fdd-a997-a7d82368e413\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 3\",\"start\":220,\"end\":271,\"text\":\"Rule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"84829664-fb8e-4e04-a21a-5e56023ff3ae\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 4\",\"start\":284,\"end\":335,\"text\":\"Rule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.\"}],\"evidence_text\":\"[E1] tau2:retail/policy version 1 | Retail policy > Rule 0 | chars 28-79\\nRule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E2] tau2:retail/policy version 1 | Retail policy > Rule 1 | chars 92-143\\nRule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E3] tau2:retail/policy version 1 | Retail policy > Rule 2 | chars 156-207\\nRule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E4] tau2:retail/policy version 1 | Retail policy > Rule 3 | chars 220-271\\nRule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E5] tau2:retail/policy version 1 | Retail policy > Rule 4 | chars 284-335\\nRule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.\",\"evidence_tokens\":215,\"config_sha256\":\"f153fefb0b346cf7019c397d4f3d260f5344bb14b473cf8eedf9e108965402c0\",\"request_sha256\":\"a2da057930af1f863e31427b3000c2f8cad96cbc6352718e6ccaf77587f2af10\",\"payload_sha256\":\"8389bba2e86b454986fece953d9091708d560301656a67f7b7dace44199de109\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "first_transport_requests": 0,
+   "intent": {
+    "config_sha256": "f153fefb0b346cf7019c397d4f3d260f5344bb14b473cf8eedf9e108965402c0",
+    "query_sha256": "480abbcf1636804c80b54b1a74142ff75c263bf357a1e94ffe4c799b4ca2b6d1",
+    "request_sha256": "a2da057930af1f863e31427b3000c2f8cad96cbc6352718e6ccaf77587f2af10",
+    "run_id": "376dba80-1da5-4967-96a8-9a83396f470d",
+    "scope_sha256": "f270ab527ee416cf404bf10dc5a086286d79daab3f5ab8ade7b690bc0c52a2ec",
+    "step": 1,
+    "trace_id": "c76dfdb7-4262-5a70-ad15-15f8df09eccb"
+   },
+   "name": "full-policy-retail",
+   "post_activation_replay_json": "{\"trace_id\":\"c76dfdb7-4262-5a70-ad15-15f8df09eccb\",\"run_id\":\"376dba80-1da5-4967-96a8-9a83396f470d\",\"step\":1,\"generation_id\":\"e6c0a0e8-1344-4d51-b3e4-cc0ecb7ce228\",\"generation_current\":true,\"replayed\":true,\"mode\":\"full_policy\",\"lexical_status\":\"not_used\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[],\"fused\":[],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"86403d8f-0854-4e8c-ac12-5bbc552d8816\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 0\",\"start\":28,\"end\":79,\"text\":\"Rule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"3aa50723-902a-4e3a-9163-1b0cdb7cb21e\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 1\",\"start\":92,\"end\":143,\"text\":\"Rule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"d6766c6f-5a64-4d0b-a623-e02344fdcf40\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 2\",\"start\":156,\"end\":207,\"text\":\"Rule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"2c070a75-3c62-4fdd-a997-a7d82368e413\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 3\",\"start\":220,\"end\":271,\"text\":\"Rule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"84829664-fb8e-4e04-a21a-5e56023ff3ae\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 4\",\"start\":284,\"end\":335,\"text\":\"Rule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.\"}],\"evidence_text\":\"[E1] tau2:retail/policy version 1 | Retail policy > Rule 0 | chars 28-79\\nRule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E2] tau2:retail/policy version 1 | Retail policy > Rule 1 | chars 92-143\\nRule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E3] tau2:retail/policy version 1 | Retail policy > Rule 2 | chars 156-207\\nRule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E4] tau2:retail/policy version 1 | Retail policy > Rule 3 | chars 220-271\\nRule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E5] tau2:retail/policy version 1 | Retail policy > Rule 4 | chars 284-335\\nRule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.\",\"evidence_tokens\":215,\"config_sha256\":\"f153fefb0b346cf7019c397d4f3d260f5344bb14b473cf8eedf9e108965402c0\",\"request_sha256\":\"a2da057930af1f863e31427b3000c2f8cad96cbc6352718e6ccaf77587f2af10\",\"payload_sha256\":\"8389bba2e86b454986fece953d9091708d560301656a67f7b7dace44199de109\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "query_json": "{\"text\":\"what is the returns window\",\"run_id\":\"376dba80-1da5-4967-96a8-9a83396f470d\",\"step\":1,\"scope\":{\"corpus_key\":\"legacy-retail\",\"document_allowlist\":[]},\"config\":{\"v\":\"policyops.retrieval-config/v2\",\"mode\":\"full_policy\",\"branch_documents\":20,\"chunks_per_document\":2,\"rrf_k\":60,\"max_chunks\":6,\"max_evidence_tokens\":4096,\"full_policy_max_chunks\":16,\"max_admission_attempts\":64,\"dense_policy\":\"lexical_fallback\",\"fts_config\":\"english\",\"fts_rank\":\"ts_rank_cd/32\",\"evidence_format\":\"policyops.evidence-format/v1\",\"embedding_model\":\"text-embedding-3-small\",\"embedding_dimensions\":1536}}",
+   "query_sha256": "480abbcf1636804c80b54b1a74142ff75c263bf357a1e94ffe4c799b4ca2b6d1",
+   "replay_result_json": "{\"trace_id\":\"c76dfdb7-4262-5a70-ad15-15f8df09eccb\",\"run_id\":\"376dba80-1da5-4967-96a8-9a83396f470d\",\"step\":1,\"generation_id\":\"e6c0a0e8-1344-4d51-b3e4-cc0ecb7ce228\",\"generation_current\":true,\"replayed\":true,\"mode\":\"full_policy\",\"lexical_status\":\"not_used\",\"dense_status\":\"not_used\",\"dense_unavailable\":null,\"lexical\":[],\"dense\":[],\"fused\":[],\"evidence\":[{\"evidence_id\":\"E1\",\"chunk_id\":\"86403d8f-0854-4e8c-ac12-5bbc552d8816\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 0\",\"start\":28,\"end\":79,\"text\":\"Rule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E2\",\"chunk_id\":\"3aa50723-902a-4e3a-9163-1b0cdb7cb21e\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 1\",\"start\":92,\"end\":143,\"text\":\"Rule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E3\",\"chunk_id\":\"d6766c6f-5a64-4d0b-a623-e02344fdcf40\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 2\",\"start\":156,\"end\":207,\"text\":\"Rule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E4\",\"chunk_id\":\"2c070a75-3c62-4fdd-a997-a7d82368e413\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 3\",\"start\":220,\"end\":271,\"text\":\"Rule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.\"},{\"evidence_id\":\"E5\",\"chunk_id\":\"84829664-fb8e-4e04-a21a-5e56023ff3ae\",\"document_id\":\"c6522bcc-89df-441a-8bd2-d4659b63d75f\",\"document_version_id\":\"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\",\"source_uri\":\"tau2:retail/policy\",\"version_number\":1,\"heading\":\"Retail policy > Rule 4\",\"start\":284,\"end\":335,\"text\":\"Rule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.\"}],\"evidence_text\":\"[E1] tau2:retail/policy version 1 | Retail policy > Rule 0 | chars 28-79\\nRule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E2] tau2:retail/policy version 1 | Retail policy > Rule 1 | chars 92-143\\nRule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E3] tau2:retail/policy version 1 | Retail policy > Rule 2 | chars 156-207\\nRule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E4] tau2:retail/policy version 1 | Retail policy > Rule 3 | chars 220-271\\nRule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.\\n\\n[E5] tau2:retail/policy version 1 | Retail policy > Rule 4 | chars 284-335\\nRule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.\",\"evidence_tokens\":215,\"config_sha256\":\"f153fefb0b346cf7019c397d4f3d260f5344bb14b473cf8eedf9e108965402c0\",\"request_sha256\":\"a2da057930af1f863e31427b3000c2f8cad96cbc6352718e6ccaf77587f2af10\",\"payload_sha256\":\"8389bba2e86b454986fece953d9091708d560301656a67f7b7dace44199de109\",\"provider_requests\":0,\"current_policy_validated\":false,\"claim_support_validated\":false,\"caller_authorized_scope\":\"required\"}",
+   "request_sha256": "a2da057930af1f863e31427b3000c2f8cad96cbc6352718e6ccaf77587f2af10",
+   "scope_sha256": "f270ab527ee416cf404bf10dc5a086286d79daab3f5ab8ade7b690bc0c52a2ec",
+   "spans": [
+    {
+     "body_digest_ok": true,
+     "document_id": "c6522bcc-89df-441a-8bd2-d4659b63d75f",
+     "document_version_id": "d8f00113-5dfa-46e3-a168-7eed57ad2d8a",
+     "source_uri": "tau2:retail/policy",
+     "text": "Rule 0: returns within 10 days, r\u00e9sum\u00e9 rules apply.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "c6522bcc-89df-441a-8bd2-d4659b63d75f",
+     "document_version_id": "d8f00113-5dfa-46e3-a168-7eed57ad2d8a",
+     "source_uri": "tau2:retail/policy",
+     "text": "Rule 1: returns within 11 days, r\u00e9sum\u00e9 rules apply.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "c6522bcc-89df-441a-8bd2-d4659b63d75f",
+     "document_version_id": "d8f00113-5dfa-46e3-a168-7eed57ad2d8a",
+     "source_uri": "tau2:retail/policy",
+     "text": "Rule 2: returns within 12 days, r\u00e9sum\u00e9 rules apply.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "c6522bcc-89df-441a-8bd2-d4659b63d75f",
+     "document_version_id": "d8f00113-5dfa-46e3-a168-7eed57ad2d8a",
+     "source_uri": "tau2:retail/policy",
+     "text": "Rule 3: returns within 13 days, r\u00e9sum\u00e9 rules apply.",
+     "version_number": 1
+    },
+    {
+     "body_digest_ok": true,
+     "document_id": "c6522bcc-89df-441a-8bd2-d4659b63d75f",
+     "document_version_id": "d8f00113-5dfa-46e3-a168-7eed57ad2d8a",
+     "source_uri": "tau2:retail/policy",
+     "text": "Rule 4: returns within 14 days, r\u00e9sum\u00e9 rules apply.",
+     "version_number": 1
+    }
+   ],
+   "trace": {
+    "authorized_scope": "{\"v\": \"policyops.retrieval-scope/v1\", \"step\": 1, \"corpus_key\": \"legacy-retail\", \"document_ids\": [], \"query_sha256\": \"480abbcf1636804c80b54b1a74142ff75c263bf357a1e94ffe4c799b4ca2b6d1\", \"config_sha256\": \"f153fefb0b346cf7019c397d4f3d260f5344bb14b473cf8eedf9e108965402c0\", \"allowlist_sha256\": \"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\", \"embedding_job_id\": null}",
+    "candidates": "{\"v\": \"policyops.retrieval-trace/v1\", \"mode\": \"full_policy\", \"dense\": [], \"fused\": [], \"lexical\": [], \"delivered\": [{\"end\": 79, \"start\": 28, \"heading\": \"Retail policy > Rule 0\", \"chunk_id\": \"86403d8f-0854-4e8c-ac12-5bbc552d8816\", \"document_id\": \"c6522bcc-89df-441a-8bd2-d4659b63d75f\", \"text_sha256\": \"d037ef6eb7949ae51e25c1753326286866d8a3ca56d4f4282c77a02ac341326d\", \"version_number\": 1, \"evidence_number\": 1, \"document_version_id\": \"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\"}, {\"end\": 143, \"start\": 92, \"heading\": \"Retail policy > Rule 1\", \"chunk_id\": \"3aa50723-902a-4e3a-9163-1b0cdb7cb21e\", \"document_id\": \"c6522bcc-89df-441a-8bd2-d4659b63d75f\", \"text_sha256\": \"b2042e1b4af2931aa48e8e8564c9a469c0090eced6e2f5023e5db7749f68d689\", \"version_number\": 1, \"evidence_number\": 2, \"document_version_id\": \"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\"}, {\"end\": 207, \"start\": 156, \"heading\": \"Retail policy > Rule 2\", \"chunk_id\": \"d6766c6f-5a64-4d0b-a623-e02344fdcf40\", \"document_id\": \"c6522bcc-89df-441a-8bd2-d4659b63d75f\", \"text_sha256\": \"cdcaf9c652e8b7fbbf4aa720db145087eb79d6fa200c73d45908f6345ce7682e\", \"version_number\": 1, \"evidence_number\": 3, \"document_version_id\": \"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\"}, {\"end\": 271, \"start\": 220, \"heading\": \"Retail policy > Rule 3\", \"chunk_id\": \"2c070a75-3c62-4fdd-a997-a7d82368e413\", \"document_id\": \"c6522bcc-89df-441a-8bd2-d4659b63d75f\", \"text_sha256\": \"2c160dcc7bd510c2e9b05befee40550d901f5d716f9c3b21c1ae5ec71da75c50\", \"version_number\": 1, \"evidence_number\": 4, \"document_version_id\": \"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\"}, {\"end\": 335, \"start\": 284, \"heading\": \"Retail policy > Rule 4\", \"chunk_id\": \"84829664-fb8e-4e04-a21a-5e56023ff3ae\", \"document_id\": \"c6522bcc-89df-441a-8bd2-d4659b63d75f\", \"text_sha256\": \"8245044263dd509dbc70e1f69b68745616daf287c22283e9f57f80832523f99a\", \"version_number\": 1, \"evidence_number\": 5, \"document_version_id\": \"d8f00113-5dfa-46e3-a168-7eed57ad2d8a\"}], \"exclusions\": {\"count_refused\": 0, \"text_oversized\": 0, \"dense_nan_distance\": 0}, \"dense_status\": \"not_used\", \"generation_id\": \"e6c0a0e8-1344-4d51-b3e4-cc0ecb7ce228\", \"lexical_status\": \"not_used\", \"payload_sha256\": \"8389bba2e86b454986fece953d9091708d560301656a67f7b7dace44199de109\", \"request_sha256\": \"a2da057930af1f863e31427b3000c2f8cad96cbc6352718e6ccaf77587f2af10\", \"evidence_tokens\": 215, \"dense_unavailable\": null, \"admission_attempts\": 1, \"evidence_text_sha256\": \"774c809579640b3ad6731e2ccb025d90ac1d265976f4d42c10142ccd0af8c97f\"}",
+    "final_chunk_ids": [
+     "86403d8f-0854-4e8c-ac12-5bbc552d8816",
+     "3aa50723-902a-4e3a-9163-1b0cdb7cb21e",
+     "d6766c6f-5a64-4d0b-a623-e02344fdcf40",
+     "2c070a75-3c62-4fdd-a997-a7d82368e413",
+     "84829664-fb8e-4e04-a21a-5e56023ff3ae"
+    ],
+    "generation_id": "e6c0a0e8-1344-4d51-b3e4-cc0ecb7ce228",
+    "query_sha256": "480abbcf1636804c80b54b1a74142ff75c263bf357a1e94ffe4c799b4ca2b6d1",
+    "run_id": "376dba80-1da5-4967-96a8-9a83396f470d",
+    "workspace_id": "e50032f3-31ef-46d5-bec0-7edcaf281ef5"
+   },
+   "trace_id": "c76dfdb7-4262-5a70-ad15-15f8df09eccb",
+   "workspace_id": "e50032f3-31ef-46d5-bec0-7edcaf281ef5",
+   "worst_case_candidates_sha256": "9392afe1b6ec3ea1f0510cdb0420870f9f6ba91f32cbef10ed8c0496a49f3ace",
+   "worst_case_scope_sha256": "ffe613ed45e560635443b871cd64cc6a1fac2abdd437e3c9bc00c9e10f0ff20d"
+  }
+ ],
+ "v": "policyops.legacy-retrieval-fixture/v1",
+ "workspaces": {
+  "banking": "3af77bb9-72eb-45eb-b308-8fc911aa48fc",
+  "retail": "e50032f3-31ef-46d5-bec0-7edcaf281ef5"
+ }
+}

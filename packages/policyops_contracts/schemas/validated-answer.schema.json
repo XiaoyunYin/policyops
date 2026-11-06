@@ -1,0 +1,481 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "Abstention": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "reason": {
+          "enum": [
+            "insufficient_evidence",
+            "contradictory_evidence",
+            "outside_policy_scope"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "detail"
+      ],
+      "title": "Abstention",
+      "type": "object"
+    },
+    "AssertionCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "exclusiveMaximum": 16,
+          "minimum": 0,
+          "title": "Assertion",
+          "type": "integer"
+        },
+        "policy_dependent": {
+          "title": "Policy Dependent",
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "cited_identity_verified",
+            "insufficient_evidence",
+            "not_policy_dependent"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "verified_citations": {
+          "maximum": 4,
+          "minimum": 0,
+          "title": "Verified Citations",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "assertion",
+        "policy_dependent",
+        "status",
+        "verified_citations"
+      ],
+      "title": "AssertionCheck",
+      "type": "object"
+    },
+    "CitationBundle": {
+      "additionalProperties": false,
+      "properties": {
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/CitationClaim"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Claims",
+          "type": "array"
+        },
+        "corpus_key": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "title": "Corpus Key",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "v": {
+          "const": "policyops.citation-bundle/v1",
+          "default": "policyops.citation-bundle/v1",
+          "title": "V",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "corpus_key",
+        "claims"
+      ],
+      "title": "CitationBundle",
+      "type": "object"
+    },
+    "CitationCheck": {
+      "additionalProperties": false,
+      "description": "One citation's deterministic result. Spans are version-body code points (the `app.citations` coordinates).",
+      "properties": {
+        "assertion": {
+          "exclusiveMaximum": 16,
+          "minimum": 0,
+          "title": "Assertion",
+          "type": "integer"
+        },
+        "chunk_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chunk Id"
+        },
+        "citation": {
+          "exclusiveMaximum": 4,
+          "minimum": 0,
+          "title": "Citation",
+          "type": "integer"
+        },
+        "document_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Id"
+        },
+        "document_version_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Version Id"
+        },
+        "evidence_id": {
+          "pattern": "^E(?:[1-9]|1[0-6])$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "generation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Generation Id"
+        },
+        "span_end": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span End"
+        },
+        "span_start": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Start"
+        },
+        "status": {
+          "enum": [
+            "verified",
+            "step_not_authorized",
+            "trace_not_found",
+            "trace_integrity",
+            "corpus_mismatch",
+            "unknown_evidence",
+            "span_invalid",
+            "quote_mismatch",
+            "quote_not_found",
+            "quote_ambiguous",
+            "duplicate",
+            "mixed_generation"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "step": {
+          "maximum": 9999,
+          "minimum": 0,
+          "title": "Step",
+          "type": "integer"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Id"
+        }
+      },
+      "required": [
+        "assertion",
+        "citation",
+        "step",
+        "evidence_id",
+        "status"
+      ],
+      "title": "CitationCheck",
+      "type": "object"
+    },
+    "CitationClaim": {
+      "additionalProperties": false,
+      "description": "What one verified citation asserts. Not proof and not authorization: the recorder rechecks every field\nagainst the stored trace, intent and immutable version body on its own connection.",
+      "properties": {
+        "chunk_id": {
+          "format": "uuid",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "chunk_text_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Chunk Text Sha256",
+          "type": "string"
+        },
+        "document_id": {
+          "format": "uuid",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "document_version_id": {
+          "format": "uuid",
+          "title": "Document Version Id",
+          "type": "string"
+        },
+        "evidence_id": {
+          "pattern": "^E(?:[1-9]|1[0-6])$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "generation_id": {
+          "format": "uuid",
+          "title": "Generation Id",
+          "type": "string"
+        },
+        "quote": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "quote_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Quote Sha256",
+          "type": "string"
+        },
+        "request_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Sha256",
+          "type": "string"
+        },
+        "span_end": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Span End",
+          "type": "integer"
+        },
+        "span_start": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Span Start",
+          "type": "integer"
+        },
+        "step": {
+          "maximum": 9999,
+          "minimum": 0,
+          "title": "Step",
+          "type": "integer"
+        },
+        "trace_id": {
+          "format": "uuid",
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "trace_payload_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Trace Payload Sha256",
+          "type": "string"
+        },
+        "v": {
+          "const": "policyops.citation-claim/v1",
+          "default": "policyops.citation-claim/v1",
+          "title": "V",
+          "type": "string"
+        },
+        "version_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Version Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step",
+        "evidence_id",
+        "trace_id",
+        "trace_payload_sha256",
+        "request_sha256",
+        "generation_id",
+        "chunk_id",
+        "document_id",
+        "document_version_id",
+        "version_sha256",
+        "chunk_text_sha256",
+        "span_start",
+        "span_end",
+        "quote",
+        "quote_sha256"
+      ],
+      "title": "CitationClaim",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The validator's result. `bundle` is set only for a `grounded` outcome and holds exactly its verified\ncitations; every failed check stays visible in `citations` and never enters a bundle.",
+  "properties": {
+    "abstention": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Abstention"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "assertions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AssertionCheck"
+      },
+      "maxItems": 16,
+      "title": "Assertions",
+      "type": "array"
+    },
+    "bundle": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CitationBundle"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "caller_authorized_scope": {
+      "const": "required",
+      "default": "required",
+      "title": "Caller Authorized Scope",
+      "type": "string"
+    },
+    "citations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CitationCheck"
+      },
+      "maxItems": 64,
+      "title": "Citations",
+      "type": "array"
+    },
+    "claim_support_validated": {
+      "const": false,
+      "default": false,
+      "title": "Claim Support Validated",
+      "type": "boolean"
+    },
+    "generation_current": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generation Current"
+    },
+    "generation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generation Id"
+    },
+    "identity_basis": {
+      "const": "stored_trace_and_version_body",
+      "default": "stored_trace_and_version_body",
+      "title": "Identity Basis",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "grounded",
+        "insufficient_evidence",
+        "stale_evidence",
+        "no_policy_assertions",
+        "abstained"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.validated-answer/v1",
+      "default": "policyops.validated-answer/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "outcome"
+  ],
+  "title": "ValidatedAnswer",
+  "type": "object"
+}

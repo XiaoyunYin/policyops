@@ -1,0 +1,20 @@
+{
+  "abstention": null,
+  "assertions": [
+    {
+      "citations": [
+        {
+          "end": 66,
+          "evidence_id": "E1",
+          "quote": "an existing gift card",
+          "start": 45,
+          "step": 3
+        }
+      ],
+      "policy_dependent": true,
+      "text": "A refund can go to an existing gift card."
+    }
+  ],
+  "outcome": "answer",
+  "v": "policyops.grounded-answer/v1"
+}

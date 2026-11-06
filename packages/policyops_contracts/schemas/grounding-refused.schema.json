@@ -1,0 +1,34 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "enum": [
+        "deadline_invalid",
+        "deadline_passed",
+        "context_invalid"
+      ],
+      "title": "Code",
+      "type": "string"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    }
+  },
+  "required": [
+    "code"
+  ],
+  "title": "GroundingRefused",
+  "type": "object"
+}

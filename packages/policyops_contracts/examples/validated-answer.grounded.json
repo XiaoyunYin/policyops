@@ -1,0 +1,59 @@
+{
+  "abstention": null,
+  "assertions": [
+    {
+      "assertion": 0,
+      "policy_dependent": true,
+      "status": "cited_identity_verified",
+      "verified_citations": 1
+    }
+  ],
+  "bundle": {
+    "claims": [
+      {
+        "chunk_id": "00000000-0000-0000-0000-000000001b5b",
+        "chunk_text_sha256": "0e950d5918a8e53018eb16f3dbb03190cfd822539945fa3d37891636314c6bb8",
+        "document_id": "00000000-0000-0000-0000-000000001b59",
+        "document_version_id": "00000000-0000-0000-0000-000000001b5a",
+        "evidence_id": "E1",
+        "generation_id": "00000000-0000-0000-0000-000000001b5d",
+        "quote": "an existing gift card",
+        "quote_sha256": "d238fdeb4ee6143a55305b60f982f7b9144fec53b45020393fdcc4b95d638905",
+        "request_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "span_end": 66,
+        "span_start": 45,
+        "step": 3,
+        "trace_id": "00000000-0000-0000-0000-000000001b5c",
+        "trace_payload_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "v": "policyops.citation-claim/v1",
+        "version_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "corpus_key": "example-policy",
+    "run_id": "00000000-0000-0000-0000-000000000003",
+    "v": "policyops.citation-bundle/v1"
+  },
+  "caller_authorized_scope": "required",
+  "citations": [
+    {
+      "assertion": 0,
+      "chunk_id": "00000000-0000-0000-0000-000000001b5b",
+      "citation": 0,
+      "document_id": "00000000-0000-0000-0000-000000001b59",
+      "document_version_id": "00000000-0000-0000-0000-000000001b5a",
+      "evidence_id": "E1",
+      "generation_id": "00000000-0000-0000-0000-000000001b5d",
+      "span_end": 66,
+      "span_start": 45,
+      "status": "verified",
+      "step": 3,
+      "trace_id": "00000000-0000-0000-0000-000000001b5c"
+    }
+  ],
+  "claim_support_validated": false,
+  "generation_current": true,
+  "generation_id": "00000000-0000-0000-0000-000000001b5d",
+  "identity_basis": "stored_trace_and_version_body",
+  "outcome": "grounded",
+  "v": "policyops.validated-answer/v1"
+}

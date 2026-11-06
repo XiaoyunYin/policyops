@@ -12,6 +12,7 @@ from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
 from policyops_contracts.evidence import EvidenceManifest
 from policyops_contracts.gateway import ToolObservation
+from policyops_contracts.grounding import GroundedAnswer, ValidatedAnswer
 from policyops_contracts.policy import RETAIL_POLICY, RETAIL_RULES, RULES_BY_ID
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail import WRITE_TOOLS, ToolName
@@ -33,6 +34,8 @@ EXAMPLE_MODELS: dict[str, type[BaseModel]] = {
     "retail-service-operation-result.committed": OperationResult,
     "retail-service-lookup-result.unknown": LookupResult,
     "retrieval-query.hybrid": RetrievalQuery, "retrieval-result.hybrid": RetrievalResult,
+    "retrieval-query.hybrid-rerank": RetrievalQuery, "grounded-answer.answer": GroundedAnswer,
+    "validated-answer.grounded": ValidatedAnswer,
 }
 HIDDEN_FIELD_NAMES = ("user_scenario", "instructions", "known_info", "unknown_info", "reason_for_call",
                       "evaluation_criteria", "nl_assertions", "reward_basis", "required_documents", "initial_state")

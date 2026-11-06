@@ -1,6 +1,43 @@
 {
   "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "InvocationWork": {
+      "additionalProperties": false,
+      "description": "What THIS invocation itself did, never stored in a trace and never replayed. Grants are ledger grants this\ncall obtained (not proof that bytes left the process); the ledger stays the billing authority.",
+      "properties": {
+        "cleanup_unconfirmed": {
+          "default": false,
+          "title": "Cleanup Unconfirmed",
+          "type": "boolean"
+        },
+        "embedding_requests": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Embedding Requests",
+          "type": "integer"
+        },
+        "rerank_counts_claimed": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Rerank Counts Claimed",
+          "type": "integer"
+        },
+        "rerank_inferences_dispatched": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Rerank Inferences Dispatched",
+          "type": "integer"
+        }
+      },
+      "title": "InvocationWork",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
+  "description": "`invocation` (when known) reports what this invocation did before it refused, e.g. a dispatched rerank.",
   "properties": {
     "code": {
       "enum": [
@@ -27,7 +64,9 @@
         "query_vector_invalid",
         "trace_unavailable",
         "replay_unsupported",
-        "replay_integrity"
+        "replay_integrity",
+        "rerank_unavailable",
+        "rerank_integrity"
       ],
       "title": "Code",
       "type": "string"
@@ -45,6 +84,17 @@
       ],
       "default": null,
       "title": "Detail"
+    },
+    "invocation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InvocationWork"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

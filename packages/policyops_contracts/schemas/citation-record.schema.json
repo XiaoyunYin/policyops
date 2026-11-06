@@ -1,0 +1,130 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "`recorded`: COMMIT acknowledged and every distinct ID observed equal in the same transaction. `refused`:\nnothing new written (`existing_ids` are equal rows that were already present). `record_ambiguous`: COMMIT raised\nwith an unknown outcome; reconcile or retry with the same bundle. `deadline_passed` with `committed=\"observed\"`:\nCOMMIT acknowledged after the deadline, the rows are kept.",
+  "properties": {
+    "claim_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Claim Ids",
+      "type": "array"
+    },
+    "claims": {
+      "maximum": 64,
+      "minimum": 0,
+      "title": "Claims",
+      "type": "integer"
+    },
+    "code": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z][a-z0-9_]{0,63}(?::[a-z][a-z0-9_]{0,63})?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Code"
+    },
+    "committed": {
+      "enum": [
+        "observed",
+        "none",
+        "unknown"
+      ],
+      "title": "Committed",
+      "type": "string"
+    },
+    "distinct": {
+      "maximum": 64,
+      "minimum": 0,
+      "title": "Distinct",
+      "type": "integer"
+    },
+    "distinct_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Distinct Ids",
+      "type": "array"
+    },
+    "existing": {
+      "default": 0,
+      "maximum": 64,
+      "minimum": 0,
+      "title": "Existing",
+      "type": "integer"
+    },
+    "existing_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Existing Ids",
+      "type": "array"
+    },
+    "failing_claim": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 64,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failing Claim"
+    },
+    "inserted": {
+      "default": 0,
+      "maximum": 64,
+      "minimum": 0,
+      "title": "Inserted",
+      "type": "integer"
+    },
+    "missing": {
+      "default": 0,
+      "maximum": 64,
+      "minimum": 0,
+      "title": "Missing",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "recorded",
+        "refused",
+        "record_ambiguous",
+        "deadline_passed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.citation-record/v1",
+      "default": "policyops.citation-record/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "committed",
+    "claims",
+    "distinct"
+  ],
+  "title": "RecordOutcome",
+  "type": "object"
+}

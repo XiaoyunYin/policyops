@@ -1,0 +1,35 @@
+{
+  "config": {
+    "branch_documents": 20,
+    "chunks_per_document": 2,
+    "dense_policy": "lexical_fallback",
+    "embedding_dimensions": 1536,
+    "embedding_model": "text-embedding-3-small",
+    "evidence_format": "policyops.evidence-format/v1",
+    "fts_config": "english",
+    "fts_rank": "ts_rank_cd/32",
+    "full_policy_max_chunks": 16,
+    "max_admission_attempts": 64,
+    "max_chunks": 6,
+    "max_evidence_tokens": 4096,
+    "mode": "hybrid",
+    "rerank": {
+      "documents": 10,
+      "excerpt_bytes": 500,
+      "max_output_tokens": 512,
+      "policy": "baseline_fallback",
+      "prompt": "policyops.rerank-prompt/v1",
+      "seconds": 10,
+      "v": "policyops.rerank-config/v1"
+    },
+    "rrf_k": 60,
+    "v": "policyops.retrieval-config/v2"
+  },
+  "run_id": "00000000-0000-0000-0000-000000000003",
+  "scope": {
+    "corpus_key": "example-policy",
+    "document_allowlist": []
+  },
+  "step": 4,
+  "text": "Can a refund go to a gift card?"
+}

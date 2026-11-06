@@ -193,10 +193,175 @@
       ],
       "title": "FusedDocument",
       "type": "object"
+    },
+    "RerankAttempt": {
+      "additionalProperties": false,
+      "description": "A pointer into the ledger (the billing authority): the attempt, its fate and whether its client closed.",
+      "properties": {
+        "attempt_id": {
+          "format": "uuid",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "cleanup_confirmed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cleanup Confirmed"
+        },
+        "fate": {
+          "enum": [
+            "settled",
+            "unresolved",
+            "released",
+            "replayed",
+            "refused",
+            "not_reserved"
+          ],
+          "title": "Fate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "fate"
+      ],
+      "title": "RerankAttempt",
+      "type": "object"
+    },
+    "RerankTrace": {
+      "additionalProperties": false,
+      "description": "The rerank stage as recorded in the step's trace (historical: identical for every replay of the step). No\nprompt, query or model text is stored: only digests, the bounded reason code and the final window order.",
+      "properties": {
+        "attempts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RerankAttempt"
+          },
+          "maxItems": 1,
+          "title": "Attempts",
+          "type": "array"
+        },
+        "excerpts_truncated": {
+          "default": 0,
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Excerpts Truncated",
+          "type": "integer"
+        },
+        "input_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Sha256"
+        },
+        "max_output_tokens": {
+          "maximum": 1024,
+          "minimum": 64,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "model": {
+          "enum": [
+            "gpt-6-luna",
+            "claude-haiku-5-5"
+          ],
+          "title": "Model",
+          "type": "string"
+        },
+        "order": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Order",
+          "type": "array"
+        },
+        "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "request_identity": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Request Identity",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "applied",
+            "skipped_few_candidates",
+            "skipped_input_bound",
+            "skipped_deadline",
+            "timeout",
+            "budget",
+            "count_failed",
+            "failed",
+            "refused",
+            "truncated",
+            "invalid_output",
+            "invalid_ranking",
+            "contract_block",
+            "prior_attempt"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "v": {
+          "const": "policyops.rerank-trace/v1",
+          "default": "policyops.rerank-trace/v1",
+          "title": "V",
+          "type": "string"
+        },
+        "window": {
+          "default": 0,
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Window",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "model",
+        "prompt_sha256",
+        "request_identity",
+        "max_output_tokens"
+      ],
+      "title": "RerankTrace",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "The typed `retrieval_traces.candidates` record. `payload_sha256` covers everything here except itself.",
+  "description": "The typed `retrieval_traces.candidates` record. `payload_sha256` covers everything here except itself.\n\n`rerank` (T14) is omitted when None, so a T13 trace keeps its bytes and its payload digest.",
   "properties": {
     "admission_attempts": {
       "default": 0,
@@ -321,6 +486,17 @@
       "pattern": "^[0-9a-f]{64}$",
       "title": "Request Sha256",
       "type": "string"
+    },
+    "rerank": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RerankTrace"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "v": {
       "const": "policyops.retrieval-trace/v1",

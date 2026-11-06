@@ -2,6 +2,9 @@
 cases and runs, corpus publication through the real T12 ingestion, a `Retriever` builder and test-only query-plan
 capture (never reachable by a model or a production code path).
 
+T14 adds a scripted OpenAI Responses route (count and create) behind the same transport (`Scripted`), and a
+`ScriptedRerankPort` that declares `test_only` (the Retriever refuses it outside `env="test"`).
+
 Synthetic text, vectors and credentials only; no external HTTP.
 """
 
@@ -35,8 +38,10 @@ from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops.providers import tokenizer as tk
 from policyops.providers.calls import Providers
 from policyops.retrieval.ingest import PaidCaps, Request, ingest
+from policyops.retrieval.rerank import RerankInput, RerankOutcome, RerankPort, StageStatus
 from policyops.retrieval.search import Retriever, RetrieverLimits
 from policyops_contracts.digest import text_sha256
+from policyops_contracts.retrieval import RerankAttempt
 from policyops_testing.app_database import AppDatabase
 from policyops_testing.corpus_fixtures import FixtureCorpus, banking, write
 
@@ -97,6 +102,103 @@ class Embeddings(httpx2.AsyncBaseTransport):
         return build
 
 
+Handler = Callable[[httpx2.Request], httpx2.Response | Coroutine[Any, Any, httpx2.Response]]
+
+
+def openai_json(data: Any, status: int = 200) -> Handler:
+    body = json.dumps(data).encode()
+    return lambda request: httpx2.Response(status, headers={"content-type": "application/json"}, content=body,
+                                           request=request)
+
+
+def count_reply(tokens: int) -> Handler:
+    return openai_json({"object": "response.input_tokens", "input_tokens": tokens})
+
+
+def luna_reply(text_value: str, *, usage: Any = "default", **changes: Any) -> Handler:
+    """A synthetic Luna Responses answer with known usage (or `usage=None` for missing usage)."""
+    known = {"input_tokens": 900, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+             "output_tokens": 40, "output_tokens_details": {"reasoning_tokens": 8}, "total_tokens": 940}
+    return openai_json({"id": f"resp_{uuid4().hex[:8]}", "object": "response", "model": "gpt-6-luna",
+                        "status": "completed", "service_tier": "default",
+                        "usage": known if usage == "default" else usage,
+                        "output": [{"type": "message", "role": "assistant",
+                                    "content": [{"type": "output_text", "text": text_value, "annotations": []}]}]}
+                       | changes)
+
+
+def ranking_reply(*labels: str, **changes: Any) -> Handler:
+    return luna_reply(json.dumps({"ranking": list(labels)}), **changes)
+
+
+def slow(handler: Handler, seconds: float, started: asyncio.Event | None = None) -> Handler:
+    async def run(request: httpx2.Request) -> httpx2.Response:
+        if started is not None:
+            started.set()
+        await asyncio.sleep(seconds)
+        answer = handler(request)
+        return await answer if asyncio.iscoroutine(answer) else answer
+    return run
+
+
+class Scripted(Embeddings):
+    """The scripted embeddings endpoint plus scripted OpenAI Responses `count` and `create` answers (consumed in
+    order; an unscripted request fails the test). `seen` records every request kind that reached the transport."""
+
+    def __init__(self, vectors: Mapping[str, list[float]] | None = None, *, counts: Sequence[Handler] = (),
+                 creates: Sequence[Handler] = ()) -> None:
+        super().__init__(vectors)
+        self.counts, self.creates = list(counts), list(creates)
+        self.seen: list[str] = []
+        self.bodies: list[dict[str, Any]] = []
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        path = request.url.path
+        if path.endswith("/embeddings"):
+            self.seen.append("embedding")
+            return await super().handle_async_request(request)
+        kind = "count" if path.endswith("input_tokens") else "create"
+        self.seen.append(kind)
+        self.bodies.append({"kind": kind, "body": json.loads(await request.aread())})
+        queue = self.counts if kind == "count" else self.creates
+        if not queue:
+            raise AssertionError(f"an unscripted {kind} request reached the transport")
+        answer = queue.pop(0)(request)
+        return await answer if asyncio.iscoroutine(answer) else answer
+
+    def kinds(self, kind: str) -> int:
+        return self.seen.count(kind)
+
+
+@dataclass
+class ScriptedRerankPort:
+    """A test-only rerank port: echoes the request identity and window unless told to forge them, and returns the
+    scripted status, labels and work. `calls` records every input it received."""
+
+    status: StageStatus = "applied"
+    labels: tuple[str, ...] | None = None  # default: the window reversed
+    counts_claimed: int = 0
+    inferences_dispatched: int = 0
+    cleanup_unconfirmed: bool = False
+    reason: str | None = None
+    attempts: tuple[RerankAttempt, ...] = ()
+    forge_identity: bool = False
+    forge_window: bool = False
+    delay: float = 0.0
+    calls: list[RerankInput] = field(default_factory=list)
+    test_only: bool = True
+
+    async def rerank(self, request: RerankInput, *, deadline: float) -> RerankOutcome:
+        self.calls.append(request)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        labels = tuple(reversed(request.labels)) if self.labels is None else self.labels
+        window = request.window_document_ids[::-1] if self.forge_window else request.window_document_ids
+        return RerankOutcome(self.status, self.reason, "0" * 64 if self.forge_identity else request.request_identity,
+                             window, labels if self.status == "applied" else (), self.attempts, self.counts_claimed,
+                             self.inferences_dispatched, self.cleanup_unconfirmed)
+
+
 @dataclass
 class World:
     """One synthetic workspace with helpers for runs, corpora and retrievers."""
@@ -144,12 +246,14 @@ class World:
         return UUID(outcome.details["generation_id"])
 
     def retriever(self, embeddings: Embeddings, *, configuration: Configuration | None = None,
-                  limits: RetrieverLimits | None = None, clock: Callable[[], float] = time.monotonic) -> Retriever:
+                  limits: RetrieverLimits | None = None, clock: Callable[[], float] = time.monotonic,
+                  rerank: bool = False, rerank_port: RerankPort | None = None) -> Retriever:
         configuration = configuration or Configuration()
         return Retriever(self.engine, self.ws, embeddings=EmbeddingStore(self.engine, self.ws, env="test"),
                          ledger=build_app_ledger(env="test", engine=self.engine, workspace_id=self.ws,
                                                  configuration=configuration),
-                         providers=embeddings.providers(), tokenizer=TOKENIZER, limits=limits, clock=clock)
+                         providers=embeddings.providers(), tokenizer=TOKENIZER, limits=limits, clock=clock,
+                         rerank=rerank, rerank_port=rerank_port, env="test" if rerank_port is not None else None)
 
     def count(self, table: str) -> int:
         with self.db.superuser() as conn:

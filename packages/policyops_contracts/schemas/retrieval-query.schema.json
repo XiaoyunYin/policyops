@@ -1,9 +1,66 @@
 {
   "$comment": "policyops_contracts 0.3.0; generated, do not edit",
   "$defs": {
+    "RerankConfig": {
+      "additionalProperties": false,
+      "description": "The optional rerank stage (T14): one bounded structured request ordering the first `documents` fused\ndocuments. `seconds` is the stage's own sub-deadline length; `max_output_tokens` is the request's output limit\n(at most the reranker actor's maximum, checked before any work).",
+      "properties": {
+        "documents": {
+          "default": 20,
+          "maximum": 20,
+          "minimum": 2,
+          "title": "Documents",
+          "type": "integer"
+        },
+        "excerpt_bytes": {
+          "default": 500,
+          "maximum": 1000,
+          "minimum": 64,
+          "title": "Excerpt Bytes",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "default": 512,
+          "maximum": 1024,
+          "minimum": 64,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "policy": {
+          "default": "baseline_fallback",
+          "enum": [
+            "baseline_fallback",
+            "refuse"
+          ],
+          "title": "Policy",
+          "type": "string"
+        },
+        "prompt": {
+          "const": "policyops.rerank-prompt/v1",
+          "default": "policyops.rerank-prompt/v1",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "seconds": {
+          "default": 10,
+          "maximum": 30,
+          "minimum": 1,
+          "title": "Seconds",
+          "type": "integer"
+        },
+        "v": {
+          "const": "policyops.rerank-config/v1",
+          "default": "policyops.rerank-config/v1",
+          "title": "V",
+          "type": "string"
+        }
+      },
+      "title": "RerankConfig",
+      "type": "object"
+    },
     "RetrievalConfig": {
       "additionalProperties": false,
-      "description": "Versioned, caller-supplied configuration. Every field is in `sha256()` and therefore in the step's request\nfingerprint and trace. `full_policy_max_chunks` is the explicit baseline exception to `max_chunks`; both modes\nshare `max_evidence_tokens` (the whole formatted, concatenated evidence string counted with cl100k).",
+      "description": "Versioned, caller-supplied configuration. Every field is in `sha256()` and therefore in the step's request\nfingerprint and trace. `full_policy_max_chunks` is the explicit baseline exception to `max_chunks`; both modes\nshare `max_evidence_tokens` (the whole formatted, concatenated evidence string counted with cl100k).\n\n`rerank` (T14) is omitted from the serialization, and therefore from `sha256()`, when it is None: every T13\nconfiguration keeps its digest and request fingerprint.",
       "properties": {
         "branch_documents": {
           "default": 20,
@@ -95,6 +152,17 @@
           ],
           "title": "Mode",
           "type": "string"
+        },
+        "rerank": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RerankConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "rrf_k": {
           "default": 60,

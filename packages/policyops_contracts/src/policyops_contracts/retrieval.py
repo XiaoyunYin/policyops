@@ -12,6 +12,11 @@ Only the RRF fractions are exact. There are no floats and no free-form dictionar
 
 A result never establishes current-policy validity, source support or authorization: those constant fields say so.
 The caller must already have authorized the run, case and corpus.
+
+T14 adds an optional, off-by-default rerank stage (`RetrievalConfig.rerank`), its trace record
+(`TraceCandidates.rerank`), a historical summary on the result and this invocation's own provider work
+(`InvocationWork`). Every addition is omitted from serialization when it is None, so a configuration, request or trace
+without reranking keeps exactly its T13 bytes and digests, and stored T13 traces parse and verify unchanged.
 """
 
 from __future__ import annotations
@@ -38,8 +43,27 @@ RefusalCode = Literal[
     "step_conflict", "step_in_progress", "full_policy_not_supported", "full_policy_too_many_chunks",
     "full_policy_exceeds_budget", "evidence_uncountable", "deadline_invalid", "deadline_passed",
     "embedding_unavailable", "embedding_integrity", "query_vector_invalid", "trace_unavailable",
-    "replay_unsupported", "replay_integrity",
+    "replay_unsupported", "replay_integrity", "rerank_unavailable", "rerank_integrity",
 ]
+RerankPolicy = Literal["baseline_fallback", "refuse"]
+RerankStatus = Literal[
+    "applied",                 # a domain-valid ranking reordered the window
+    "skipped_few_candidates",  # fewer than 2 window documents: no call
+    "skipped_input_bound",     # the bounded prompt cannot fit: no call
+    "skipped_deadline",        # too little time before the reserved margin: no call
+    "timeout",                 # the rerank sub-deadline expired while the global deadline was alive
+    "budget",                  # the budget refused the reservation or the count: nothing dispatched
+    "count_failed",            # the count failed or did not admit the prompt: released, nothing dispatched
+    "failed",                  # a provider or transport failure (no retry)
+    "refused", "truncated", "invalid_output",  # model outcomes (billed when dispatched)
+    "invalid_ranking",         # structured, but not a domain-valid ranking of this window
+    "contract_block",          # the provider response broke the contract (billed, scope blocked)
+    "prior_attempt",           # this step's rerank attempt already exists: no new key, no new attempt
+]
+# The registry's chat models (a unit test keeps this equal to them): the configured reranker actor's model.
+RerankModel = Literal["gpt-6-luna", "claude-haiku-5-5"]
+AttemptFateText = Literal["settled", "unresolved", "released", "replayed", "refused", "not_reserved"]
+MAX_RERANK_DOCUMENTS = 20
 MAX_QUERY_CODE_POINTS = 2000
 MAX_ALLOWLIST = 32
 MAX_EVIDENCE_ITEMS = 16
@@ -63,15 +87,39 @@ Rank = Annotated[int, Field(ge=1, le=1000)]
 Step = Annotated[int, Field(ge=0, le=9999)]
 
 
+def _is_none(value: object) -> bool:
+    return value is None
+
+
 def canonical_sha256(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
                           .encode("utf-8")).hexdigest()
 
 
+class RerankConfig(WireModel):
+    """The optional rerank stage (T14): one bounded structured request ordering the first `documents` fused
+    documents. `seconds` is the stage's own sub-deadline length; `max_output_tokens` is the request's output limit
+    (at most the reranker actor's maximum, checked before any work)."""
+
+    v: Literal["policyops.rerank-config/v1"] = "policyops.rerank-config/v1"
+    documents: Annotated[int, Field(ge=2, le=MAX_RERANK_DOCUMENTS)] = MAX_RERANK_DOCUMENTS
+    excerpt_bytes: Annotated[int, Field(ge=64, le=1000)] = 500
+    max_output_tokens: Annotated[int, Field(ge=64, le=1024)] = 512
+    seconds: Annotated[int, Field(ge=1, le=30)] = 10
+    policy: RerankPolicy = "baseline_fallback"
+    prompt: Literal["policyops.rerank-prompt/v1"] = "policyops.rerank-prompt/v1"
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
 class RetrievalConfig(WireModel):
     """Versioned, caller-supplied configuration. Every field is in `sha256()` and therefore in the step's request
     fingerprint and trace. `full_policy_max_chunks` is the explicit baseline exception to `max_chunks`; both modes
-    share `max_evidence_tokens` (the whole formatted, concatenated evidence string counted with cl100k)."""
+    share `max_evidence_tokens` (the whole formatted, concatenated evidence string counted with cl100k).
+
+    `rerank` (T14) is omitted from the serialization, and therefore from `sha256()`, when it is None: every T13
+    configuration keeps its digest and request fingerprint."""
 
     v: Literal["policyops.retrieval-config/v2"] = "policyops.retrieval-config/v2"
     mode: RetrievalMode
@@ -88,6 +136,7 @@ class RetrievalConfig(WireModel):
     evidence_format: Literal["policyops.evidence-format/v1"] = "policyops.evidence-format/v1"
     embedding_model: Literal["text-embedding-3-small"] = "text-embedding-3-small"
     embedding_dimensions: Literal[1536] = 1536
+    rerank: RerankConfig | None = Field(default=None, exclude_if=_is_none)
 
     def sha256(self) -> str:
         return canonical_sha256(self.model_dump(mode="json"))
@@ -161,8 +210,36 @@ class Exclusions(WireModel):
     count_refused: Annotated[int, Field(ge=0, le=256)] = 0
 
 
+class RerankAttempt(WireModel):
+    """A pointer into the ledger (the billing authority): the attempt, its fate and whether its client closed."""
+
+    attempt_id: UUID
+    fate: AttemptFateText
+    cleanup_confirmed: bool | None = None
+
+
+class RerankTrace(WireModel):
+    """The rerank stage as recorded in the step's trace (historical: identical for every replay of the step). No
+    prompt, query or model text is stored: only digests, the bounded reason code and the final window order."""
+
+    v: Literal["policyops.rerank-trace/v1"] = "policyops.rerank-trace/v1"
+    status: RerankStatus
+    reason: Slug | None = None
+    model: RerankModel
+    prompt_sha256: Sha256Hex
+    request_identity: Sha256Hex
+    input_sha256: Sha256Hex | None = None
+    max_output_tokens: Annotated[int, Field(ge=64, le=1024)]
+    excerpts_truncated: Annotated[int, Field(ge=0, le=MAX_RERANK_DOCUMENTS)] = 0
+    window: Annotated[int, Field(ge=0, le=MAX_RERANK_DOCUMENTS)] = 0
+    order: Annotated[tuple[UUID, ...], Field(max_length=MAX_RERANK_DOCUMENTS)] = ()
+    attempts: Annotated[tuple[RerankAttempt, ...], Field(max_length=1)] = ()
+
+
 class TraceCandidates(WireModel):
-    """The typed `retrieval_traces.candidates` record. `payload_sha256` covers everything here except itself."""
+    """The typed `retrieval_traces.candidates` record. `payload_sha256` covers everything here except itself.
+
+    `rerank` (T14) is omitted when None, so a T13 trace keeps its bytes and its payload digest."""
 
     v: Literal["policyops.retrieval-trace/v1"] = "policyops.retrieval-trace/v1"
     request_sha256: Sha256Hex
@@ -179,6 +256,7 @@ class TraceCandidates(WireModel):
     evidence_text_sha256: Sha256Hex
     admission_attempts: Annotated[int, Field(ge=0, le=256)] = 0
     exclusions: Exclusions = Exclusions()
+    rerank: RerankTrace | None = Field(default=None, exclude_if=_is_none)
     payload_sha256: Sha256Hex
 
     def computed_payload_sha256(self) -> str:
@@ -211,7 +289,32 @@ class EvidenceChunk(WireModel):
     text: Annotated[str, StringConstraints(min_length=1, max_length=20000)]
 
 
+class RerankSummary(WireModel):
+    """The step's rerank outcome as stored in its trace (historical, the same for every replay)."""
+
+    status: RerankStatus
+    applied: bool
+    reason: Slug | None = None
+    model: RerankModel
+    order: Annotated[tuple[UUID, ...], Field(max_length=MAX_RERANK_DOCUMENTS)] = ()
+    attempts: Annotated[tuple[RerankAttempt, ...], Field(max_length=1)] = ()
+
+
+class InvocationWork(WireModel):
+    """What THIS invocation itself did, never stored in a trace and never replayed. Grants are ledger grants this
+    call obtained (not proof that bytes left the process); the ledger stays the billing authority."""
+
+    embedding_requests: Annotated[int, Field(ge=0, le=1)] = 0
+    rerank_counts_claimed: Annotated[int, Field(ge=0, le=1)] = 0
+    rerank_inferences_dispatched: Annotated[int, Field(ge=0, le=1)] = 0
+    cleanup_unconfirmed: bool = False
+
+
 class RetrievalResult(WireModel):
+    """`replayed` means only that the returned trace was stored earlier (by another writer or call); it is never
+    evidence that this invocation did no work. `provider_requests` is this invocation's embedding requests;
+    `invocation` (present for rerank-configured steps) adds this invocation's rerank grants."""
+
     trace_id: UUID
     run_id: UUID
     step: Step
@@ -235,8 +338,19 @@ class RetrievalResult(WireModel):
     current_policy_validated: Literal[False] = False
     claim_support_validated: Literal[False] = False
     caller_authorized_scope: Literal["required"] = "required"
+    rerank: RerankSummary | None = Field(default=None, exclude_if=_is_none)
+    invocation: InvocationWork | None = Field(default=None, exclude_if=_is_none)
+
+    @model_validator(mode="after")
+    def _invocation_matches(self) -> Self:
+        if self.invocation is not None and self.invocation.embedding_requests != self.provider_requests:
+            raise ValueError("the invocation's embedding requests are the result's provider requests")
+        return self
 
 
 class RetrievalRefused(WireModel):
+    """`invocation` (when known) reports what this invocation did before it refused, e.g. a dispatched rerank."""
+
     code: RefusalCode
     detail: SafeDetail | None = None
+    invocation: InvocationWork | None = Field(default=None, exclude_if=_is_none)

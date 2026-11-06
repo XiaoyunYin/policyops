@@ -1,0 +1,116 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "Read-only, historical reconciliation (never a write authorization). `not_observed_yet` and `missing_ids` are\nnever proof of absence: an ambiguous COMMIT may still be completing. There is no definitive \"not recorded\".",
+  "properties": {
+    "absence_proven": {
+      "const": false,
+      "default": false,
+      "title": "Absence Proven",
+      "type": "boolean"
+    },
+    "claim_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Claim Ids",
+      "type": "array"
+    },
+    "code": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z][a-z0-9_]{0,63}(?::[a-z][a-z0-9_]{0,63})?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Code"
+    },
+    "distinct_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Distinct Ids",
+      "type": "array"
+    },
+    "failing_claim": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 64,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failing Claim"
+    },
+    "generation_current": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generation Current"
+    },
+    "matched_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Matched Ids",
+      "type": "array"
+    },
+    "missing_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Missing Ids",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "recorded",
+        "incomplete",
+        "not_observed_yet",
+        "citation_integrity",
+        "citation_id_conflict",
+        "refused",
+        "deadline_passed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.citation-reconcile/v1",
+      "default": "policyops.citation-reconcile/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "ReconcileOutcome",
+  "type": "object"
+}

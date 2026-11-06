@@ -201,6 +201,51 @@ def _retrieval_examples(world: World) -> dict[str, Any]:
     return {"retrieval-query.hybrid": query, "retrieval-result.hybrid": result}
 
 
+def _grounding_examples(world: World) -> dict[str, Any]:
+    """A fictional reranked step request, a model's grounded answer and its validated result (T14): synthetic IDs
+    and text only. The validated example shows the shape; it is not the output of a real validation."""
+    import hashlib
+
+    from policyops_contracts.grounding import (
+        Assertion,
+        AssertionCheck,
+        CitationBundle,
+        CitationCheck,
+        CitationClaim,
+        CitedQuote,
+        GroundedAnswer,
+        ValidatedAnswer,
+    )
+    from policyops_contracts.retrieval import RerankConfig, RetrievalConfig, RetrievalQuery, RetrievalScope
+
+    query = RetrievalQuery(text="Can a refund go to a gift card?", run_id=world.run, step=4,
+                           scope=RetrievalScope(corpus_key="example-policy"),
+                           config=RetrievalConfig(mode="hybrid", rerank=RerankConfig(documents=10)))
+    quote = "an existing gift card"
+    text = "Refunds go to the original payment method or an existing gift card."
+    start = text.index(quote)
+    answer = GroundedAnswer(v="policyops.grounded-answer/v1", outcome="answer", abstention=None, assertions=(
+        Assertion(text="A refund can go to an existing gift card.", policy_dependent=True, citations=(
+            CitedQuote(step=3, evidence_id="E1", quote=quote, start=start, end=start + len(quote)),)),))
+    trace, chunk, document, version, generation = (UUID(int=7004), UUID(int=7003), UUID(int=7001), UUID(int=7002),
+                                                   UUID(int=7005))
+    claim = CitationClaim(
+        step=3, evidence_id="E1", trace_id=trace, trace_payload_sha256="0" * 64, request_sha256="0" * 64,
+        generation_id=generation, chunk_id=chunk, document_id=document, document_version_id=version,
+        version_sha256="0" * 64, chunk_text_sha256=hashlib.sha256(text.encode()).hexdigest(), span_start=start,
+        span_end=start + len(quote), quote=quote, quote_sha256=hashlib.sha256(quote.encode()).hexdigest())
+    validated = ValidatedAnswer(
+        outcome="grounded", assertions=(AssertionCheck(assertion=0, policy_dependent=True,
+                                                       status="cited_identity_verified", verified_citations=1),),
+        citations=(CitationCheck(assertion=0, citation=0, step=3, evidence_id="E1", status="verified",
+                                 trace_id=trace, chunk_id=chunk, document_id=document, document_version_id=version,
+                                 generation_id=generation, span_start=start, span_end=start + len(quote)),),
+        generation_id=generation, generation_current=True,
+        bundle=CitationBundle(run_id=world.run, corpus_key="example-policy", claims=(claim,)))
+    return {"retrieval-query.hybrid-rerank": query, "grounded-answer.answer": answer,
+            "validated-answer.grounded": validated}
+
+
 def build_examples() -> dict[str, bytes]:
     """Canonical JSON documents for one fictional exchange flow, plus small standalone examples."""
     from policyops.domain.approval_rules import Decided, decide
@@ -282,6 +327,7 @@ def build_examples() -> dict[str, bytes]:
                               upstream_task_id="9999", kind="mutation", allowlist_sha256="0" * 64),
         **_retail_service_examples(world),
         **_retrieval_examples(world),
+        **_grounding_examples(world),
     }
     return {f"{name}.json": (json.dumps(json.loads(model.model_dump_json()), indent=2, sort_keys=True) + "\n").encode()
             for name, model in sorted(documents.items()) if model is not None}

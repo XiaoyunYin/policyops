@@ -114,6 +114,10 @@ class AttemptRecord:
     fate: AttemptFate | None = None
     reason: str | None = None
     cleanup_confirmed: bool | None = None  # None: no provider client was opened for this attempt
+    # Which ledger grants this very call obtained for this attempt (set before the count / request is awaited, never
+    # cleared): facts about grants, not proof that any bytes left the process. The ledger stays the billing authority.
+    count_granted: bool = False
+    dispatch_granted: bool = False
 
 
 @dataclass
@@ -243,6 +247,7 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
         record.fate, record.reason = "released", claim.reason
         raise _Stop(CallReport(None, "budget" if claim.reason == "count_cap" else "failed", claim.reason,
                                report.attempts))
+    record.count_granted = True
     pending[0] = _Pending(record, "counting")
     tokens: int | None = None
     try:
@@ -273,6 +278,7 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
         pending[0] = None
         record.reason = decision.reason
         raise _Stop(CallReport(None, "failed", decision.reason, report.attempts))
+    record.dispatch_granted = True
     pending[0] = _Pending(record, "dispatched")
     cache_mode = ledger.configuration.actors[actor].cache_mode  # type: ignore[union-attr]
     invocation: Invocation

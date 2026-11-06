@@ -29,6 +29,14 @@ from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
 from policyops_contracts.evidence import EvidenceManifest
 from policyops_contracts.gateway import ToolObservation
+from policyops_contracts.grounding import (
+    CitationBundle,
+    GroundedAnswer,
+    GroundingRefused,
+    ReconcileOutcome,
+    RecordOutcome,
+    ValidatedAnswer,
+)
 from policyops_contracts.money import Money
 from policyops_contracts.policy import PolicyRule
 from policyops_contracts.proposal import ActionProposal
@@ -91,6 +99,13 @@ MODELS: dict[str, type[BaseModel]] = {
     "retrieval-result": RetrievalResult,
     "retrieval-trace-candidates": TraceCandidates,
     "retrieval-trace-scope": TraceScope,
+    # Grounding (T14): the model-facing answer, the deterministic validation, the citation claims and their recording.
+    "grounded-answer": GroundedAnswer,
+    "validated-answer": ValidatedAnswer,
+    "grounding-refused": GroundingRefused,
+    "citation-bundle": CitationBundle,
+    "citation-record": RecordOutcome,
+    "citation-reconcile": ReconcileOutcome,
 }
 ADAPTERS: dict[str, TypeAdapter[object]] = {
     "agent-step": TypeAdapter(AgentStep),

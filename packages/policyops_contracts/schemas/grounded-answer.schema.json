@@ -1,0 +1,168 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "Abstention": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "reason": {
+          "enum": [
+            "insufficient_evidence",
+            "contradictory_evidence",
+            "outside_policy_scope"
+          ],
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "detail"
+      ],
+      "title": "Abstention",
+      "type": "object"
+    },
+    "Assertion": {
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/CitedQuote"
+          },
+          "maxItems": 4,
+          "title": "Citations",
+          "type": "array"
+        },
+        "policy_dependent": {
+          "title": "Policy Dependent",
+          "type": "boolean"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "policy_dependent",
+        "citations"
+      ],
+      "title": "Assertion",
+      "type": "object"
+    },
+    "CitedQuote": {
+      "additionalProperties": false,
+      "description": "A verbatim quote from one delivered evidence chunk of one step. Offsets, when given, are code points within\nthat chunk's text, both or neither, with `end - start == len(quote)`.",
+      "properties": {
+        "end": {
+          "anyOf": [
+            {
+              "maximum": 20000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End"
+        },
+        "evidence_id": {
+          "pattern": "^E(?:[1-9]|1[0-6])$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "quote": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "maximum": 20000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Start"
+        },
+        "step": {
+          "maximum": 9999,
+          "minimum": 0,
+          "title": "Step",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "step",
+        "evidence_id",
+        "quote",
+        "start",
+        "end"
+      ],
+      "title": "CitedQuote",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "abstention": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Abstention"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "assertions": {
+      "items": {
+        "$ref": "#/$defs/Assertion"
+      },
+      "maxItems": 16,
+      "title": "Assertions",
+      "type": "array"
+    },
+    "outcome": {
+      "enum": [
+        "answer",
+        "abstain"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.grounded-answer/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "v",
+    "outcome",
+    "assertions",
+    "abstention"
+  ],
+  "title": "GroundedAnswer",
+  "type": "object"
+}

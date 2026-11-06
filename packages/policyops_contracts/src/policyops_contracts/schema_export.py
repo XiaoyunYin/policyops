@@ -71,6 +71,7 @@ from policyops_contracts.retrieval import (
     TraceScope,
 )
 from policyops_contracts.seeds import CaseCustomerBinding, CustomerAuthentication, DemoSeed
+from policyops_contracts.wire import FromRuntime, ToRuntime
 
 
 MODELS: dict[str, type[BaseModel]] = {
@@ -128,6 +129,9 @@ MODELS: dict[str, type[BaseModel]] = {
     "agent-knowledge-result": KnowledgeResult,
     "agent-turn-outcome": TurnOutcome,
     "agent-conversation-snapshot": ConversationSnapshot,
+    # The agent channel's wire frames (T29): requests to the agent runtime and its replies (policyops.wire/v1).
+    "wire-agent-to-runtime": ToRuntime,
+    "wire-agent-from-runtime": FromRuntime,
 }
 ADAPTERS: dict[str, TypeAdapter[object]] = {
     "agent-step": TypeAdapter(AgentStep),

@@ -1,0 +1,367 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "AgentMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "agent",
+          "default": "agent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AgentMessage",
+      "type": "object"
+    },
+    "CloseSessionBody": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_ms": {
+          "maximum": 900000,
+          "minimum": 1,
+          "title": "Budget Ms",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "close_session",
+          "default": "close_session",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "budget_ms"
+      ],
+      "title": "CloseSessionBody",
+      "type": "object"
+    },
+    "OpenSessionBody": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_ms": {
+          "maximum": 900000,
+          "minimum": 1,
+          "title": "Budget Ms",
+          "type": "integer"
+        },
+        "catalog": {
+          "$ref": "#/$defs/ToolCatalog"
+        },
+        "kind": {
+          "const": "open_session",
+          "default": "open_session",
+          "title": "Kind",
+          "type": "string"
+        },
+        "opening": {
+          "$ref": "#/$defs/AgentMessage"
+        },
+        "policy": {
+          "$ref": "#/$defs/PolicyContext"
+        }
+      },
+      "required": [
+        "policy",
+        "catalog",
+        "opening",
+        "budget_ms"
+      ],
+      "title": "OpenSessionBody",
+      "type": "object"
+    },
+    "PolicyContext": {
+      "additionalProperties": false,
+      "description": "The visible domain policy, given to the agent as its system context. `pinned_retail_policy` must be exactly the\npinned upstream retail policy; `fictional` is for tests and examples and is refused outside the test\nenvironment by the runtime.",
+      "properties": {
+        "domain": {
+          "enum": [
+            "retail",
+            "banking_knowledge"
+          ],
+          "title": "Domain",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "pinned_retail_policy",
+            "harness_domain_policy",
+            "fictional"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 64000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain",
+        "source",
+        "text",
+        "sha256"
+      ],
+      "title": "PolicyContext",
+      "type": "object"
+    },
+    "ToolCatalog": {
+      "additionalProperties": false,
+      "description": "`retail`: exactly the runtime's typed retail tools. `descriptor`: externally supplied descriptors, validated\nagainst their own schema and executed only by the injected tool port. `knowledge_tool` adds the fixed read-only\n`search_policy` tool, which counts toward every catalog limit; its name is reserved.",
+      "properties": {
+        "knowledge_tool": {
+          "default": false,
+          "title": "Knowledge Tool",
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "retail",
+            "descriptor"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolDescriptor"
+          },
+          "maxItems": 32,
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "mode",
+        "tools"
+      ],
+      "title": "ToolCatalog",
+      "type": "object"
+    },
+    "ToolDescriptor": {
+      "additionalProperties": false,
+      "description": "One tool the model may propose: its name, description and full domain JSON Schema text.",
+      "properties": {
+        "description": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "parameters_schema_json": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "title": "Parameters Schema Json",
+          "type": "string"
+        },
+        "read_only": {
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "parameters_schema_json",
+        "read_only"
+      ],
+      "title": "ToolDescriptor",
+      "type": "object"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,128}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "is_error": {
+          "default": false,
+          "title": "Is Error",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "content"
+      ],
+      "title": "ToolResult",
+      "type": "object"
+    },
+    "ToolReturnBody": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_ms": {
+          "maximum": 900000,
+          "minimum": 1,
+          "title": "Budget Ms",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "tool_return",
+          "default": "tool_return",
+          "title": "Kind",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/ToolResult"
+        }
+      },
+      "required": [
+        "result",
+        "budget_ms"
+      ],
+      "title": "ToolReturnBody",
+      "type": "object"
+    },
+    "UserMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "user",
+          "default": "user",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "UserMessage",
+      "type": "object"
+    },
+    "UserTurnBody": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_ms": {
+          "maximum": 900000,
+          "minimum": 1,
+          "title": "Budget Ms",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "user_turn",
+          "default": "user_turn",
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "$ref": "#/$defs/UserMessage"
+        },
+        "turn": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Turn",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turn",
+        "message",
+        "budget_ms"
+      ],
+      "title": "UserTurnBody",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A request from the evaluator's client to the agent runtime.",
+  "properties": {
+    "body": {
+      "discriminator": {
+        "mapping": {
+          "close_session": "#/$defs/CloseSessionBody",
+          "open_session": "#/$defs/OpenSessionBody",
+          "tool_return": "#/$defs/ToolReturnBody",
+          "user_turn": "#/$defs/UserTurnBody"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/OpenSessionBody"
+        },
+        {
+          "$ref": "#/$defs/UserTurnBody"
+        },
+        {
+          "$ref": "#/$defs/ToolReturnBody"
+        },
+        {
+          "$ref": "#/$defs/CloseSessionBody"
+        }
+      ],
+      "title": "Body"
+    },
+    "channel": {
+      "const": "agent",
+      "default": "agent",
+      "title": "Channel",
+      "type": "string"
+    },
+    "seq": {
+      "maximum": 2147483647,
+      "minimum": 1,
+      "title": "Seq",
+      "type": "integer"
+    },
+    "session_id": {
+      "format": "uuid",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.wire/v1",
+      "default": "policyops.wire/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "seq",
+    "body"
+  ],
+  "title": "ToRuntime",
+  "type": "object"
+}

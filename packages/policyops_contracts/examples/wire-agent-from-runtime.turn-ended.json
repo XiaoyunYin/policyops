@@ -1,0 +1,44 @@
+{
+  "body": {
+    "kind": "turn_ended",
+    "outcome": {
+      "appended": [
+        {
+          "kind": "user",
+          "text": "Where is my order #W0000001?"
+        },
+        {
+          "call_id": "call_example_1",
+          "content": "{\"status\":\"pending\"}",
+          "is_error": false,
+          "kind": "tool_result"
+        },
+        {
+          "kind": "agent",
+          "text": "Your order is pending."
+        }
+      ],
+      "cleanup_unconfirmed": false,
+      "config_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "conversation_id": "00000000-0000-0000-0000-00000000238d",
+      "counts_claimed": 2,
+      "detail": null,
+      "inferences_dispatched": 2,
+      "invalid_steps": 0,
+      "message": {
+        "kind": "agent",
+        "text": "Your order is pending."
+      },
+      "model_calls": 2,
+      "pending_tool": null,
+      "terminal": null,
+      "turn": 0,
+      "v": "policyops.agent-turn/v1"
+    }
+  },
+  "channel": "agent",
+  "reply_to": 2,
+  "seq": 2,
+  "session_id": "00000000-0000-0000-0000-00000000238d",
+  "v": "policyops.wire/v1"
+}

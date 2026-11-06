@@ -1,0 +1,15 @@
+{
+  "body": {
+    "budget_ms": 30000,
+    "kind": "user_turn",
+    "message": {
+      "kind": "user",
+      "text": "Where is my order #W0000001?"
+    },
+    "turn": 0
+  },
+  "channel": "agent",
+  "seq": 2,
+  "session_id": "00000000-0000-0000-0000-00000000238d",
+  "v": "policyops.wire/v1"
+}

@@ -310,6 +310,23 @@ def _agent_examples(world: World) -> dict[str, Any]:
             "agent-conversation-snapshot.cancelled": snapshot}
 
 
+def _wire_examples(world: World) -> dict[str, Any]:
+    """Fictional agent-channel wire frames (T29): synthetic IDs and digests and fictional text; not a captured
+    exchange. Each is the frame document; on the wire it travels as a 4-byte length plus its canonical bytes."""
+    from policyops_contracts.conversation import AgentMessage, ToolResult, TurnOutcome, UserMessage
+    from policyops_contracts.wire import FromRuntime, ToRuntime, TurnEndedBody, UserTurnBody
+
+    session = UUID(int=9101)
+    question = UserMessage(text=f"Where is my order {world.order_id}?")
+    request = ToRuntime(session_id=session, seq=2, body=UserTurnBody(turn=0, message=question, budget_ms=30_000))
+    answer = AgentMessage(text="Your order is pending.")
+    reply = FromRuntime(session_id=session, seq=2, reply_to=2, body=TurnEndedBody(outcome=TurnOutcome(
+        conversation_id=session, turn=0, config_sha256="6" * 64, message=answer,
+        appended=(question, ToolResult(call_id="call_example_1", content='{"status":"pending"}'), answer),
+        model_calls=2, invalid_steps=0, counts_claimed=2, inferences_dispatched=2, cleanup_unconfirmed=False)))
+    return {"wire-agent-to-runtime.user-turn": request, "wire-agent-from-runtime.turn-ended": reply}
+
+
 def build_examples() -> dict[str, bytes]:
     """Canonical JSON documents for one fictional exchange flow, plus small standalone examples."""
     from policyops.domain.approval_rules import Decided, decide
@@ -394,6 +411,7 @@ def build_examples() -> dict[str, bytes]:
         **_grounding_examples(world),
         **_e01_examples(world),
         **_agent_examples(world),
+        **_wire_examples(world),
     }
     return {f"{name}.json": (json.dumps(json.loads(model.model_dump_json()), indent=2, sort_keys=True) + "\n").encode()
             for name, model in sorted(documents.items()) if model is not None}

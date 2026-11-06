@@ -22,6 +22,7 @@ from policyops_contracts.retail_service import LookupResult, MutationRequest, Op
 from policyops_contracts.retrieval import RetrievalQuery, RetrievalResult
 from policyops_contracts.schema_export import export
 from policyops_contracts.seeds import CaseCustomerBinding, CustomerAuthentication, DemoSeed
+from policyops_contracts.wire import FromRuntime, ToRuntime
 
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "packages" / "policyops_contracts"
@@ -40,6 +41,7 @@ EXAMPLE_MODELS: dict[str, type[BaseModel]] = {
     "validated-answer.grounded": ValidatedAnswer, "e01-trajectory.fictional": TrajectoryRecord,
     "agent-config.fictional": AgentConfig, "agent-turn-outcome.fictional": TurnOutcome,
     "agent-conversation-snapshot.cancelled": ConversationSnapshot,
+    "wire-agent-to-runtime.user-turn": ToRuntime, "wire-agent-from-runtime.turn-ended": FromRuntime,
 }
 HIDDEN_FIELD_NAMES = ("user_scenario", "instructions", "known_info", "unknown_info", "reason_for_call",
                       "evaluation_criteria", "nl_assertions", "reward_basis", "required_documents", "initial_state")

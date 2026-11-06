@@ -16,7 +16,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from policyops.domain.examples import World
-from policyops.persistence import migrate
 from policyops.persistence.database import workspace_transaction
 from policyops.persistence.importer import import_synthetic_world
 from policyops.persistence.migration_guard import DataLossRefused
@@ -110,9 +109,9 @@ def test_a_populated_0009_database_upgrades_with_old_rows_intact(new_app_databas
     database = populated_0009(new_app_database, "ing_up")
     before = counts(database)
     assert not set(NEW_TABLES) & set(before)
-    database.upgrade()
+    database.upgrade("0010")  # this revision's own upgrade (0011 has its own migration tests)
     after = counts(database)
-    assert database.current() == migrate.head() == "0010"
+    assert database.current() == "0010"
     assert {table: after[table] for table in before} == before
     assert {table: after[table] for table in NEW_TABLES} == dict.fromkeys(NEW_TABLES, 0)
     with database.superuser() as conn:
@@ -140,7 +139,7 @@ def test_incompatible_existing_rows_refuse_the_upgrade_and_change_nothing(new_ap
     before = counts(database)
     # Alembic loads revision files under its own module names, so the class is matched by name, not identity.
     with pytest.raises(Exception, match=f"'{violation}': 1") as refused:
-        database.upgrade()
+        database.upgrade("0010")
     assert type(refused.value).__name__ == "LegacyIncompatible"
     assert database.current() == "0009" and counts(database) == before
     with database.superuser() as conn:
@@ -151,7 +150,7 @@ def test_incompatible_existing_rows_refuse_the_upgrade_and_change_nothing(new_ap
 
 def test_a_populated_0010_downgrade_is_refused_unless_explicitly_destructive(new_app_database: NewDatabase,
                                                                             tmp_path: Path) -> None:
-    database = new_app_database("ing_down")
+    database = new_app_database("ing_down", revision="0010")
     import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
     details = ingest_once(database, tmp_path)
     with pytest.raises(DataLossRefused, match=r"app\.corpora|app\.generation_documents"):
@@ -172,26 +171,26 @@ def test_a_populated_0010_downgrade_is_refused_unless_explicitly_destructive(new
         generation = conn.execute("SELECT status FROM app.index_generations WHERE id = %s",
                                   (UUID(details["generation_id"]),)).fetchone()
     assert generation == ("ready",)
-    database.upgrade()
+    database.upgrade("0010")
     assert database.current() == "0010"
 
 
 def test_an_empty_0010_downgrades_and_upgrades_again_cleanly(new_app_database: NewDatabase) -> None:
-    database = new_app_database("ing_empty_down")
+    database = new_app_database("ing_empty_down", revision="0010")
     database.downgrade("0009")
     assert database.current() == "0009" and not set(NEW_TABLES) & set(counts(database))
     with database.superuser() as conn:
         functions = conn.execute("SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
                                  "WHERE n.nspname = 'app' AND p.proname LIKE '%generation%'").fetchone()
     assert functions == (0,)
-    database.upgrade()
+    database.upgrade("0010")
     assert database.current() == "0010" and set(NEW_TABLES) <= set(counts(database))
 
 
 def test_a_populated_0010_database_dumps_and_restores_with_working_guards(app_cluster: AppCluster,
                                                                          new_app_database: NewDatabase,
                                                                          tmp_path: Path) -> None:
-    source = new_app_database("ing_dump_src")
+    source = new_app_database("ing_dump_src", revision="0010")
     import_synthetic_world(auth=source.engine(AUTH_RUNTIME), app=source.engine(APP_RUNTIME))
     details = ingest_once(source, tmp_path)
     target = new_app_database("ing_dump_dst", extensions=False, revision=None)

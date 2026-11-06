@@ -543,8 +543,8 @@ price.
 ## Embedding foundation
 
 T12's first component: an accounted, cached way to embed exact texts with `text-embedding-3-small` at 1536
-dimensions. Nothing calls this from an API or the worker yet; its only caller is the operator-run ingestion command
-(see **Corpus ingestion**), and retrieval is a later component. One bounded live compatibility smoke on 2026-11-05 is described under **Limits**
+dimensions. Nothing calls this from an API, worker or agent graph; its callers are the operator-run ingestion command
+(see **Corpus ingestion**) and the internal retrieval step's run-bound query embedding (see **Retrieval steps**). One bounded live compatibility smoke on 2026-11-05 is described under **Limits**
 below.
 
 **Local counting** (`providers/tokenizer.py`). Embedding inputs are counted with cl100k_base, the encoding tiktoken
@@ -613,6 +613,15 @@ timeout or cancellation during cleanup cannot lose a known bill.
 - Publication of evidence and vectors is one transaction, checked against the stored batch, the job's request
   configuration and the ledger attempt; evidence is first-write-wins and a cached vector is never replaced. A
   database failure is retried at most three times, never with a second request; the bill is settled either way.
+- Run-bound query jobs (T13): a job of purpose `query` is always run-bound (`job_binding`): exactly one input and the
+  subject `query.<run_id>.<step>`, charged to that run's shared budget scope. `run_job(run_id=...)` checks the binding
+  against the job's immutable identity (`BindingMismatch` otherwise, before any write) and that the run is visible in
+  the caller's workspace and active (`EmbeddingStore.run_is_active`) before planning, cache use or terminal
+  reconciliation; otherwise the report is `blocked` with reason `run_not_active`, no job and no write. There is no
+  operation-scope preflight for a run-bound job: the ledger's atomic run-scope reservation is the only admission, and
+  its run lock and active checks stay authoritative. Every other job keeps its operation binding and behavior
+  unchanged (`run_id` must then be absent). A run that turns inactive after the check can still be answered from the
+  cache (read-only, no spend).
 
 **Limits.**
 - The default operation caps (64 calls, USD 0.05) and the 180-second active window bound one job; larger jobs need
@@ -626,7 +635,7 @@ timeout or cancellation during cleanup cannot lose a known bill.
   ledger settled USD 0.00000084 with nothing held (operation cap USD 0.001, worst-case reservation USD 0.00000256).
   This is the cost of this smoke, not a statement about retrieval quality, model quality, cache savings or
   performance, and it is not an evaluation. The earlier dated Luna and Haiku evidence and their recorded holds are
-  unchanged. Retrieval is not built and no API or worker caller exists; the ingestion command is described under **Corpus ingestion** and does not extend this smoke. The
+  unchanged. No API, worker or agent-graph caller exists; the ingestion command and the internal retrieval step are described under **Corpus ingestion** and **Retrieval steps** and do not extend this smoke. The
   external smoke ran under a 300-second child supervisor with a bounded cleanup grace; that is not a production
   deadline proof, and the database-wait bullet at the end of this list still applies.
 - A synthetic maximum
@@ -646,7 +655,7 @@ new, atomically activated generation. **Status: implemented and verified locally
 and type checks, and a genuine populated pre-ingestion dump upgraded to `0010`); hosted and Linux CI have not been
 run. It is an operator-run command: the process holds
 database credentials, so there is no principal or membership check (like the synthetic importer), and there is no
-HTTP endpoint, worker, retrieval query or ranking. The one-request embedding smoke under **Limits** above remains the
+HTTP endpoint or worker; retrieval over its generations is the internal component under **Retrieval steps**. The one-request embedding smoke under **Limits** above remains the
 only live embedding evidence; nothing here is a corpus-scale, quality, savings or performance result.
 
 **Source manifest and reading** (`sources.py`). `policyops.ingest-manifest/v1` is committed metadata only: per
@@ -742,7 +751,7 @@ actual body digest equals its recorded digest, and the span lies within the vers
 a corpus generation it also checks that the version is a member of the trace's generation and reports chunk
 containment as a write-time guard; for a legacy generation it reports `version_in_generation` as
 `not_recorded_legacy`. This is not authorization (the service must already have checked run and case access) and does
-not show that a span supports any claim; no citation-producing service exists yet.
+not show that a span supports any claim; no citation-producing service exists yet. The write-time guard still requires a cited chunk to be in a ready generation at insertion; a retrieval trace records the generation it read, and when an activation makes a citation insertion stale, the caller must re-retrieve in a new step (T14, not implemented) rather than reuse the retired snapshot as current evidence.
 
 **Scripted full-manifest measurement.** One local run imported the full committed manifest into a fresh workspace
 on real PostgreSQL as `policyops_app_runtime`, through the real SDK path over a scripted transport (synthetic
@@ -760,6 +769,32 @@ not billable input. Vectors, prices and usage are synthetic; no retrieval qualit
 text or secrets). Exit codes: 0 planned, unchanged or activated; 1 verification failure or unexpected error (type
 only); 2 refused; 3 embedding incomplete; 4 stale activation. The connection uses the libpq environment, and the role
 must be `policyops_app_runtime`.
+
+## Retrieval steps
+
+T13: an internal, programmatic retrieval step (`policyops.retrieval` `search.py`, `rank.py`, `counting.py`; `persistence/retrieval.py`; `policyops_contracts/retrieval.py`) on revision `0011`. It has been exercised on synthetic fixture corpora with synthetic vectors and scripted transport, and verified locally on Windows with Docker Desktop (lint, type checks, the application default and PostgreSQL suites, the evaluator default suite, the scanner and static checks); hosted CI has not been run. No API, worker, agent graph, reranker or UI calls it, citation validation (T14) is not implemented, and it makes no quality, latency, cost or hosted-CI claim.
+
+**Request.** A step names one corpus, a run, a caller-owned step number (0-9999), a query, an optional document allowlist and a versioned configuration. The query is 1-2000 code points of text without control characters other than tab and line breaks and at most 1024 local cl100k tokens, counted as an embedding input. The allowlist has at most 32 sources and must lie inside the corpus. The configuration (`policyops.retrieval-config/v2`) holds the mode, the documents kept per branch (default 20, at most 50), chunks per document (default 2, at most 3), `rrf_k` (default 60), `max_chunks` (default 6, at most 16), `max_evidence_tokens` (default 4096, at most 16,000), `full_policy_max_chunks` (default 16), `max_admission_attempts` (default 64), the dense policy, the FTS configuration, the evidence format and the embedding model and dimensions. Configuration values are strict integers and enumerations, scores are decimal strings and there are no free dictionaries; query vectors and stored vectors remain floats. The step's identity is its run and step number. Its request fingerprint is the SHA-256 of the query digest, the scope digest and the configuration digest (the retrieval intent and trace never store the raw query text; the query embedding job, as a foundation job, persists its input text in `app.embedding_job_inputs`, a tenant-scoped, forced-RLS table with select and insert only, so that the paid job can be recovered durably). The calling service must already have authorized the run, case and corpus; this component still enforces its own tenant, corpus, run, model, dimension and state relationships.
+
+**Modes and snapshot.** One `REPEATABLE READ READ ONLY` snapshot reads the corpus pointer, the active generation and its embedding configuration, both branches and the bounded candidate texts, so an activation cannot mix generations or hide chunks mid-step. Lexical search uses `websearch_to_tsquery('english', ...)` and `ts_rank_cd(..., 32)` (a query that yields an empty tsquery is reported as `empty_query`, not an error); dense search uses exact cosine distance (`<=>`, sequential, at most 10,000 chunks per generation). Each branch keeps the best chunk per document, the top documents (default 20) ordered by score then `source_uri` in byte order, and their best chunks. Fusion sums `1/(k + rank)` with `fractions.Fraction` and orders by RRF value, best single-branch rank, `source_uri`, then document ID; equal ranks put lexical first. A lexical score is never compared with a distance. The `full_policy` mode is for a corpus of the retail domain only (another domain is refused as `full_policy_not_supported`): it reads every chunk if there are at most `full_policy_max_chunks`, otherwise refuses before loading any text.
+
+**Exclusions.** The dense branch skips and counts chunks of the generation whose stored vector is missing or whose cosine distance to the query vector is NaN (a zero vector gives NaN), reported as `dense_nan_distance`; this count covers the whole generation, not only the allowlist. Chunks longer than 20,000 code points (already barred by a table CHECK, so expected to be zero) are filtered from every branch and counted as `text_oversized`. Candidate assemblies the evidence counter refuses are skipped and counted as `count_refused`. These counters do not claim that every stored chunk vector has been validated.
+
+**Evidence format and budget.** Evidence blocks are `[E{n}] {source_uri} version {v} | {heading} | chars {start}-{end}`, a line break and the verbatim chunk text, joined by a blank line (`policyops.evidence-format/v1`). The `E{n}` list is the delivery map, never parsed from text; source URIs, headings and texts are untrusted and may contain fake markers, URLs or instructions, and the delimiter is not prompt-injection-proof. Ranked delivery takes the better-ranked branch's chunks first and at most `chunks_per_document` per document in a first pass, then the remainder, and counts the entire concatenated string against `max_evidence_tokens` on every admission (blocks are admitted only if the whole string still fits and fewer than `max_chunks` are delivered), skipping non-fits, never truncating, with a bounded number of attempts. The retail-domain `full_policy` control delivers every chunk if the whole string fits the same token budget, or refuses. Counting uses a retrieval-specific adapter (`counting.py`) over the same pinned cl100k vocabulary, pattern and identity, with its own whole-assembly bounds (at most 384,200 code points and four times that many UTF-8 bytes), strict UTF-8, no NUL, and the foundation's per-regex-piece bound, because the embedding tokenizer's 32,768-code-point input ceiling would wrongly refuse feasible evidence. The foundation tokenizer and its limits are unchanged. Adjacent-context expansion is deferred to development tuning (T15).
+
+**Query embedding.** A dense or hybrid step uses one run-bound foundation job (see **Embedding foundation**, run-bound query jobs): subject `query.<run_id>.<step>`, exactly one input, the run's shared budget scope, the per-workspace cache and a frozen job without ambiguous reissue. The step's own job is authoritative: an unsettled job is not bypassed by a vector that another job cached. The cached vector must have 1536 finite values and be non-zero after float32 rounding, otherwise the step refuses as `query_vector_invalid`. Availability outcomes (`budget`, `unresolved`, `vectors_invalid`, `job_unsettled`, `missing_vector`) make a hybrid step lexical-only, flagged in the result and trace, when `dense_policy = "lexical_fallback"` (the default), and refuse as `embedding_unavailable` under `refuse`; mode `dense` always refuses. Cancellation, an expired deadline, a lease held elsewhere past a bounded wait (`step_in_progress`) and binding, identity, contract or configuration failures never become a lexical success; there is no model fallback and no reissue.
+
+**Intent, trace and replay (revision `0011`).** For a new step, a short transaction first checks that the run is active (read `FOR SHARE`) and the corpus has an active generation, resolves the allowlist and measures the configuration's worst-case trace payload in the database (a configuration whose measured worst case exceeds the column limits with a 10% margin is refused as `config_trace_too_large`), and then inserts the immutable `(workspace, run, step)` intent holding the request fingerprint. A stored intent with a different fingerprint is `step_conflict`, with no provider work. The trace has a deterministic ID and typed, bounded JSON (no raw query text in the trace); if it cannot be written the step refuses as `trace_unavailable` while settled or held billing stays in the ledger. An existing completed trace replays read-only, whatever the run's state now and even after the corpus changed, by rebuilding the evidence from the immutable version bodies and spans and re-verifying the body, evidence-text and payload digests (`replay_integrity` on a mismatch); a trace without a matching intent, or with an unsupported payload, is refused as `replay_unsupported`. A concurrent trace insert conflict rereads and verifies the stored trace; the result is then `replayed: true` because it is the stored trace, while its `provider_requests` still counts the embedding request this invocation made before it lost the race (a later audit replay reports zero). Results carry constant `current_policy_validated: false`, `claim_support_validated: false` and `caller_authorized_scope: required`, and `generation_current` is only whether the generation was still the pointer at the last observation, never current-policy proof. Every new step needs an active run, a present corpus and an immutable intent.
+
+**Deadline.** The deadline is checked at the explicit service phase boundaries and again before any result, new or replayed, is returned; it is not checked inside each nested lookup of the query-vector phase or inside the snapshot's SQL. A synchronous SQL call is not interrupted by it and may continue until control returns to the service; a step whose deadline has passed by the next boundary returns `deadline_passed`, never a result. Work already committed (an intent, a settled embedding, a written trace) is kept, never rolled back or reissued, so a later timely retry of the same step replays the trace or reuses the vector without a new call.
+
+**Failure and crash behavior.** Before the intent commits nothing persists. After the intent and before any embedding, a retry proceeds to the embedding phase (it reuses a cached vector or runs the step's job). Once the embedding evidence, the publication of the vector to the cache and the settlement have all completed but the trace has not been written, a retry reuses the cached vector with zero provider requests and writes the trace. A crash or an ambiguous outcome after dispatch can instead leave an unresolved foundation hold: the step then refuses or falls back according to the dense policy, and the request is never reissued automatically. After the trace, a retry replays. A changed valid request is never accepted or reissued under an old step: on the completed-trace path the stored request fingerprint conflicts (`step_conflict`), and on the active-intent path the stored intent conflicts (`step_conflict`). The new-step path first requires an active run, so a retry of an incomplete step whose run has since become terminal is refused as `run_not_active` before any conflict is evaluated.
+
+**Limits.**
+- The tests use synthetic fixture corpora, synthetic vectors, synthetic credentials and a scripted provider transport. A passing semantic fixture shows mechanics, not retrieval quality, and no real-corpus query result exists.
+- The local retrieval budget counts cl100k tokens of the formatted evidence string. It is not a provider token count and not the size of any serialized model prompt; provider request tokens and live limits are measured separately with the providers' counting (see the token notes in the data provenance page).
+- SQL transactions (intent, snapshot, size measurement, trace insert) are not interrupted by deadlines and there is no per-statement timeout; only the embedding phase is cancellable. No hard wall-clock bound is claimed.
+- Intent rows are permanent per run and step. Exact dense search is linear in generation size; no timing or plan on the real corpus is measured here. There is no approximate index (HNSW is a later extended task), no reranking and no citation validation.
 
 ## Dev calibration allowlist and demo seeds
 

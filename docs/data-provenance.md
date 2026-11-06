@@ -202,3 +202,10 @@ and the offline `tokens` command calls neither. A separate reviewer probe of the
 `claude-haiku-5-5` on the same extracted bytes returned request-level estimates of 1,934 (policy) and 295,659
 (corpus) input tokens, each sent as one user message. Those are not bare-text tokenizations or full agent prompts,
 and they do not show that the model can use that much context. No OpenAI count has been measured.
+
+Three kinds of token figures must not be conflated. First, local counts: the counts above are of raw extracted text,
+and a retrieval step's budget (default 4096) is a local cl100k count of the whole formatted evidence string, headers and
+separators included. Second, a provider's count endpoint returns a preflight estimate of a request's input tokens, for
+the exact serialized request that was counted. Third, the usage a provider returns with an actual response is the billing
+evidence. The local counts are neither of the other two, and a count-endpoint result is not the billed amount. None of
+these is evidence of retrieval quality or of what a model can use.

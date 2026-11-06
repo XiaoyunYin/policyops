@@ -44,6 +44,14 @@ from policyops_contracts.retail_service import (
     ReadResult,
     ServiceContext,
 )
+from policyops_contracts.retrieval import (
+    RetrievalConfig,
+    RetrievalQuery,
+    RetrievalRefused,
+    RetrievalResult,
+    TraceCandidates,
+    TraceScope,
+)
 from policyops_contracts.seeds import CaseCustomerBinding, CustomerAuthentication, DemoSeed
 
 
@@ -76,6 +84,13 @@ MODELS: dict[str, type[BaseModel]] = {
     "retail-service-operation-result": OperationResult,
     "retail-service-read-request": ReadRequest,
     "retail-service-read-result": ReadResult,
+    # Retrieval steps (T13): the step request, its result or refusal, and the typed trace records.
+    "retrieval-config": RetrievalConfig,
+    "retrieval-query": RetrievalQuery,
+    "retrieval-refused": RetrievalRefused,
+    "retrieval-result": RetrievalResult,
+    "retrieval-trace-candidates": TraceCandidates,
+    "retrieval-trace-scope": TraceScope,
 }
 ADAPTERS: dict[str, TypeAdapter[object]] = {
     "agent-step": TypeAdapter(AgentStep),

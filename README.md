@@ -7,14 +7,15 @@ An evidence-grounded AI operations workbench for investigating customer-service 
 Implemented:
 - Locked development environments, publication safeguards and reviewed public-data acquisition.
 - Typed retail, consent and approval contracts, and the deterministic policy and tool gateway: scoped lookups, reads and computed, non-actionable write previews, and an execution precheck that loads persisted authority records by reference. It dispatches no write, and no persisted decision store or operation ledger exists yet.
-- PostgreSQL persistence (ten revisions), an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming, with the OpenAPI document and generated TypeScript types.
+- PostgreSQL persistence (eleven revisions), an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming, with the OpenAPI document and generated TypeScript types.
 - A model registry with dated prices, an exact cost calculator and a durable usage-budget ledger.
 - Provider adapters for the OpenAI Responses and Anthropic Messages APIs. User-approved, capped live smokes on 2026-11-05 verified the text, tool and structured-output paths for both providers. The Anthropic paths were verified only after the request stopped sending the optional `speed` field named by a diagnostic of the earlier HTTP 400 refusals, which remain recorded. No agent workflow calls the adapters.
 - An evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client tested against the pinned retail fixture.
 - T12 so far: an accounted and cached embedding foundation (local cl100k counting, one ledger-granted request per frozen batch, exact evidence, a per-workspace vector cache) with one bounded live compatibility smoke on 2026-11-05 (below), and a corpus-ingestion command: section-aware parser, source manifest, atomic generation publish, revision `0010`, and an operator CLI whose default is a read-only plan.
+- T13 (internal, programmatic): a retrieval step over one corpus's current generation with four modes: the retail-domain full-policy control, PostgreSQL full-text search, exact pgvector cosine and document-level reciprocal-rank fusion. It delivers bounded, formatted evidence under a whole-string cl100k budget, charges its query embedding to the run's shared budget, and records an immutable per-step intent and a trace with historical replay. It has been exercised on synthetic fixtures with scripted transport, and verified locally on Windows with Docker Desktop (lint, type checks, the application default and PostgreSQL suites, the evaluator default suite, the scanner and static checks); hosted CI has not been run.
 
 Not built yet:
-- Retrieval queries and ranking, and any API or worker caller of the embedding or ingestion code.
+- Any API, worker or agent-graph caller of the embedding, ingestion or retrieval code; reranking, citation validation and claim support (T14); retrieval-quality results on real queries; ANN or HNSW indexes; the UI.
 - An investigation runtime: starting a run answers 503 until T21, and only a deterministic test executor exercises the worker.
 - Persisted proposals and decisions, the execution workflow and the UI.
 
@@ -102,7 +103,7 @@ general counting accuracy or performance. No agent workflow calls the adapters y
 downloaded at runtime), a persisted job freezes its batch plan, each batch is one ledger-granted request with an
 explicit float encoding, and its evidence and validated vectors are published atomically to a per-workspace cache.
 Unknown or contradictory billing keeps the hold; a complete body is accounted even if its cleanup is interrupted.
-It is tested offline and on PostgreSQL. Nothing calls it from an API or the worker; the operator-run ingestion command below is its only caller.
+It is tested offline and on PostgreSQL. Nothing in an API, worker or agent graph calls it; its callers are the operator-run ingestion command below and the internal retrieval step's run-bound query embedding.
 
 **Live embedding smoke (2026-11-05).** One user-approved, capped compatibility check ran against accepted commit
 `3a037abb`: a single OpenAI `text-embedding-3-small` request (float, 1536 dimensions). The logical job had four ordered input
@@ -117,8 +118,8 @@ bounded cleanup; HTTP cleanup is bounded, but a synchronous SQL wait is not inte
 deadline proof. See [docs/architecture.md](docs/architecture.md#embedding-foundation).
 
 **Corpus ingestion (T12).** `policyops.retrieval` imports one corpus into one workspace as a new, atomically
-activated *generation*. It is an operator-run command (no HTTP endpoint, no worker), and there is no retrieval query,
-ranking or caller yet. It was verified locally on Windows with Docker Desktop: the application suite (1,149 default
+activated *generation*. It is an operator-run command (no HTTP endpoint, no worker); retrieval over its generations is the internal
+component described below, and no API or worker calls either. It was verified locally on Windows with Docker Desktop: the application suite (1,149 default
 cases and 415 PostgreSQL cases), the evaluator suite (168 cases, 35 of them PostgreSQL), strict linting and type
 checks, the upgrade of a genuine populated pre-ingestion database dump to `0010`, and a scripted full-manifest
 import (below). Hosted and Linux CI have not been run. The pieces:
@@ -196,6 +197,19 @@ retrieval-quality, cost-saving or speed evidence, and the serialized vector text
 database storage nor billable input tokens. See [docs/architecture.md](docs/architecture.md#corpus-ingestion) and
 [docs/data-provenance.md](docs/data-provenance.md#ingestion-manifest).
 
+**Retrieval steps (T13).** `policyops.retrieval` also contains an internal, programmatic retrieval step; no HTTP route, worker or agent graph calls it yet. One step reads exactly one corpus's current generation in one `REPEATABLE READ READ ONLY` snapshot, so a concurrent activation cannot mix generations, and it runs in one of four modes:
+
+- `full_policy`: the control for a corpus of the retail domain only: every chunk, or a refusal (at most 16 chunks and the same 4096-token budget; never truncated);
+- `lexical`: PostgreSQL `websearch_to_tsquery` with `ts_rank_cd`;
+- `dense`: exact pgvector cosine distance (no index, no approximation);
+- `hybrid`: document-level reciprocal-rank fusion (k = 60, the best 20 documents per branch by best chunk) with exact fractions and a total, stable tie order. A lexical score is never compared with a distance.
+
+Ranked delivery defaults to at most 6 chunks and 4096 cl100k tokens, counted on the whole formatted string (headers and separators included, because token counts are not additive). A chunk that does not fit is skipped, never truncated. Configuration and results are strict, versioned, bounded contracts: no free dictionaries, configuration values are strict integers and enumerations, and scores are decimal strings (query vectors and stored vectors remain floats).
+
+A step is identified by its run and caller-owned step number; the digest of its query, scope and configuration is its request fingerprint. The query embedding is run-bound: exactly one input, reserved in the run's shared budget scope, cached per workspace, with a frozen job and no ambiguous reissue. A hybrid step may fall back to lexical only when explicitly configured and flagged; a strict mode refuses instead, and there is no model fallback. Revision `0011` records an append-only intent per run and step before any provider work, so a retry with a changed query, scope or configuration conflicts instead of silently paying again. A stored trace replays from the immutable version bodies, spans and digests; "current generation" there is only the last observation. A result never establishes current-policy validity, source support or authorization: the calling service must already have authorized the run, case and corpus, and citation validation and refresh after a retired chunk (T14) are not implemented.
+
+It has been exercised only on synthetic fixture corpora with synthetic vectors and scripted transport; no retrieval-quality, latency, cost or hosted-CI result is claimed. Adjacent-context expansion is deferred to development tuning (T15), HNSW is a later extended task, and synchronous SQL waits are not interrupted by a deadline. See [docs/architecture.md](docs/architecture.md#retrieval-steps) and [docs/database.md](docs/database.md#migrations).
+
 ## Retail simulator
 
 `evals/.../retail_sim` wraps the pinned upstream retail tools (no fork) in an internal HTTP service. Each case gets
@@ -242,7 +256,7 @@ authorization deadline, and dispatches nothing.
 
 ## Application database
 
-`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; a ten-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication; `0009` adds the embedding job/batch/evidence tables and the per-workspace vector cache; `0010` adds corpora, generation membership and provenance, and publication/citation guards. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
+`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; an eleven-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication; `0009` adds the embedding job/batch/evidence tables and the per-workspace vector cache; `0010` adds corpora, generation membership and provenance, and publication/citation guards; `0011` adds the append-only per-step retrieval request intent. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; business workflow authorization remains later work.
 
 ## Development setup
 

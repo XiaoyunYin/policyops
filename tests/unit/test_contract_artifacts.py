@@ -16,6 +16,7 @@ from policyops_contracts.policy import RETAIL_POLICY, RETAIL_RULES, RULES_BY_ID
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail import WRITE_TOOLS, ToolName
 from policyops_contracts.retail_service import LookupResult, MutationRequest, OperationResult
+from policyops_contracts.retrieval import RetrievalQuery, RetrievalResult
 from policyops_contracts.schema_export import export
 from policyops_contracts.seeds import CaseCustomerBinding, CustomerAuthentication, DemoSeed
 
@@ -31,6 +32,7 @@ EXAMPLE_MODELS: dict[str, type[BaseModel]] = {
     "retail-service-mutation-request.modify-items": MutationRequest,
     "retail-service-operation-result.committed": OperationResult,
     "retail-service-lookup-result.unknown": LookupResult,
+    "retrieval-query.hybrid": RetrievalQuery, "retrieval-result.hybrid": RetrievalResult,
 }
 HIDDEN_FIELD_NAMES = ("user_scenario", "instructions", "known_info", "unknown_info", "reason_for_call",
                       "evaluation_criteria", "nl_assertions", "reward_basis", "required_documents", "initial_state")

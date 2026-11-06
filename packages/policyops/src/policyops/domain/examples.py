@@ -169,6 +169,38 @@ def _gateway_examples(proposal: Any) -> dict[str, Any]:
     }
 
 
+def _retrieval_examples(world: World) -> dict[str, Any]:
+    """A fictional hybrid retrieval step (T13) and its result: synthetic IDs, scores and text only."""
+    from policyops_contracts.retrieval import (
+        BranchDocument,
+        EvidenceChunk,
+        FusedDocument,
+        RetrievalConfig,
+        RetrievalQuery,
+        RetrievalResult,
+        RetrievalScope,
+    )
+
+    query = RetrievalQuery(text="Can a refund go to a gift card?", run_id=world.run, step=3,
+                           scope=RetrievalScope(corpus_key="example-policy"), config=RetrievalConfig(mode="hybrid"))
+    document, version, chunk = UUID(int=7001), UUID(int=7002), UUID(int=7003)
+    text = "Refunds go to the original payment method or an existing gift card."
+    heading = "Returns"
+    evidence_text = f"[E1] example:policy/returns version 1 | {heading} | chars 0-{len(text)}\n{text}"
+    result = RetrievalResult(
+        trace_id=UUID(int=7004), run_id=world.run, step=3, generation_id=UUID(int=7005), generation_current=True,
+        replayed=False, mode="hybrid", lexical_status="ok", dense_status="ok",
+        lexical=(BranchDocument(document_id=document, rank=1, score="0.1", chunk_ids=(chunk,)),),
+        dense=(BranchDocument(document_id=document, rank=1, score="0.2928932188134524", chunk_ids=(chunk,)),),
+        fused=(FusedDocument(document_id=document, rank=1, rrf="2/61", lexical_rank=1, dense_rank=1),),
+        evidence=(EvidenceChunk(evidence_id="E1", chunk_id=chunk, document_id=document, document_version_id=version,
+                                source_uri="example:policy/returns", version_number=1, heading=heading, start=0,
+                                end=len(text), text=text),),
+        evidence_text=evidence_text, evidence_tokens=31, config_sha256=query.config.sha256(),
+        request_sha256=query.request_sha256(), payload_sha256="0" * 64, provider_requests=0)
+    return {"retrieval-query.hybrid": query, "retrieval-result.hybrid": result}
+
+
 def build_examples() -> dict[str, bytes]:
     """Canonical JSON documents for one fictional exchange flow, plus small standalone examples."""
     from policyops.domain.approval_rules import Decided, decide
@@ -249,6 +281,7 @@ def build_examples() -> dict[str, bytes]:
         "demo-seed": DemoSeed(seed_id="retail-demo-9999", label="Retail demo 9999", domain="retail",
                               upstream_task_id="9999", kind="mutation", allowlist_sha256="0" * 64),
         **_retail_service_examples(world),
+        **_retrieval_examples(world),
     }
     return {f"{name}.json": (json.dumps(json.loads(model.model_dump_json()), indent=2, sort_keys=True) + "\n").encode()
             for name, model in sorted(documents.items()) if model is not None}

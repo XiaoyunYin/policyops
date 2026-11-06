@@ -1,0 +1,64 @@
+{
+  "caller_authorized_scope": "required",
+  "claim_support_validated": false,
+  "config_sha256": "0f428c905422e4a8b91aefd49140bbcd5cbb7a9aba4c8a0be42f13ee254658ee",
+  "current_policy_validated": false,
+  "dense": [
+    {
+      "chunk_ids": [
+        "00000000-0000-0000-0000-000000001b5b"
+      ],
+      "document_id": "00000000-0000-0000-0000-000000001b59",
+      "rank": 1,
+      "score": "0.2928932188134524"
+    }
+  ],
+  "dense_status": "ok",
+  "dense_unavailable": null,
+  "evidence": [
+    {
+      "chunk_id": "00000000-0000-0000-0000-000000001b5b",
+      "document_id": "00000000-0000-0000-0000-000000001b59",
+      "document_version_id": "00000000-0000-0000-0000-000000001b5a",
+      "end": 67,
+      "evidence_id": "E1",
+      "heading": "Returns",
+      "source_uri": "example:policy/returns",
+      "start": 0,
+      "text": "Refunds go to the original payment method or an existing gift card.",
+      "version_number": 1
+    }
+  ],
+  "evidence_text": "[E1] example:policy/returns version 1 | Returns | chars 0-67\nRefunds go to the original payment method or an existing gift card.",
+  "evidence_tokens": 31,
+  "fused": [
+    {
+      "dense_rank": 1,
+      "document_id": "00000000-0000-0000-0000-000000001b59",
+      "lexical_rank": 1,
+      "rank": 1,
+      "rrf": "2/61"
+    }
+  ],
+  "generation_current": true,
+  "generation_id": "00000000-0000-0000-0000-000000001b5d",
+  "lexical": [
+    {
+      "chunk_ids": [
+        "00000000-0000-0000-0000-000000001b5b"
+      ],
+      "document_id": "00000000-0000-0000-0000-000000001b59",
+      "rank": 1,
+      "score": "0.1"
+    }
+  ],
+  "lexical_status": "ok",
+  "mode": "hybrid",
+  "payload_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "provider_requests": 0,
+  "replayed": false,
+  "request_sha256": "4d4832c1d3a70402fb63d191b554fe8bad7870f2de6b4a23b17faf57ca60c16a",
+  "run_id": "00000000-0000-0000-0000-000000000003",
+  "step": 3,
+  "trace_id": "00000000-0000-0000-0000-000000001b5c"
+}

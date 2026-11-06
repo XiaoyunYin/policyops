@@ -1,0 +1,116 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "Versioned, caller-supplied configuration. Every field is in `sha256()` and therefore in the step's request\nfingerprint and trace. `full_policy_max_chunks` is the explicit baseline exception to `max_chunks`; both modes\nshare `max_evidence_tokens` (the whole formatted, concatenated evidence string counted with cl100k).",
+  "properties": {
+    "branch_documents": {
+      "default": 20,
+      "maximum": 50,
+      "minimum": 1,
+      "title": "Branch Documents",
+      "type": "integer"
+    },
+    "chunks_per_document": {
+      "default": 2,
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Chunks Per Document",
+      "type": "integer"
+    },
+    "dense_policy": {
+      "default": "lexical_fallback",
+      "enum": [
+        "lexical_fallback",
+        "refuse"
+      ],
+      "title": "Dense Policy",
+      "type": "string"
+    },
+    "embedding_dimensions": {
+      "const": 1536,
+      "default": 1536,
+      "title": "Embedding Dimensions",
+      "type": "integer"
+    },
+    "embedding_model": {
+      "const": "text-embedding-3-small",
+      "default": "text-embedding-3-small",
+      "title": "Embedding Model",
+      "type": "string"
+    },
+    "evidence_format": {
+      "const": "policyops.evidence-format/v1",
+      "default": "policyops.evidence-format/v1",
+      "title": "Evidence Format",
+      "type": "string"
+    },
+    "fts_config": {
+      "const": "english",
+      "default": "english",
+      "title": "Fts Config",
+      "type": "string"
+    },
+    "fts_rank": {
+      "const": "ts_rank_cd/32",
+      "default": "ts_rank_cd/32",
+      "title": "Fts Rank",
+      "type": "string"
+    },
+    "full_policy_max_chunks": {
+      "default": 16,
+      "maximum": 16,
+      "minimum": 1,
+      "title": "Full Policy Max Chunks",
+      "type": "integer"
+    },
+    "max_admission_attempts": {
+      "default": 64,
+      "maximum": 256,
+      "minimum": 1,
+      "title": "Max Admission Attempts",
+      "type": "integer"
+    },
+    "max_chunks": {
+      "default": 6,
+      "maximum": 16,
+      "minimum": 1,
+      "title": "Max Chunks",
+      "type": "integer"
+    },
+    "max_evidence_tokens": {
+      "default": 4096,
+      "maximum": 16000,
+      "minimum": 1,
+      "title": "Max Evidence Tokens",
+      "type": "integer"
+    },
+    "mode": {
+      "enum": [
+        "full_policy",
+        "lexical",
+        "dense",
+        "hybrid"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "rrf_k": {
+      "default": 60,
+      "maximum": 1000,
+      "minimum": 1,
+      "title": "Rrf K",
+      "type": "integer"
+    },
+    "v": {
+      "const": "policyops.retrieval-config/v2",
+      "default": "policyops.retrieval-config/v2",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mode"
+  ],
+  "title": "RetrievalConfig",
+  "type": "object"
+}

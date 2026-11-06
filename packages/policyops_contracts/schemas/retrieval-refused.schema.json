@@ -1,0 +1,55 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "enum": [
+        "query_empty",
+        "query_too_long",
+        "query_too_many_tokens",
+        "query_invalid_text",
+        "scope_invalid",
+        "config_invalid",
+        "config_trace_too_large",
+        "run_not_active",
+        "corpus_not_found",
+        "corpus_not_active",
+        "step_conflict",
+        "step_in_progress",
+        "full_policy_not_supported",
+        "full_policy_too_many_chunks",
+        "full_policy_exceeds_budget",
+        "evidence_uncountable",
+        "deadline_invalid",
+        "deadline_passed",
+        "embedding_unavailable",
+        "embedding_integrity",
+        "query_vector_invalid",
+        "trace_unavailable",
+        "replay_unsupported",
+        "replay_integrity"
+      ],
+      "title": "Code",
+      "type": "string"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    }
+  },
+  "required": [
+    "code"
+  ],
+  "title": "RetrievalRefused",
+  "type": "object"
+}

@@ -87,6 +87,7 @@ from policyops.budget.ledger import (
     DispatchGranted,
     Ledger,
     OperationBinding,
+    RunBinding,
     Settlement,
 )
 from policyops.persistence.budget import AppLedgerStore
@@ -126,6 +127,7 @@ from policyops_contracts.embedding import EmbeddedInput, EmbeddingJob
 
 
 OPERATION_KIND = "embedding"
+QUERY_PURPOSE = "query"  # run-bound query embeddings (T13); see `job_binding`
 PREPARE_SECONDS = 60.0
 
 
@@ -359,7 +361,7 @@ class _Run:
     configuration: Configuration
     job: Job
     inputs: dict[int, PlannedInput]
-    binding: OperationBinding
+    binding: OperationBinding | RunBinding
     owner: UUID
     deadline: float
     limits: EmbedLimits
@@ -537,19 +539,49 @@ def preflight(ledger: Ledger, store: EmbeddingStore, binding: OperationBinding, 
         raise _Stop("budget", "plan_exceeds_caps")
 
 
+def job_binding(identity: JobIdentity, run_id: UUID | None) -> RunBinding | Literal["operation"] | None:
+    """The budget binding a job's immutable identity admits; None for a refused combination.
+
+    A query job (`purpose == QUERY_PURPOSE`) is always run-bound: exactly one input, subject
+    `query.<run_id>.<step>`, charged to that run's shared scope (T13). Every other job keeps its own operation scope
+    (`run_id` must then be None), exactly as before: `"operation"` means `OperationBinding("embedding", <job id>)`,
+    which `run_job` constructs once the actual job ID exists (it is never built with a placeholder key)."""
+    if identity.purpose == QUERY_PURPOSE:
+        if run_id is None or identity.input_count != 1 or not identity.subject_key.startswith(f"query.{run_id}."):
+            return None
+        return RunBinding(run_id)
+    if run_id is not None:
+        return None
+    return "operation"
+
+
 async def run_job(ledger: Ledger, store: EmbeddingStore, providers: Providers, prepared_job: PreparedJob, *,
-                  deadline: float, owner: UUID | None = None, limits: EmbedLimits | None = None) -> JobReport:
+                  deadline: float, owner: UUID | None = None, limits: EmbedLimits | None = None,
+                  run_id: UUID | None = None) -> JobReport:
     """Plan (or resume) and run one embedding job. `deadline` is an absolute `time.monotonic()` instant, clamped to
-    the server's active-seconds cap and the job's own immutable window."""
+    the server's active-seconds cap and the job's own immutable window.
+
+    `run_id` (T13) binds a query job to its run's shared budget scope. The binding is derived from the job's immutable
+    identity (`job_binding`) and checked before any write: a mismatch is `BindingMismatch`. A run-bound job also needs
+    the run to be visible in this workspace and active (`EmbeddingStore.run_is_active`) before planning, cache use
+    or terminal reconciliation; otherwise the report is `blocked`/`run_not_active` with no job and no write. Its plan
+    is a single input, so there is no operation-scope preflight: the ledger's atomic run-scope reservation is the
+    only admission (and its run lock and active checks stay authoritative)."""
     started = time.monotonic()
     requested = _finite(deadline)
     check_binding(ledger, store)
+    derived = job_binding(prepared_job.identity, run_id)
+    if derived is None:
+        raise BindingMismatch("the job identity does not admit this budget binding")
+    if isinstance(derived, RunBinding) and not store.run_is_active(derived.run_id):
+        return JobReport(None, "blocked", "run_not_active")
     configuration = ledger.configuration
     window = configuration.caps.active_seconds
     job, batches = store.plan_job(prepared_job.identity, prepared_job.inputs, pack(prepared_job, configuration),
                                   window_seconds=window)
     remaining = store.remaining_seconds(job.id)
-    binding = OperationBinding(OPERATION_KIND, str(job.id))
+    binding: OperationBinding | RunBinding = (
+        derived if isinstance(derived, RunBinding) else OperationBinding(OPERATION_KIND, str(job.id)))
     report = JobReport(job.id, "incomplete")
     run = _Run(ledger, store, providers, configuration, job, {i.position: i for i in prepared_job.inputs}, binding,
                owner or uuid4(), min(requested, started + window, time.monotonic() + remaining),
@@ -557,7 +589,8 @@ async def run_job(ledger: Ledger, store: EmbeddingStore, providers: Providers, p
     try:
         if any(b.state not in TERMINAL for b in batches):
             _credential(providers)
-            preflight(ledger, store, binding, batches)
+            if isinstance(binding, OperationBinding):
+                preflight(ledger, store, binding, batches)
         for batch in batches:
             await run.batch(batch)
     except _Stop as stop:
@@ -580,10 +613,11 @@ async def run_job(ledger: Ledger, store: EmbeddingStore, providers: Providers, p
 
 
 def run_job_sync(ledger: Ledger, store: EmbeddingStore, providers: Providers, prepared_job: PreparedJob, *,
-                 deadline: float, owner: UUID | None = None, limits: EmbedLimits | None = None) -> JobReport:
+                 deadline: float, owner: UUID | None = None, limits: EmbedLimits | None = None,
+                 run_id: UUID | None = None) -> JobReport:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(run_job(ledger, store, providers, prepared_job, deadline=deadline, owner=owner,
-                                   limits=limits))
+                                   limits=limits, run_id=run_id))
     raise RuntimeError("run_job_sync cannot run inside an event loop; await run_job instead")

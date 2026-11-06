@@ -1,0 +1,344 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "BranchDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Chunk Ids",
+          "type": "array"
+        },
+        "document_id": {
+          "format": "uuid",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "rank": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "score": {
+          "maxLength": 40,
+          "pattern": "^-?(?:0|[1-9][0-9]{0,15})(?:\\.[0-9]{1,20})?(?:e-?[0-9]{1,3})?$",
+          "title": "Score",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "rank",
+        "score",
+        "chunk_ids"
+      ],
+      "title": "BranchDocument",
+      "type": "object"
+    },
+    "DeliveredChunk": {
+      "additionalProperties": false,
+      "description": "One delivered evidence block as recorded in the trace (immutable identities and spans only).",
+      "properties": {
+        "chunk_id": {
+          "format": "uuid",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "document_id": {
+          "format": "uuid",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "document_version_id": {
+          "format": "uuid",
+          "title": "Document Version Id",
+          "type": "string"
+        },
+        "end": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "End",
+          "type": "integer"
+        },
+        "evidence_number": {
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Evidence Number",
+          "type": "integer"
+        },
+        "heading": {
+          "maxLength": 500,
+          "title": "Heading",
+          "type": "string"
+        },
+        "start": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        },
+        "text_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Text Sha256",
+          "type": "string"
+        },
+        "version_number": {
+          "maximum": 9007199254740992,
+          "minimum": 1,
+          "title": "Version Number",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "evidence_number",
+        "chunk_id",
+        "document_id",
+        "document_version_id",
+        "version_number",
+        "start",
+        "end",
+        "heading",
+        "text_sha256"
+      ],
+      "title": "DeliveredChunk",
+      "type": "object"
+    },
+    "Exclusions": {
+      "additionalProperties": false,
+      "properties": {
+        "count_refused": {
+          "default": 0,
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Count Refused",
+          "type": "integer"
+        },
+        "dense_nan_distance": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Dense Nan Distance",
+          "type": "integer"
+        },
+        "text_oversized": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Text Oversized",
+          "type": "integer"
+        }
+      },
+      "title": "Exclusions",
+      "type": "object"
+    },
+    "FusedDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "dense_rank": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dense Rank"
+        },
+        "document_id": {
+          "format": "uuid",
+          "title": "Document Id",
+          "type": "string"
+        },
+        "lexical_rank": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lexical Rank"
+        },
+        "rank": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "rrf": {
+          "maxLength": 103,
+          "pattern": "^[1-9][0-9]{0,40}/[1-9][0-9]{0,60}$",
+          "title": "Rrf",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "rank",
+        "rrf"
+      ],
+      "title": "FusedDocument",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The typed `retrieval_traces.candidates` record. `payload_sha256` covers everything here except itself.",
+  "properties": {
+    "admission_attempts": {
+      "default": 0,
+      "maximum": 256,
+      "minimum": 0,
+      "title": "Admission Attempts",
+      "type": "integer"
+    },
+    "delivered": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/DeliveredChunk"
+      },
+      "maxItems": 16,
+      "title": "Delivered",
+      "type": "array"
+    },
+    "dense": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BranchDocument"
+      },
+      "maxItems": 50,
+      "title": "Dense",
+      "type": "array"
+    },
+    "dense_status": {
+      "enum": [
+        "ok",
+        "unavailable",
+        "not_used"
+      ],
+      "title": "Dense Status",
+      "type": "string"
+    },
+    "dense_unavailable": {
+      "anyOf": [
+        {
+          "enum": [
+            "budget",
+            "unresolved",
+            "vectors_invalid",
+            "job_unsettled",
+            "missing_vector"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dense Unavailable"
+    },
+    "evidence_text_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Evidence Text Sha256",
+      "type": "string"
+    },
+    "evidence_tokens": {
+      "maximum": 16000,
+      "minimum": 0,
+      "title": "Evidence Tokens",
+      "type": "integer"
+    },
+    "exclusions": {
+      "$ref": "#/$defs/Exclusions",
+      "default": {
+        "count_refused": 0,
+        "dense_nan_distance": 0,
+        "text_oversized": 0
+      }
+    },
+    "fused": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/FusedDocument"
+      },
+      "maxItems": 100,
+      "title": "Fused",
+      "type": "array"
+    },
+    "generation_id": {
+      "format": "uuid",
+      "title": "Generation Id",
+      "type": "string"
+    },
+    "lexical": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BranchDocument"
+      },
+      "maxItems": 50,
+      "title": "Lexical",
+      "type": "array"
+    },
+    "lexical_status": {
+      "enum": [
+        "ok",
+        "empty_query",
+        "not_used"
+      ],
+      "title": "Lexical Status",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "full_policy",
+        "lexical",
+        "dense",
+        "hybrid"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "payload_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Payload Sha256",
+      "type": "string"
+    },
+    "request_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Sha256",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.retrieval-trace/v1",
+      "default": "policyops.retrieval-trace/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_sha256",
+    "generation_id",
+    "mode",
+    "lexical_status",
+    "dense_status",
+    "evidence_tokens",
+    "evidence_text_sha256",
+    "payload_sha256"
+  ],
+  "title": "TraceCandidates",
+  "type": "object"
+}

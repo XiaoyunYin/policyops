@@ -74,6 +74,8 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         # T12 ingestion (0010): only the corpus pointer moves; generation membership is immutable at runtime.
         "app.corpora": (SI, {"active_generation_id", "version", "updated_at"}),
         "app.generation_documents": (SI, set()),
+        # T13 retrieval step intents (0011): append-only request identities.
+        "app.retrieval_steps": (SI, set()),
     },
     AUTH_RUNTIME: {
         "identity.workspaces": (SI, set()),

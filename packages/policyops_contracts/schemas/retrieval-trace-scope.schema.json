@@ -1,0 +1,71 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "The typed `retrieval_traces.authorized_scope` record: what the step was bound to (no query text).",
+  "properties": {
+    "allowlist_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Allowlist Sha256",
+      "type": "string"
+    },
+    "config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Sha256",
+      "type": "string"
+    },
+    "corpus_key": {
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "title": "Corpus Key",
+      "type": "string"
+    },
+    "document_ids": {
+      "default": [],
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Document Ids",
+      "type": "array"
+    },
+    "embedding_job_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Embedding Job Id"
+    },
+    "query_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Query Sha256",
+      "type": "string"
+    },
+    "step": {
+      "maximum": 9999,
+      "minimum": 0,
+      "title": "Step",
+      "type": "integer"
+    },
+    "v": {
+      "const": "policyops.retrieval-scope/v1",
+      "default": "policyops.retrieval-scope/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "corpus_key",
+    "step",
+    "allowlist_sha256",
+    "config_sha256",
+    "query_sha256"
+  ],
+  "title": "TraceScope",
+  "type": "object"
+}

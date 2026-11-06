@@ -1,0 +1,18 @@
+{
+  "actor_config_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+  "catalog_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "domain": "retail",
+  "limits": {
+    "consecutive_invalid": 2,
+    "knowledge_steps": 0,
+    "max_output_tokens": 1024,
+    "model_calls": 16,
+    "steps_per_turn": 8,
+    "transcript_bytes": 48000,
+    "transcript_messages": 128
+  },
+  "policy_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+  "prompt_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "prompt_version": "policyops.agent-prompt/v1",
+  "v": "policyops.agent-config/v1"
+}

@@ -1,0 +1,23 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "What the read-only knowledge port returns: content only. The runtime binds it to the pending call ID.",
+  "properties": {
+    "content": {
+      "maxLength": 32000,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "is_error": {
+      "default": false,
+      "title": "Is Error",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "content"
+  ],
+  "title": "KnowledgeResult",
+  "type": "object"
+}

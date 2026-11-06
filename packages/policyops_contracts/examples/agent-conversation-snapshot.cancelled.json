@@ -1,0 +1,52 @@
+{
+  "config_sha256": "90688bbf659c5d6501e66a40292b0a64cc8472464ff7571caffba16b889d4632",
+  "consecutive_invalid": 0,
+  "conversation_id": "00000000-0000-0000-0000-000000002329",
+  "knowledge_steps": 0,
+  "model_calls": 4,
+  "pending_tool": {
+    "call_id": "call_example_2",
+    "name": "cancel_pending_order",
+    "outcome": "unknown",
+    "read_only": false
+  },
+  "terminal": "cancelled",
+  "transcript": [
+    {
+      "kind": "user",
+      "text": "Where is my order #W0000001?"
+    },
+    {
+      "code": "empty_reply",
+      "kind": "notice"
+    },
+    {
+      "arguments_json": "{\"order_id\":\"#W0000001\"}",
+      "call_id": "call_example_1",
+      "kind": "tool_call",
+      "name": "get_order_details"
+    },
+    {
+      "call_id": "call_example_1",
+      "content": "{\"order_id\":\"#W0000001\",\"status\":\"pending\"}",
+      "is_error": false,
+      "kind": "tool_result"
+    },
+    {
+      "kind": "agent",
+      "text": "Your order is pending. Would you like to change it?"
+    },
+    {
+      "kind": "user",
+      "text": "Yes, please cancel it."
+    },
+    {
+      "arguments_json": "{\"order_id\":\"#W0000001\",\"reason\":\"no longer needed\"}",
+      "call_id": "call_example_2",
+      "kind": "tool_call",
+      "name": "cancel_pending_order"
+    }
+  ],
+  "turns": 2,
+  "v": "policyops.agent-snapshot/v1"
+}

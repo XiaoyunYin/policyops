@@ -1,0 +1,311 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "AgentMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "agent",
+          "default": "agent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AgentMessage",
+      "type": "object"
+    },
+    "AgentToolCall": {
+      "additionalProperties": false,
+      "description": "An accepted single tool call, with the model's own validated call ID.",
+      "properties": {
+        "arguments_json": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "title": "Arguments Json",
+          "type": "string"
+        },
+        "call_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,128}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "name",
+        "arguments_json"
+      ],
+      "title": "AgentToolCall",
+      "type": "object"
+    },
+    "PendingToolOutcome": {
+      "additionalProperties": false,
+      "description": "A tool dispatch began but no validated matching result was accepted: its effect is unknown, never absent.",
+      "properties": {
+        "call_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,128}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "outcome": {
+          "const": "unknown",
+          "default": "unknown",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "read_only": {
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "call_id",
+        "name",
+        "read_only"
+      ],
+      "title": "PendingToolOutcome",
+      "type": "object"
+    },
+    "RuntimeNotice": {
+      "additionalProperties": false,
+      "description": "A fixed runtime notice in place of an invalid model reply; it never quotes model output.",
+      "properties": {
+        "code": {
+          "enum": [
+            "several_tool_calls",
+            "text_with_tool_call",
+            "empty_reply",
+            "unknown_tool",
+            "invalid_arguments",
+            "invalid_output",
+            "protocol_violation"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "kind": {
+          "const": "notice",
+          "default": "notice",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "RuntimeNotice",
+      "type": "object"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,128}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "is_error": {
+          "default": false,
+          "title": "Is Error",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "content"
+      ],
+      "title": "ToolResult",
+      "type": "object"
+    },
+    "UserMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "user",
+          "default": "user",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "UserMessage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "An immutable, bounded copy of one conversation's state, for inspection only (there is no resume).",
+  "properties": {
+    "config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Sha256",
+      "type": "string"
+    },
+    "consecutive_invalid": {
+      "exclusiveMaximum": 2147483648,
+      "minimum": 0,
+      "title": "Consecutive Invalid",
+      "type": "integer"
+    },
+    "conversation_id": {
+      "format": "uuid",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "knowledge_steps": {
+      "exclusiveMaximum": 2147483648,
+      "minimum": 0,
+      "title": "Knowledge Steps",
+      "type": "integer"
+    },
+    "model_calls": {
+      "exclusiveMaximum": 2147483648,
+      "minimum": 0,
+      "title": "Model Calls",
+      "type": "integer"
+    },
+    "pending_tool": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PendingToolOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "terminal": {
+      "anyOf": [
+        {
+          "enum": [
+            "handoff",
+            "model_calls_exhausted",
+            "steps_per_turn_exhausted",
+            "invalid_steps",
+            "transcript_limit",
+            "knowledge_steps_exhausted",
+            "model_refused",
+            "model_truncated",
+            "provider_failed",
+            "budget",
+            "deadline",
+            "contract_gap",
+            "count_not_admitted",
+            "tool_port_failed",
+            "tool_result_invalid",
+            "cancelled",
+            "internal_error"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terminal"
+    },
+    "transcript": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "agent": "#/$defs/AgentMessage",
+            "notice": "#/$defs/RuntimeNotice",
+            "tool_call": "#/$defs/AgentToolCall",
+            "tool_result": "#/$defs/ToolResult",
+            "user": "#/$defs/UserMessage"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/UserMessage"
+          },
+          {
+            "$ref": "#/$defs/AgentMessage"
+          },
+          {
+            "$ref": "#/$defs/AgentToolCall"
+          },
+          {
+            "$ref": "#/$defs/ToolResult"
+          },
+          {
+            "$ref": "#/$defs/RuntimeNotice"
+          }
+        ]
+      },
+      "maxItems": 256,
+      "title": "Transcript",
+      "type": "array"
+    },
+    "turns": {
+      "exclusiveMaximum": 2147483648,
+      "minimum": 0,
+      "title": "Turns",
+      "type": "integer"
+    },
+    "v": {
+      "const": "policyops.agent-snapshot/v1",
+      "default": "policyops.agent-snapshot/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "config_sha256",
+    "turns",
+    "model_calls",
+    "knowledge_steps",
+    "consecutive_invalid",
+    "transcript"
+  ],
+  "title": "ConversationSnapshot",
+  "type": "object"
+}

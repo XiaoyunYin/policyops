@@ -25,6 +25,15 @@ from policyops_contracts.consent import (
     ProposalPresentationRecord,
     SimulatorConfirmationEvent,
 )
+from policyops_contracts.conversation import (
+    AgentConfig,
+    ConversationSnapshot,
+    Entry,
+    KnowledgeResult,
+    PolicyContext,
+    ToolCatalog,
+    TurnOutcome,
+)
 from policyops_contracts.e01 import E01Manifest, E01Report, E01Selection, TrajectoryRecord
 from policyops_contracts.errors import ErrorEnvelope
 from policyops_contracts.events import EventEnvelope
@@ -112,12 +121,20 @@ MODELS: dict[str, type[BaseModel]] = {
     "e01-selection": E01Selection,
     "e01-trajectory": TrajectoryRecord,
     "e01-report": E01Report,
+    # The minimal agent baseline (T20): configuration identity, its bound inputs, one turn and a state snapshot.
+    "agent-config": AgentConfig,
+    "agent-policy-context": PolicyContext,
+    "agent-tool-catalog": ToolCatalog,
+    "agent-knowledge-result": KnowledgeResult,
+    "agent-turn-outcome": TurnOutcome,
+    "agent-conversation-snapshot": ConversationSnapshot,
 }
 ADAPTERS: dict[str, TypeAdapter[object]] = {
     "agent-step": TypeAdapter(AgentStep),
     "tool-call": TypeAdapter(ToolCall),
     # What the agent sees after one gateway step (T17); a computed preview is distinct from a pending proposal.
     "tool-observation": TypeAdapter(ToolObservation),
+    "agent-transcript-entry": TypeAdapter(Entry),
 }
 
 

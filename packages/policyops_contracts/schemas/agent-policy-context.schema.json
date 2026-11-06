@@ -1,0 +1,43 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "additionalProperties": false,
+  "description": "The visible domain policy, given to the agent as its system context. `pinned_retail_policy` must be exactly the\npinned upstream retail policy; `fictional` is for tests and examples and is refused outside the test\nenvironment by the runtime.",
+  "properties": {
+    "domain": {
+      "enum": [
+        "retail",
+        "banking_knowledge"
+      ],
+      "title": "Domain",
+      "type": "string"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "pinned_retail_policy",
+        "harness_domain_policy",
+        "fictional"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "text": {
+      "maxLength": 64000,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "domain",
+    "source",
+    "text",
+    "sha256"
+  ],
+  "title": "PolicyContext",
+  "type": "object"
+}

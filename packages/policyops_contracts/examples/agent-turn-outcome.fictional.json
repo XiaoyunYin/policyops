@@ -1,0 +1,44 @@
+{
+  "appended": [
+    {
+      "kind": "user",
+      "text": "Where is my order #W0000001?"
+    },
+    {
+      "code": "empty_reply",
+      "kind": "notice"
+    },
+    {
+      "arguments_json": "{\"order_id\":\"#W0000001\"}",
+      "call_id": "call_example_1",
+      "kind": "tool_call",
+      "name": "get_order_details"
+    },
+    {
+      "call_id": "call_example_1",
+      "content": "{\"order_id\":\"#W0000001\",\"status\":\"pending\"}",
+      "is_error": false,
+      "kind": "tool_result"
+    },
+    {
+      "kind": "agent",
+      "text": "Your order is pending. Would you like to change it?"
+    }
+  ],
+  "cleanup_unconfirmed": false,
+  "config_sha256": "90688bbf659c5d6501e66a40292b0a64cc8472464ff7571caffba16b889d4632",
+  "conversation_id": "00000000-0000-0000-0000-000000002329",
+  "counts_claimed": 3,
+  "detail": null,
+  "inferences_dispatched": 3,
+  "invalid_steps": 1,
+  "message": {
+    "kind": "agent",
+    "text": "Your order is pending. Would you like to change it?"
+  },
+  "model_calls": 3,
+  "pending_tool": null,
+  "terminal": null,
+  "turn": 0,
+  "v": "policyops.agent-turn/v1"
+}

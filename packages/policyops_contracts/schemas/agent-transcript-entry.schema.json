@@ -1,0 +1,174 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "AgentMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "agent",
+          "default": "agent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "AgentMessage",
+      "type": "object"
+    },
+    "AgentToolCall": {
+      "additionalProperties": false,
+      "description": "An accepted single tool call, with the model's own validated call ID.",
+      "properties": {
+        "arguments_json": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "title": "Arguments Json",
+          "type": "string"
+        },
+        "call_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,128}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "name",
+        "arguments_json"
+      ],
+      "title": "AgentToolCall",
+      "type": "object"
+    },
+    "RuntimeNotice": {
+      "additionalProperties": false,
+      "description": "A fixed runtime notice in place of an invalid model reply; it never quotes model output.",
+      "properties": {
+        "code": {
+          "enum": [
+            "several_tool_calls",
+            "text_with_tool_call",
+            "empty_reply",
+            "unknown_tool",
+            "invalid_arguments",
+            "invalid_output",
+            "protocol_violation"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "kind": {
+          "const": "notice",
+          "default": "notice",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "RuntimeNotice",
+      "type": "object"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,128}$",
+          "title": "Call Id",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "is_error": {
+          "default": false,
+          "title": "Is Error",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "content"
+      ],
+      "title": "ToolResult",
+      "type": "object"
+    },
+    "UserMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "user",
+          "default": "user",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "UserMessage",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "agent": "#/$defs/AgentMessage",
+      "notice": "#/$defs/RuntimeNotice",
+      "tool_call": "#/$defs/AgentToolCall",
+      "tool_result": "#/$defs/ToolResult",
+      "user": "#/$defs/UserMessage"
+    },
+    "propertyName": "kind"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/UserMessage"
+    },
+    {
+      "$ref": "#/$defs/AgentMessage"
+    },
+    {
+      "$ref": "#/$defs/AgentToolCall"
+    },
+    {
+      "$ref": "#/$defs/ToolResult"
+    },
+    {
+      "$ref": "#/$defs/RuntimeNotice"
+    }
+  ]
+}

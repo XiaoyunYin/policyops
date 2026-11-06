@@ -271,6 +271,45 @@ def _e01_examples(world: World) -> dict[str, Any]:
     return {"e01-trajectory.fictional": record}
 
 
+def _agent_examples(world: World) -> dict[str, Any]:
+    """Fictional minimal-agent records (T20): synthetic digests and IDs only; not a measured conversation."""
+    from policyops_contracts.conversation import (
+        AgentConfig,
+        AgentLimits,
+        AgentMessage,
+        AgentToolCall,
+        ConversationSnapshot,
+        PendingToolOutcome,
+        RuntimeNotice,
+        ToolResult,
+        TurnOutcome,
+        UserMessage,
+    )
+
+    config = AgentConfig(prompt_sha256="6" * 64, domain="retail", policy_sha256="7" * 64, catalog_sha256="8" * 64,
+                         limits=AgentLimits(), actor_config_sha256="9" * 64)
+    conversation = UUID(int=9001)
+    lookup = AgentToolCall(call_id="call_example_1", name="get_order_details",
+                           arguments_json=f'{{"order_id":"{world.order_id}"}}')
+    turn = TurnOutcome(
+        conversation_id=conversation, turn=0, config_sha256=config.digest(),
+        message=AgentMessage(text="Your order is pending. Would you like to change it?"),
+        appended=(UserMessage(text=f"Where is my order {world.order_id}?"), RuntimeNotice(code="empty_reply"),
+                  lookup, ToolResult(call_id=lookup.call_id, content=f'{{"order_id":"{world.order_id}",'
+                                                                     '"status":"pending"}'),
+                  AgentMessage(text="Your order is pending. Would you like to change it?")),
+        model_calls=3, invalid_steps=1, counts_claimed=3, inferences_dispatched=3, cleanup_unconfirmed=False)
+    cancel = AgentToolCall(call_id="call_example_2", name="cancel_pending_order",
+                           arguments_json=f'{{"order_id":"{world.order_id}","reason":"no longer needed"}}')
+    snapshot = ConversationSnapshot(
+        conversation_id=conversation, config_sha256=config.digest(), turns=2, model_calls=4, knowledge_steps=0,
+        consecutive_invalid=0, terminal="cancelled",
+        pending_tool=PendingToolOutcome(call_id=cancel.call_id, name=cancel.name, read_only=False),
+        transcript=(*turn.appended, UserMessage(text="Yes, please cancel it."), cancel))
+    return {"agent-config.fictional": config, "agent-turn-outcome.fictional": turn,
+            "agent-conversation-snapshot.cancelled": snapshot}
+
+
 def build_examples() -> dict[str, bytes]:
     """Canonical JSON documents for one fictional exchange flow, plus small standalone examples."""
     from policyops.domain.approval_rules import Decided, decide
@@ -354,6 +393,7 @@ def build_examples() -> dict[str, bytes]:
         **_retrieval_examples(world),
         **_grounding_examples(world),
         **_e01_examples(world),
+        **_agent_examples(world),
     }
     return {f"{name}.json": (json.dumps(json.loads(model.model_dump_json()), indent=2, sort_keys=True) + "\n").encode()
             for name, model in sorted(documents.items()) if model is not None}

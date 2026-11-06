@@ -24,6 +24,15 @@ DOMAIN_FORBIDDEN_LAYERS = {
 }
 
 
+# The minimal agent (T20) parses and validates steps itself: no gateway, business adapter, persistence, HTTP,
+# worker, runtime, retrieval or framework import (later tasks substitute those behind its ports).
+MINIMAL_AGENT_FILES = ("minimal.py", "ports.py")
+MINIMAL_AGENT_FORBIDDEN = {
+    "policyops.gateway", "policyops.adapters", "policyops.persistence", "policyops.api", "policyops.worker",
+    "policyops.services", "policyops.runtime", "policyops.retrieval", "policyops.studies",
+}
+
+
 def imported_modules(root: Path) -> Iterator[tuple[Path, str]]:
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -44,6 +53,17 @@ def test_domain_imports_no_framework_or_outer_layer() -> None:
         (str(path.relative_to(REPO)), module)
         for path, module in imported_modules(APP / "domain")
         if matches(module, FRAMEWORKS | DOMAIN_FORBIDDEN_LAYERS)
+    ]
+    assert violations == []
+
+
+def test_the_minimal_agent_imports_no_gateway_persistence_or_framework() -> None:
+    seen = {path.name for path, _ in imported_modules(APP / "orchestration")}
+    assert set(MINIMAL_AGENT_FILES) <= seen
+    violations = [
+        (str(path.relative_to(REPO)), module)
+        for path, module in imported_modules(APP / "orchestration")
+        if path.name in MINIMAL_AGENT_FILES and matches(module, FRAMEWORKS | MINIMAL_AGENT_FORBIDDEN)
     ]
     assert violations == []
 

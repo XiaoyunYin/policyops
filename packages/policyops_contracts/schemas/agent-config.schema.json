@@ -1,0 +1,118 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "AgentLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "consecutive_invalid": {
+          "default": 2,
+          "maximum": 4,
+          "minimum": 1,
+          "title": "Consecutive Invalid",
+          "type": "integer"
+        },
+        "knowledge_steps": {
+          "default": 0,
+          "maximum": 32,
+          "minimum": 0,
+          "title": "Knowledge Steps",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "default": 1024,
+          "maximum": 2048,
+          "minimum": 64,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "model_calls": {
+          "default": 16,
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Model Calls",
+          "type": "integer"
+        },
+        "steps_per_turn": {
+          "default": 8,
+          "maximum": 32,
+          "minimum": 1,
+          "title": "Steps Per Turn",
+          "type": "integer"
+        },
+        "transcript_bytes": {
+          "default": 48000,
+          "maximum": 120000,
+          "minimum": 1024,
+          "title": "Transcript Bytes",
+          "type": "integer"
+        },
+        "transcript_messages": {
+          "default": 128,
+          "maximum": 256,
+          "minimum": 2,
+          "title": "Transcript Messages",
+          "type": "integer"
+        }
+      },
+      "title": "AgentLimits",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What a paired graph comparison must hold equal. Every digest is checked by the runtime before any work.",
+  "properties": {
+    "actor_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Actor Config Sha256",
+      "type": "string"
+    },
+    "catalog_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Catalog Sha256",
+      "type": "string"
+    },
+    "domain": {
+      "enum": [
+        "retail",
+        "banking_knowledge"
+      ],
+      "title": "Domain",
+      "type": "string"
+    },
+    "limits": {
+      "$ref": "#/$defs/AgentLimits"
+    },
+    "policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Policy Sha256",
+      "type": "string"
+    },
+    "prompt_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Prompt Sha256",
+      "type": "string"
+    },
+    "prompt_version": {
+      "const": "policyops.agent-prompt/v1",
+      "default": "policyops.agent-prompt/v1",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "v": {
+      "const": "policyops.agent-config/v1",
+      "default": "policyops.agent-config/v1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "prompt_sha256",
+    "domain",
+    "policy_sha256",
+    "catalog_sha256",
+    "limits",
+    "actor_config_sha256"
+  ],
+  "title": "AgentConfig",
+  "type": "object"
+}

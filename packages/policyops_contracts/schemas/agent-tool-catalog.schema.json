@@ -1,0 +1,71 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "ToolDescriptor": {
+      "additionalProperties": false,
+      "description": "One tool the model may propose: its name, description and full domain JSON Schema text.",
+      "properties": {
+        "description": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "parameters_schema_json": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "title": "Parameters Schema Json",
+          "type": "string"
+        },
+        "read_only": {
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "parameters_schema_json",
+        "read_only"
+      ],
+      "title": "ToolDescriptor",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "`retail`: exactly the runtime's typed retail tools. `descriptor`: externally supplied descriptors, validated\nagainst their own schema and executed only by the injected tool port. `knowledge_tool` adds the fixed read-only\n`search_policy` tool, which counts toward every catalog limit; its name is reserved.",
+  "properties": {
+    "knowledge_tool": {
+      "default": false,
+      "title": "Knowledge Tool",
+      "type": "boolean"
+    },
+    "mode": {
+      "enum": [
+        "retail",
+        "descriptor"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/ToolDescriptor"
+      },
+      "maxItems": 32,
+      "title": "Tools",
+      "type": "array"
+    }
+  },
+  "required": [
+    "mode",
+    "tools"
+  ],
+  "title": "ToolCatalog",
+  "type": "object"
+}

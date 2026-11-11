@@ -1,7 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router";
 
 import { App } from "./App";
+import "./styles/tokens.css";
+import "./styles/app.css";
 
 const container = document.getElementById("root");
 if (container === null) {
@@ -9,6 +12,8 @@ if (container === null) {
 }
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
   </StrictMode>,
 );

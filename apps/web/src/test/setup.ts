@@ -1,3 +1,4 @@
+import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 
 import { blockNetwork, verifyNoBlockedAttempts } from "./network";
@@ -12,6 +13,8 @@ beforeEach(() => {
 
 afterEach(() => {
   try {
+    // Testing Library only cleans up automatically with Vitest globals, which this project does not enable.
+    cleanup();
     verifyNoBlockedAttempts();
   } finally {
     blockNetwork(); // drop any fake the test installed

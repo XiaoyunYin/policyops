@@ -1,0 +1,198 @@
+// Routed pages inside a selected workspace. Areas whose workflow is not built yet say so plainly and offer no
+// controls; nothing here simulates a working feature.
+
+import type { ReactNode } from "react";
+import { Link } from "react-router";
+
+import {
+  listCases,
+  listMembers,
+  type CaseStatus,
+  type MeOut,
+} from "../api/client";
+import { capabilities, ROLE_LABELS, type Capability } from "../session/permissions";
+import { useSessionResource } from "../session/SessionProvider";
+import { EmptyState, ErrorPanel, Status, useDocumentTitle } from "../ui/feedback";
+import { PAGE_HEADING_ID } from "./AppShell";
+
+function PageHeader({ title, description }: { title: string; description?: string }) {
+  useDocumentTitle(title);
+  return (
+    <header className="page-header">
+      <h1 id={PAGE_HEADING_ID} tabIndex={-1}>{title}</h1>
+      {description !== undefined ? <p className="muted">{description}</p> : null}
+    </header>
+  );
+}
+
+function Forbidden({ title }: { title: string }) {
+  return (
+    <>
+      <PageHeader title={title} />
+      <section className="panel panel-error" role="alert">
+        <h2>You don't have access</h2>
+        <p>Your roles in this workspace don't include this area. Ask a workspace administrator if you need it.</p>
+        <Link className="button" to="/cases">Go to cases</Link>
+      </section>
+    </>
+  );
+}
+
+function Gate({ me, need, title, children }: { me: MeOut; need: Capability; title: string; children: ReactNode }) {
+  return capabilities(me.roles).has(need) ? children : <Forbidden title={title} />;
+}
+
+function NotAvailable({ title }: { title: string }) {
+  return (
+    <>
+      <PageHeader title={title} />
+      <EmptyState title="Not available yet">
+        <p className="muted">This area isn't ready in this version.</p>
+        <Link className="button" to="/cases">Back to cases</Link>
+      </EmptyState>
+    </>
+  );
+}
+
+const STATUS_LABELS: Readonly<Record<CaseStatus, string>> = {
+  open: "Open",
+  in_progress: "In progress",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+const DATE_TIME = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+function Timestamp({ value }: { value: string }) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? <span>—</span> : <time dateTime={value}>{DATE_TIME.format(date)}</time>;
+}
+
+function CaseList() {
+  const { resource, reload } = useSessionResource(listCases, "cases");
+  if (resource.status === "loading") {
+    return <Status label="Loading cases…" />;
+  }
+  if (resource.status === "failed") {
+    return <ErrorPanel error={resource.error} onRetry={reload} />;
+  }
+  const { items, next_cursor: nextCursor } = resource.data;
+  if (items.length === 0) {
+    return (
+      <EmptyState title="No cases in this workspace">
+        <p className="muted">Cases opened in this workspace will be listed here.</p>
+      </EmptyState>
+    );
+  }
+  return (
+    <>
+      <div className="table-wrap">
+        <table className="table">
+          <caption className="visually-hidden">Cases</caption>
+          <thead>
+            <tr>
+              <th scope="col">Scenario</th>
+              <th scope="col">Status</th>
+              <th scope="col">Customer</th>
+              <th scope="col">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.case_id}>
+                <td>{item.scenario}</td>
+                <td><span className={`status-pill status-${item.status}`}>{STATUS_LABELS[item.status]}</span></td>
+                <td>{item.customer_bound ? "Linked" : "Not linked"}</td>
+                <td><Timestamp value={item.updated_at} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {nextCursor !== null ? (
+        <p className="muted table-note">Showing the first {String(items.length)} cases.</p>
+      ) : null}
+    </>
+  );
+}
+
+export function CasesPage({ me }: { me: MeOut }) {
+  return (
+    <Gate me={me} need="readCases" title="Cases">
+      <PageHeader title="Cases" description="Customer-support cases in this workspace." />
+      <CaseList />
+    </Gate>
+  );
+}
+
+export function CaseDetailPage({ me }: { me: MeOut }) {
+  return (
+    <Gate me={me} need="readCases" title="Case">
+      <NotAvailable title="Case" />
+    </Gate>
+  );
+}
+
+export function ApprovalsPage({ me }: { me: MeOut }) {
+  return (
+    <Gate me={me} need="decideProposals" title="Approvals">
+      <NotAvailable title="Approvals" />
+    </Gate>
+  );
+}
+
+function MemberList() {
+  const { resource, reload } = useSessionResource(listMembers, "members");
+  if (resource.status === "loading") {
+    return <Status label="Loading members…" />;
+  }
+  if (resource.status === "failed") {
+    return <ErrorPanel error={resource.error} onRetry={reload} />;
+  }
+  if (resource.data.length === 0) {
+    return <EmptyState title="No memberships" />;
+  }
+  return (
+    <div className="table-wrap">
+      <table className="table">
+        <caption className="visually-hidden">Memberships</caption>
+        <thead>
+          <tr>
+            <th scope="col">Principal</th>
+            <th scope="col">Role</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {resource.data.map((member) => (
+            <tr key={member.membership_id}>
+              <td><code>{member.principal_id}</code></td>
+              <td>{ROLE_LABELS[member.role]}</td>
+              <td>{member.active ? "Active" : "Revoked"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function MembersPage({ me }: { me: MeOut }) {
+  return (
+    <Gate me={me} need="manageMembers" title="Members">
+      <PageHeader title="Members" description="Role memberships in this workspace." />
+      <MemberList />
+    </Gate>
+  );
+}
+
+export function NotFoundPage() {
+  return (
+    <>
+      <PageHeader title="Page not found" />
+      <EmptyState title="There's nothing at this address">
+        <Link className="button" to="/cases">Go to cases</Link>
+      </EmptyState>
+    </>
+  );
+}

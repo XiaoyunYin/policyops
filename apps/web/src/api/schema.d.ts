@@ -2,6 +2,23 @@
 // Do not edit; regenerate with `python scripts/api_types.py --write`.
 
 export interface paths {
+    "/api/v1/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Approvals */
+        get: operations["list_approvals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/callback": {
         parameters: {
             query?: never;
@@ -124,6 +141,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cases/{case_id}/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Case Proposals */
+        get: operations["list_case_proposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cases/{case_id}/runs": {
         parameters: {
             query?: never;
@@ -169,6 +203,40 @@ export interface paths {
         get: operations["me"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/{proposal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Proposal */
+        get: operations["get_proposal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/{proposal_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide */
+        post: operations["decide"];
         delete?: never;
         options?: never;
         head?: never;
@@ -264,6 +332,171 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActionProposal */
+        ActionProposal: {
+            /** Action */
+            action: components["schemas"]["CancelPendingOrder"] | components["schemas"]["ModifyPendingOrderAddress"] | components["schemas"]["ModifyPendingOrderPayment"] | components["schemas"]["ModifyPendingOrderItems"] | components["schemas"]["ReturnDeliveredOrderItems"] | components["schemas"]["ExchangeDeliveredOrderItems"] | components["schemas"]["ModifyUserAddress"];
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Customer User Id */
+            customer_user_id: string;
+            /** Effect */
+            effect: components["schemas"]["CancelEffect"] | components["schemas"]["OrderAddressEffect"] | components["schemas"]["PaymentChangeEffect"] | components["schemas"]["ItemsEffect"] | components["schemas"]["ReturnEffect"] | components["schemas"]["UserAddressEffect"];
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence: components["schemas"]["EvidenceRef"][];
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Intent Digest */
+            intent_digest: string;
+            policy: components["schemas"]["PolicyRef"];
+            presentation: components["schemas"]["Presentation"];
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+            /** Rationale */
+            rationale: string;
+            /** Resource Versions */
+            resource_versions: components["schemas"]["ResourceVersion"][];
+            /** Rule Ids */
+            rule_ids: string[];
+            /**
+             * Schema Version
+             * @default policyops.action-proposal/v1
+             * @constant
+             */
+            schema_version: "policyops.action-proposal/v1";
+            scope: components["schemas"]["RunScope"];
+        };
+        /** Address */
+        Address: {
+            /** Address1 */
+            address1: string;
+            /** Address2 */
+            address2: string;
+            /** City */
+            city: string;
+            /** Country */
+            country: string;
+            /** State */
+            state: string;
+            /** Zip */
+            zip: string;
+        };
+        /** ApprovalDecision */
+        ApprovalDecision: {
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /**
+             * Consent Id
+             * Format: uuid
+             */
+            consent_id: string;
+            /**
+             * Decided At
+             * Format: date-time
+             */
+            decided_at: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject";
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Principal Id
+             * Format: uuid
+             */
+            principal_id: string;
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+            /** Reason */
+            reason: string;
+            /**
+             * Role
+             * @constant
+             */
+            role: "reviewer";
+            /**
+             * Schema Version
+             * @default policyops.approval-decision/v1
+             * @constant
+             */
+            schema_version: "policyops.approval-decision/v1";
+            scope: components["schemas"]["RunScope"];
+        };
+        /** CancelEffect */
+        CancelEffect: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "cancel_pending_order";
+            /** Order Id */
+            order_id: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "no longer needed" | "ordered by mistake";
+            /** Refunds */
+            refunds: components["schemas"]["RefundLine"][];
+            /**
+             * Status After
+             * @default cancelled
+             * @constant
+             */
+            status_after: "cancelled";
+            /**
+             * Status Before
+             * @default pending
+             * @constant
+             */
+            status_before: "pending";
+        };
+        /** CancelPendingOrder */
+        CancelPendingOrder: {
+            /** Order Id */
+            order_id: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "no longer needed" | "ordered by mistake";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            tool: "cancel_pending_order";
+        };
         /** CasePage */
         CasePage: {
             /** Items */
@@ -301,6 +534,45 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ConsentView */
+        ConsentView: {
+            /**
+             * Basis
+             * @enum {string}
+             */
+            basis: "explicit_affirmation" | "simulator_confirmation_event";
+            /**
+             * Confirmed At
+             * Format: date-time
+             */
+            confirmed_at: string;
+            /**
+             * Consent Id
+             * Format: uuid
+             */
+            consent_id: string;
+            /**
+             * Customer Message Id
+             * Format: uuid
+             */
+            customer_message_id: string;
+            /** Customer Message Sequence */
+            customer_message_sequence: number;
+            /** Customer Message Text */
+            customer_message_text: string;
+            /** Entered By */
+            entered_by: string | null;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Message Source
+             * @enum {string}
+             */
+            message_source: "simulated_customer" | "operator_entered_customer";
+        };
         /** CreateCaseIn */
         CreateCaseIn: {
             /**
@@ -308,6 +580,24 @@ export interface components {
              * @constant
              */
             scenario: "retail";
+        };
+        /**
+         * DecisionRequest
+         * @description A reviewer's decision on one exact proposal version. The digest is the immutable binding: it must equal the
+         *     sealed proposal's `action_digest`. Integers are strict (no strings or floats); unknown fields are refused.
+         */
+        DecisionRequest: {
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject";
+            /** Proposal Version */
+            proposal_version: number;
+            /** Reason */
+            reason: string;
         };
         /**
          * ErrorCode
@@ -334,6 +624,79 @@ export interface components {
              * @constant
              */
             schema_version: "policyops.error/v1";
+        };
+        /** EvidenceRef */
+        EvidenceRef: {
+            /** Content Sha256 */
+            content_sha256: string;
+            /**
+             * Document Version Id
+             * Format: uuid
+             */
+            document_version_id: string;
+            /**
+             * Evidence Id
+             * Format: uuid
+             */
+            evidence_id: string;
+        };
+        /** ExchangeDeliveredOrderItems */
+        ExchangeDeliveredOrderItems: {
+            /** Item Ids */
+            item_ids: string[];
+            /** New Item Ids */
+            new_item_ids: string[];
+            /** Order Id */
+            order_id: string;
+            /** Payment Method Id */
+            payment_method_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            tool: "exchange_delivered_order_items";
+        };
+        /** ItemChangeLine */
+        ItemChangeLine: {
+            /** Item Id */
+            item_id: string;
+            /** New Item Id */
+            new_item_id: string;
+            price_after: components["schemas"]["Money"];
+            price_before: components["schemas"]["Money"];
+            /** Product Id */
+            product_id: string;
+        };
+        /** ItemsEffect */
+        ItemsEffect: {
+            /** Changes */
+            changes: components["schemas"]["ItemChangeLine"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "exchange_delivered_order_items" | "modify_pending_order_items";
+            /**
+             * One Time Action
+             * @default true
+             * @constant
+             */
+            one_time_action: true;
+            /** Order Id */
+            order_id: string;
+            /** Payment Method Id */
+            payment_method_id: string;
+            price_difference: components["schemas"]["Money"];
+            /**
+             * Status After
+             * @enum {string}
+             */
+            status_after: "pending (item modified)" | "exchange requested";
+            /**
+             * Status Before
+             * @enum {string}
+             */
+            status_before: "pending" | "delivered";
         };
         /** Liveness */
         Liveness: {
@@ -426,11 +789,329 @@ export interface components {
             /** Text Sha256 */
             text_sha256: string;
         };
+        /** ModifyPendingOrderAddress */
+        ModifyPendingOrderAddress: {
+            /** Address1 */
+            address1: string;
+            /** Address2 */
+            address2: string;
+            /** City */
+            city: string;
+            /** Country */
+            country: string;
+            /** Order Id */
+            order_id: string;
+            /** State */
+            state: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            tool: "modify_pending_order_address";
+            /** Zip */
+            zip: string;
+        };
+        /** ModifyPendingOrderItems */
+        ModifyPendingOrderItems: {
+            /** Item Ids */
+            item_ids: string[];
+            /** New Item Ids */
+            new_item_ids: string[];
+            /** Order Id */
+            order_id: string;
+            /** Payment Method Id */
+            payment_method_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            tool: "modify_pending_order_items";
+        };
+        /** ModifyPendingOrderPayment */
+        ModifyPendingOrderPayment: {
+            /** Order Id */
+            order_id: string;
+            /** Payment Method Id */
+            payment_method_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            tool: "modify_pending_order_payment";
+        };
+        /** ModifyUserAddress */
+        ModifyUserAddress: {
+            /** Address1 */
+            address1: string;
+            /** Address2 */
+            address2: string;
+            /** City */
+            city: string;
+            /** Country */
+            country: string;
+            /** State */
+            state: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            tool: "modify_user_address";
+            /** User Id */
+            user_id: string;
+            /** Zip */
+            zip: string;
+        };
+        /** Money */
+        Money: {
+            /** Amount Minor */
+            amount_minor: number;
+            /**
+             * Currency
+             * @default USD
+             * @constant
+             */
+            currency: "USD";
+        };
+        /** OrderAddressEffect */
+        OrderAddressEffect: {
+            address_after: components["schemas"]["Address"];
+            address_before: components["schemas"]["Address"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "modify_pending_order_address";
+            /** Order Id */
+            order_id: string;
+            /**
+             * Status After
+             * @default pending
+             * @constant
+             */
+            status_after: "pending";
+        };
+        /** PaymentChangeEffect */
+        PaymentChangeEffect: {
+            amount: components["schemas"]["Money"];
+            /** From Payment Method Id */
+            from_payment_method_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "modify_pending_order_payment";
+            /** Order Id */
+            order_id: string;
+            /**
+             * Refund Timing
+             * @enum {string}
+             */
+            refund_timing: "immediately" | "5 to 7 business days";
+            /**
+             * Status After
+             * @default pending
+             * @constant
+             */
+            status_after: "pending";
+            /** To Payment Method Id */
+            to_payment_method_id: string;
+        };
+        /** PolicyRef */
+        PolicyRef: {
+            /** Path */
+            path: string;
+            /** Sha256 */
+            sha256: string;
+            /** Source Commit */
+            source_commit: string;
+        };
+        /** Presentation */
+        Presentation: {
+            /** Text */
+            text: string;
+            /** Text Sha256 */
+            text_sha256: string;
+        };
+        /** PresentationView */
+        PresentationView: {
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Message Sequence */
+            message_sequence: number;
+            /**
+             * Presented At
+             * Format: date-time
+             */
+            presented_at: string;
+        };
+        /**
+         * ProposalDetailView
+         * @description One version, exactly as sealed (`proposal`), with its presentation, consent, decision and derived state.
+         *     Resource versions are those read when the proposal was created; they are rechecked at execution, not here.
+         */
+        ProposalDetailView: {
+            consent: components["schemas"]["ConsentView"] | null;
+            decision: components["schemas"]["ApprovalDecision"] | null;
+            presentation: components["schemas"]["PresentationView"] | null;
+            proposal: components["schemas"]["ActionProposal"];
+            /**
+             * Row Status
+             * @enum {string}
+             */
+            row_status: "created" | "presented" | "superseded" | "expired";
+            /**
+             * Server Time
+             * Format: date-time
+             */
+            server_time: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "awaiting_presentation" | "awaiting_consent" | "awaiting_decision" | "approved" | "approval_expired" | "rejected" | "superseded" | "expired";
+        };
+        /** ProposalPage */
+        ProposalPage: {
+            /** Items */
+            items: components["schemas"]["ProposalSummaryView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** ProposalSummaryView */
+        ProposalSummaryView: {
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "awaiting_presentation" | "awaiting_consent" | "awaiting_decision" | "approved" | "approval_expired" | "rejected" | "superseded" | "expired";
+            /** Tool */
+            tool: string;
+        };
+        /** RefundLine */
+        RefundLine: {
+            amount: components["schemas"]["Money"];
+            /** Payment Method Id */
+            payment_method_id: string;
+            /**
+             * Timing
+             * @enum {string}
+             */
+            timing: "immediately" | "5 to 7 business days";
+        };
+        /** ResourceVersion */
+        ResourceVersion: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "order" | "product";
+            /** Resource Id */
+            resource_id: string;
+            /** Version */
+            version: number;
+        };
+        /** ReturnDeliveredOrderItems */
+        ReturnDeliveredOrderItems: {
+            /** Item Ids */
+            item_ids: string[];
+            /** Order Id */
+            order_id: string;
+            /** Payment Method Id */
+            payment_method_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            tool: "return_delivered_order_items";
+        };
+        /** ReturnEffect */
+        ReturnEffect: {
+            /** Items */
+            items: components["schemas"]["ReturnLine"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "return_delivered_order_items";
+            /** Order Id */
+            order_id: string;
+            /** Refund Payment Method Id */
+            refund_payment_method_id: string;
+            returned_items_price_total: components["schemas"]["Money"];
+            /**
+             * Status After
+             * @default return requested
+             * @constant
+             */
+            status_after: "return requested";
+            /**
+             * Status Before
+             * @default delivered
+             * @constant
+             */
+            status_before: "delivered";
+        };
+        /** ReturnLine */
+        ReturnLine: {
+            /** Item Id */
+            item_id: string;
+            price: components["schemas"]["Money"];
+        };
         /**
          * Role
          * @enum {string}
          */
         Role: "analyst" | "reviewer" | "admin" | "auditor";
+        /** RunScope */
+        RunScope: {
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /** RunView */
         RunView: {
             /**
@@ -507,6 +1188,18 @@ export interface components {
              */
             status: "open" | "in_progress" | "resolved" | "closed";
         };
+        /** UserAddressEffect */
+        UserAddressEffect: {
+            address_after: components["schemas"]["Address"];
+            address_before: components["schemas"]["Address"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "modify_user_address";
+            /** User Id */
+            user_id: string;
+        };
         /** WorkspaceOut */
         WorkspaceOut: {
             /** Name */
@@ -530,6 +1223,83 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_approvals: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalPage"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     callback: {
         parameters: {
             query?: {
@@ -1416,6 +2186,94 @@ export interface operations {
             };
         };
     };
+    list_case_proposals: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalPage"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     start_run: {
         parameters: {
             query?: never;
@@ -1637,6 +2495,211 @@ export interface operations {
             };
             /** @description Unexpected failure (no internals are disclosed). */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_proposal: {
+        parameters: {
+            query?: {
+                version?: number | null;
+            };
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalDetailView"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    decide: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description An identical earlier decision by the same reviewer: the original record. */
+            200: {
+                headers: {
+                    /** @description Present and "true" when this is a replay of the original response. */
+                    "Idempotent-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalDecision"];
+                };
+            };
+            /** @description Decided: the immutable decision record. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalDecision"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: digest mismatch, already decided, superseded, not presented, policy changed, expired proposal or consent, ended run, or no current customer confirmation. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The decision's commit outcome is unknown (retryable: resend the identical request, which replays the original if it committed). */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -11,6 +11,7 @@ from policyops import __version__
 from policyops.api import auth as auth_api
 from policyops.api import cases as cases_api
 from policyops.api import docs
+from policyops.api import proposals as proposals_api
 from policyops.api import runs as runs_api
 from policyops.api.body_limit import BodyLimit
 from policyops.auth.oidc import OidcClient
@@ -48,17 +49,18 @@ def build_auth_runtime(settings: AuthSettings, *, auth_engine: Engine, app_engin
 
 
 def include_api_routes(app: FastAPI) -> None:
-    """The authenticated route composition (authentication and case routes): served by `create_app(auth)` and
-    exported, without a runtime, by `policyops.api.openapi`."""
+    """The authenticated route composition (authentication, case, run and proposal routes): served by
+    `create_app(auth)` and exported, without a runtime, by `policyops.api.openapi`."""
     app.include_router(auth_api.build_router(), prefix=API_PREFIX)
     app.include_router(cases_api.build_router(), prefix=API_PREFIX)
     app.include_router(runs_api.build_router(), prefix=API_PREFIX)
+    app.include_router(proposals_api.build_router(), prefix=API_PREFIX)
 
 
 def create_app(auth: auth_api.AuthRuntime | None = None, runs: runs_api.RunsRuntime | None = None) -> FastAPI:
-    """Without `auth` only liveness is served (as before); with it, the authentication, case and run routes are
-    installed (`runs` defaults to the database clock with no installed run runtime). Request bodies are bounded to
-    64 KiB as received (`BodyLimit`)."""
+    """Without `auth` only liveness is served (as before); with it, the authentication, case, run and proposal
+    routes are installed (`runs` defaults to the database clock with no installed run runtime; the proposal routes
+    use its lease clock). Request bodies are bounded to 64 KiB as received (`BodyLimit`)."""
     # Not served (`openapi_url=None`); exported by `policyops.api.openapi`. Operation IDs are the route names.
     app = FastAPI(title="PolicyOps", version=__version__, docs_url=None, redoc_url=None, openapi_url=None,
                   generate_unique_id_function=lambda route: route.name)

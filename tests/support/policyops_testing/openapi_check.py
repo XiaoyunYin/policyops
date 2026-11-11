@@ -3,8 +3,10 @@
 `check_response` requires that the status is documented for the operation, that a JSON body validates against
 the documented schema (and that undocumented responses have no body), and that the response headers the API
 uses for its contract (ETag, Location, Idempotent-Replayed, Set-Cookie) are documented for that status. The
-schema evaluator is deliberately small: it implements the keywords the exported document uses and raises on any
-other keyword, so it cannot silently pass a schema it does not understand.
+schema evaluator is deliberately small: it implements the keywords and formats the exported document uses and
+raises `UnsupportedSchema` for anything else (keyword, format, type, reference or discriminator shape), so it cannot
+silently pass a schema it does not understand. `UnsupportedSchema` is never treated as a branch that merely did not
+match: `anyOf` and `oneOf` cardinality is only established when every branch could actually be decided.
 """
 
 from __future__ import annotations
@@ -20,8 +22,10 @@ from uuid import UUID
 DOCUMENT_PATH = Path(__file__).resolve().parents[3] / "packages" / "policyops" / "openapi" / "v1.json"
 DOCUMENT: dict[str, Any] = json.loads(DOCUMENT_PATH.read_text(encoding="utf-8"))
 ANNOTATIONS = {"title", "description", "default"}
-KEYWORDS = {"$ref", "additionalProperties", "anyOf", "const", "enum", "format", "items", "maxLength", "maximum",
-            "minLength", "minimum", "pattern", "properties", "required", "type"} | ANNOTATIONS
+KEYWORDS = {"$ref", "additionalProperties", "anyOf", "const", "discriminator", "enum", "format", "items", "maxItems",
+            "maxLength", "maximum", "minItems", "minLength", "minimum", "oneOf", "pattern", "properties", "required",
+            "type"} | ANNOTATIONS
+FORMATS = {"uuid", "date-time"}
 CONTRACT_HEADERS = ("etag", "location", "idempotent-replayed", "set-cookie")
 TYPES: dict[str, type | tuple[type, ...]] = {"string": str, "integer": int, "number": (int, float), "boolean": bool,
                                             "object": dict, "array": list}
@@ -45,18 +49,28 @@ class SchemaMismatch(AssertionError):
     pass
 
 
+class UnsupportedSchema(SchemaMismatch):
+    """The schema uses something this evaluator cannot decide. It is a failure, never a non-matching branch."""
+
+
 def resolve(ref: str) -> dict[str, Any]:
     if not ref.startswith("#/"):
-        raise SchemaMismatch(f"non-local $ref {ref}")
+        raise UnsupportedSchema(f"non-local $ref {ref}")
     node: Any = DOCUMENT
     for part in ref[2:].split("/"):
+        if not isinstance(node, dict) or part not in node:
+            raise UnsupportedSchema(f"unresolvable $ref {ref}")
         node = node[part]
-    return node  # type: ignore[no-any-return]
+    if not isinstance(node, dict):
+        raise UnsupportedSchema(f"$ref {ref} is not a schema object")
+    return node
 
 
 def _type_ok(name: str, value: Any) -> bool:
     if name == "null":
         return value is None
+    if name not in TYPES:
+        raise UnsupportedSchema(f"unsupported type {name!r}")
     if name in ("integer", "number") and isinstance(value, bool):
         return False
     return isinstance(value, TYPES[name])
@@ -70,25 +84,41 @@ def _format_ok(name: str, value: str) -> bool:
             return datetime.fromisoformat(value).utcoffset() is not None
     except ValueError:
         return False
-    raise SchemaMismatch(f"unsupported format {name}")
+    raise UnsupportedSchema(f"unsupported format {name}")
+
+
+def _matching(options: list[dict[str, Any]], value: Any, where: str) -> tuple[int, list[str]]:
+    """Decide every branch. A branch that cannot be decided propagates; it is not counted as a non-match."""
+    failures: list[str] = []
+    for option in options:
+        try:
+            validate(option, value, where)
+        except UnsupportedSchema:
+            raise
+        except SchemaMismatch as exc:
+            failures.append(str(exc))
+    return len(options) - len(failures), failures
 
 
 def validate(schema: dict[str, Any], value: Any, where: str = "$") -> None:
     unknown = set(schema) - KEYWORDS
     if unknown:
-        raise SchemaMismatch(f"{where}: unsupported schema keywords {sorted(unknown)}")
+        raise UnsupportedSchema(f"{where}: unsupported schema keywords {sorted(unknown)}")
+    if "format" in schema and schema["format"] not in FORMATS:
+        raise UnsupportedSchema(f"{where}: unsupported format {schema['format']!r}")
     if "$ref" in schema:
         validate(resolve(schema["$ref"]), value, where)
     if "anyOf" in schema:
-        failures = []
-        for option in schema["anyOf"]:
-            try:
-                validate(option, value, where)
-                break
-            except SchemaMismatch as exc:
-                failures.append(str(exc))
-        else:
+        matched, failures = _matching(schema["anyOf"], value, where)
+        if matched == 0:
             raise SchemaMismatch(f"{where}: no anyOf branch matches ({'; '.join(failures)})")
+    if "oneOf" in schema:
+        matched, failures = _matching(schema["oneOf"], value, where)
+        if matched != 1:
+            raise SchemaMismatch(f"{where}: {matched} oneOf branches match, expected exactly one "
+                                 f"({'; '.join(failures)})")
+    if "discriminator" in schema:  # the tag must name a documented branch, and the value must match that branch
+        _discriminate(schema, value, where)
     if "type" in schema and not _type_ok(schema["type"], value):
         raise SchemaMismatch(f"{where}: expected {schema['type']}, got {type(value).__name__}")
     if "const" in schema and (value != schema["const"] or type(value) is not type(schema["const"])):
@@ -109,6 +139,11 @@ def validate(schema: dict[str, Any], value: Any, where: str = "$") -> None:
             raise SchemaMismatch(f"{where}: below {schema['minimum']}")
         if "maximum" in schema and value > schema["maximum"]:
             raise SchemaMismatch(f"{where}: above {schema['maximum']}")
+    if isinstance(value, list):
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            raise SchemaMismatch(f"{where}: fewer than {schema['minItems']} items")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            raise SchemaMismatch(f"{where}: more than {schema['maxItems']} items")
     if isinstance(value, list) and "items" in schema:
         for index, item in enumerate(value):
             validate(schema["items"], item, f"{where}[{index}]")
@@ -118,11 +153,29 @@ def validate(schema: dict[str, Any], value: Any, where: str = "$") -> None:
         if missing:
             raise SchemaMismatch(f"{where}: missing {sorted(missing)}")
         extra = set(value) - set(properties)
+        if not isinstance(schema.get("additionalProperties", True), bool):
+            raise UnsupportedSchema(f"{where}: additionalProperties must be a boolean")
         if extra and schema.get("additionalProperties", True) is False:
             raise SchemaMismatch(f"{where}: undocumented properties {sorted(extra)}")
         for name, item in value.items():
             if name in properties:
                 validate(properties[name], item, f"{where}.{name}")
+
+
+def _discriminate(schema: dict[str, Any], value: Any, where: str) -> None:
+    """OpenAPI discriminator over `oneOf`: the tag names one documented branch and the value must match that one."""
+    discriminator = schema["discriminator"]
+    options = schema.get("oneOf")
+    if not options or not isinstance(discriminator.get("propertyName"), str) or "mapping" not in discriminator:
+        raise UnsupportedSchema(f"{where}: discriminator needs oneOf, propertyName and an explicit mapping")
+    name = discriminator["propertyName"]
+    tag = value.get(name) if isinstance(value, dict) else None
+    target = discriminator["mapping"].get(tag) if isinstance(tag, str) else None
+    if target is None:
+        raise SchemaMismatch(f"{where}: {name}={tag!r} is not a documented branch")
+    if {"$ref": target} not in options:
+        raise UnsupportedSchema(f"{where}: discriminator target {target} is not a oneOf branch")
+    validate({"$ref": target}, value, where)
 
 
 def check_response(response: Reply, method: str, template: str) -> str:

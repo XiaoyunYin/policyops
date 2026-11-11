@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
@@ -398,6 +399,204 @@ def get_decision(connection: Connection, proposal_id: UUID, proposal_version: in
         return None
     scope = RunScope(workspace_id=row.pop("workspace_id"), case_id=row.pop("case_id"), run_id=row.pop("run_id"))
     return ApprovalDecision.model_validate({**row, "scope": scope}, strict=False)
+
+
+# -- T18: proposal versions, locks, run-scoped authority reads, review pages and evidence ----------------------
+#
+# Lock order for every T18 transaction (each takes a subsequence): case -> corpora FOR SHARE (evidence only) ->
+# run -> proposal rows in (proposal_id, proposal_version) order -> memberships FOR SHARE -> inserts. Foreign keys
+# of the inserted presentation, consent and decision rows take KEY SHARE on immutable referenced rows only.
+
+@dataclass(frozen=True)
+class ProposalRow:
+    """The indexed keys and the mutable status of one proposal version (its body is read with `get_proposal`)."""
+
+    row_id: UUID
+    workspace_id: UUID
+    case_id: UUID
+    run_id: UUID
+    proposal_id: UUID
+    proposal_version: int
+    action_digest: str
+    intent_digest: str
+    status: str
+    created_at: datetime
+    expires_at: datetime
+    presented_at: datetime | None
+
+
+PROPOSAL_ROW_COLUMNS = ("id AS row_id, workspace_id, case_id, run_id, proposal_id, proposal_version, action_digest, "
+                        "intent_digest, status, created_at, expires_at, presented_at")
+
+
+def _proposal_row(row: Any) -> ProposalRow:  # a dict or a SQLAlchemy RowMapping
+    return ProposalRow(**{name: row[name] for name in ProposalRow.__dataclass_fields__})
+
+
+def proposal_row(connection: Connection, proposal_id: UUID, proposal_version: int, *,
+                 lock: bool = False) -> ProposalRow | None:
+    """One version's keys and status in the scoped workspace (explicit filter as well as RLS); `lock` takes the row
+    FOR UPDATE until the end of the transaction."""
+    suffix = " FOR UPDATE" if lock else ""
+    row = _one(connection, f"SELECT {PROPOSAL_ROW_COLUMNS} FROM app.action_proposals "  # noqa: S608 - fixed columns
+               "WHERE workspace_id = app.current_workspace() AND proposal_id = :pid AND proposal_version = :pv"
+               + suffix, {"pid": proposal_id, "pv": proposal_version})
+    return _proposal_row(row) if row is not None else None
+
+
+def latest_proposal_version(connection: Connection, proposal_id: UUID) -> int | None:
+    value = connection.execute(text("SELECT max(proposal_version) FROM app.action_proposals "
+                                    "WHERE workspace_id = app.current_workspace() AND proposal_id = :pid"),
+                               {"pid": proposal_id}).scalar_one()
+    return int(value) if value is not None else None
+
+
+def active_intent_rows(connection: Connection, case_id: UUID, intent_digest: str) -> list[ProposalRow]:
+    """The case's created/presented versions of one logical intent, locked in (proposal_id, version) order."""
+    rows = connection.execute(text(
+        f"SELECT {PROPOSAL_ROW_COLUMNS} FROM app.action_proposals WHERE workspace_id = app.current_workspace() "  # noqa: S608
+        "AND case_id = :c AND intent_digest = :intent AND status IN ('created', 'presented') "
+        "ORDER BY proposal_id, proposal_version FOR UPDATE"), {"c": case_id, "intent": intent_digest}).mappings()
+    return [_proposal_row(row) for row in rows]
+
+
+def presented_rows_of_run(connection: Connection, run_id: UUID, *, limit: int = 2) -> list[ProposalRow]:
+    """The run's presented versions (at most `limit`, locked in order); callers require exactly one."""
+    rows = connection.execute(text(
+        f"SELECT {PROPOSAL_ROW_COLUMNS} FROM app.action_proposals WHERE workspace_id = app.current_workspace() "  # noqa: S608
+        "AND run_id = :r AND status = 'presented' ORDER BY proposal_id, proposal_version LIMIT :limit FOR UPDATE"),
+        {"r": run_id, "limit": limit}).mappings()
+    return [_proposal_row(row) for row in rows]
+
+
+def locked_roles(connection: Connection, principal_id: UUID) -> frozenset[str]:
+    """The principal's active roles in the scoped workspace, locked FOR SHARE until commit. FOR SHARE conflicts with
+    the FOR NO KEY UPDATE that a revocation (`UPDATE ... SET revoked_at`) takes; FOR KEY SHARE would not. After a
+    wait, READ COMMITTED re-checks `revoked_at IS NULL` on the latest row version, so a revocation committed first
+    removes the role."""
+    rows = connection.execute(text("SELECT role FROM identity.memberships WHERE principal_id = :p "
+                                   "AND workspace_id = app.current_workspace() AND revoked_at IS NULL "
+                                   "ORDER BY id FOR SHARE"), {"p": principal_id}).scalars().all()
+    return frozenset(rows)
+
+
+def message_by_id(connection: Connection, scope: CaseScope, message_id: UUID) -> CaseMessage | None:
+    row = _one(connection, "SELECT id, sequence, source, entered_by, text, text_sha256, created_at "
+               "FROM app.case_messages WHERE workspace_id = :w AND case_id = :c AND id = :id",
+               {"w": scope.workspace_id, "c": scope.case_id, "id": message_id})
+    if row is None:
+        return None
+    return CaseMessage.model_validate({"message_id": row["id"], "scope": scope, "sequence": row["sequence"],
+                                       "source": row["source"], "entered_by": row["entered_by"],
+                                       "text": row["text"], "text_sha256": row["text_sha256"],
+                                       "created_at": row["created_at"]}, strict=False)
+
+
+def consent_by_id(connection: Connection, run: RunScope, consent_id: UUID) -> CustomerConsent | None:
+    """A consent by ID, only within exactly this workspace, case and run."""
+    row = _one(connection, "SELECT id AS consent_id, workspace_id, case_id, run_id, proposal_id, proposal_version, "
+               "action_digest, presentation_sha256, presented_message_sequence, customer_message_id, "
+               "customer_message_sequence, customer_message_sha256, message_source, entered_by, basis, confirmed_at, "
+               "expires_at FROM app.customer_consents WHERE id = :id AND workspace_id = :w AND case_id = :c "
+               "AND run_id = :r", {"id": consent_id, "w": run.workspace_id, "c": run.case_id, "r": run.run_id})
+    if row is None:
+        return None
+    scope = RunScope(workspace_id=row.pop("workspace_id"), case_id=row.pop("case_id"), run_id=row.pop("run_id"))
+    return CustomerConsent.model_validate({**row, "scope": scope}, strict=False)
+
+
+def decision_by_id(connection: Connection, run: RunScope, approval_id: UUID) -> ApprovalDecision | None:
+    """A decision by ID, only within exactly this workspace, case and run."""
+    row = _one(connection, "SELECT id AS approval_id, workspace_id, case_id, run_id, proposal_id, proposal_version, "
+               "action_digest, consent_id, principal_id, role, decision, reason, decided_at, expires_at FROM "
+               "app.approval_decisions WHERE id = :id AND workspace_id = :w AND case_id = :c AND run_id = :r",
+               {"id": approval_id, "w": run.workspace_id, "c": run.case_id, "r": run.run_id})
+    if row is None:
+        return None
+    scope = RunScope(workspace_id=row.pop("workspace_id"), case_id=row.pop("case_id"), run_id=row.pop("run_id"))
+    return ApprovalDecision.model_validate({**row, "scope": scope}, strict=False)
+
+
+def inbox_page(connection: Connection, *, now: datetime, after: tuple[datetime, UUID] | None,
+               limit: int) -> list[ProposalRow]:
+    """Presented versions awaiting a decision: a consent current at `now`, no decision, the proposal unexpired.
+    Ordered by the immutable (created_at, row id); `after` continues strictly after a position."""
+    if not 1 <= limit <= MAX_PAGE:
+        raise ValueError(f"limit must be 1..{MAX_PAGE}")
+    params: dict[str, Any] = {"now": now, "limit": limit, "ac": after[0] if after else None,
+                              "ai": after[1] if after else None}
+    rows = connection.execute(text(
+        "SELECT p.id AS row_id, p.workspace_id, p.case_id, p.run_id, p.proposal_id, p.proposal_version, "
+        "p.action_digest, p.intent_digest, p.status, p.created_at, p.expires_at, p.presented_at "
+        "FROM app.action_proposals p JOIN app.customer_consents c ON c.workspace_id = p.workspace_id "
+        "AND c.proposal_id = p.proposal_id AND c.proposal_version = p.proposal_version "
+        "LEFT JOIN app.approval_decisions d ON d.workspace_id = p.workspace_id AND d.proposal_id = p.proposal_id "
+        "AND d.proposal_version = p.proposal_version WHERE p.workspace_id = app.current_workspace() "
+        "AND p.status = 'presented' AND d.id IS NULL AND p.expires_at > :now AND c.confirmed_at <= :now "
+        "AND c.expires_at > :now AND (CAST(:ac AS timestamptz) IS NULL OR (p.created_at, p.id) > "
+        "(CAST(:ac AS timestamptz), CAST(:ai AS uuid))) ORDER BY p.created_at, p.id LIMIT :limit"),
+        params).mappings()
+    return [_proposal_row(row) for row in rows]
+
+
+def case_proposal_page(connection: Connection, case_id: UUID, *, after: tuple[datetime, UUID] | None,
+                       limit: int) -> list[ProposalRow]:
+    """Every version in the case, ordered by the immutable (created_at, row id)."""
+    if not 1 <= limit <= MAX_PAGE:
+        raise ValueError(f"limit must be 1..{MAX_PAGE}")
+    params: dict[str, Any] = {"c": case_id, "limit": limit, "ac": after[0] if after else None,
+                              "ai": after[1] if after else None}
+    rows = connection.execute(text(
+        f"SELECT {PROPOSAL_ROW_COLUMNS} FROM app.action_proposals WHERE workspace_id = app.current_workspace() "  # noqa: S608
+        "AND case_id = :c AND (CAST(:ac AS timestamptz) IS NULL OR (created_at, id) > (CAST(:ac AS timestamptz), "
+        "CAST(:ai AS uuid))) ORDER BY created_at, id LIMIT :limit"), params).mappings()
+    return [_proposal_row(row) for row in rows]
+
+
+@dataclass(frozen=True)
+class EvidenceRow:
+    """Everything one citation's currentness depends on, read in one statement."""
+
+    citation_id: UUID
+    document_version_id: UUID
+    version_sha256: str
+    version_status: str
+    version_effective_to: datetime | None
+    generation_id: UUID
+    generation_status: str
+    corpus_key: str | None
+    trace_run_id: UUID
+
+
+EVIDENCE_SQL = (
+    "SELECT c.id AS citation_id, c.document_version_id, v.sha256 AS version_sha256, v.status AS version_status, "
+    "v.effective_to AS version_effective_to, k.generation_id, g.status AS generation_status, g.corpus_key, "
+    "t.run_id AS trace_run_id FROM app.citations c "
+    "JOIN app.chunks k ON k.workspace_id = c.workspace_id AND k.id = c.chunk_id "
+    "JOIN app.index_generations g ON g.workspace_id = k.workspace_id AND g.id = k.generation_id "
+    "JOIN app.document_versions v ON v.workspace_id = c.workspace_id AND v.id = c.document_version_id "
+    "JOIN app.retrieval_traces t ON t.workspace_id = c.workspace_id AND t.id = c.trace_id "
+    "WHERE c.workspace_id = app.current_workspace() AND c.id = ANY(:ids)")
+MAX_EVIDENCE = 32  # the proposal contract's bound on evidence references
+
+
+def evidence_rows(connection: Connection, citation_ids: list[UUID]) -> dict[UUID, EvidenceRow]:
+    """Citation identity and state rows (unlocked; callers lock the corpora and then read again)."""
+    if len(citation_ids) > MAX_EVIDENCE:
+        raise ValueError(f"at most {MAX_EVIDENCE} evidence references")
+    rows = connection.execute(text(EVIDENCE_SQL), {"ids": citation_ids}).mappings()
+    found = [EvidenceRow(**{name: row[name] for name in EvidenceRow.__dataclass_fields__}) for row in rows]
+    return {row.citation_id: row for row in found}
+
+
+def lock_corpora(connection: Connection, corpus_keys: list[str]) -> dict[str, UUID | None]:
+    """The corpora rows FOR SHARE in sorted key order (publication takes them FOR UPDATE), with their active
+    generation pointers as read under the lock."""
+    keys = sorted(set(corpus_keys))
+    rows = connection.execute(text("SELECT corpus_key, active_generation_id FROM app.corpora WHERE workspace_id = "
+                                   "app.current_workspace() AND corpus_key = ANY(:keys) ORDER BY corpus_key "
+                                   "FOR SHARE"), {"keys": keys}).mappings()
+    return {row["corpus_key"]: row["active_generation_id"] for row in rows}
 
 
 def begin_execution(connection: Connection, *, execution_id: UUID, operation_id: UUID, decision: ApprovalDecision,

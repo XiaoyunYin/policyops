@@ -2,9 +2,12 @@
 
 This page describes what is implemented so far. The application database (schema, roles, migrations) is described
 in [database.md](database.md), and OIDC/session authentication handlers and role dependencies in
-[authentication.md](authentication.md). Business case/message handlers, the agent runtime, the retail simulator
-and the web UI remain later work. The contracts and rules below are pure, typed and tested, but they do not by
-themselves authorize anything at runtime.
+[authentication.md](authentication.md). The case/message API, the run API, the retail simulator and the proposal-review
+API are implemented (sections below). Later work remains: the investigation runtime and graph that call them (T21),
+application execution and its receipts (T19, T22) and the web UI. The retail simulator's own receipts are implemented
+(see its section); the proposal-review component below writes none. The contracts and rules below are pure, typed
+and tested; by themselves they do not authorize anything at runtime, while the routes enforce authorization through
+their own dependencies.
 
 ## Packages
 
@@ -307,6 +310,90 @@ Limits:
   the database. The HTTP response itself still ends at the deadline.
 - **What the deadline covers.** The delivery deadline and the stalled-send behaviour were tested at the ASGI level
   (including the composed app over real PostgreSQL), not with a stalled physical socket or behind a reverse proxy.
+
+## Proposal review (T18)
+
+Packages: `policyops.services.proposals` (creation, presentation and customer reply), `policyops.services.decisions`
+(staff decisions), `policyops.services.proposal_views` (views, derived state, cursors), `policyops.api.proposals`
+(routes), and `policyops.gateway.stores` (`PgDecisionStore` and `PgEvidencePort`, the precheck's persisted authority
+records). Pure rules are in `policyops.domain` (`retail_rules.propose`, `consent_rules`, `approval_rules`).
+
+| Route | Required permission | Notes |
+|---|---|---|
+| `GET /approvals?cursor=&limit=` | decide proposal | Reviewer inbox: presented versions with a consent current now and no decision, oldest first by `(created_at, id)` |
+| `GET /cases/{id}/proposals?cursor=&limit=` | view case | Every version in the case with its derived state; bounded and paginated |
+| `GET /proposals/{id}?version=` | view case | One version (the latest by default), exactly as sealed, with presentation, consent, decision, derived state and server time |
+| `POST /proposals/{id}/decision` | decide proposal | Approve or reject one exact version; CSRF and Origin checked |
+
+No route creates, presents, collects consent for or executes a proposal. Creation, presentation and consent are
+internal service operations for later workers and tests. Application execution is separate future work (T19/T22).
+
+**Sealing and binding.**
+- `propose` seals an `ActionProposal` once, under one `action_digest`: its scope and customer, the typed write call,
+  the computed effect and exact text, the policy version, resource and evidence versions, and an expiry of at most
+  15 minutes. Reads re-validate the stored body and compare its digest with the row.
+- Creation takes its locks first (case, then corpora `FOR SHARE` for evidence, then run), then reads the clock. It
+  checks that the case is bound to the scope's customer, that the run is not terminal and that a lookup
+  authentication exists. Intake refuses an invalid call, more than 32 evidence references, duplicate citation IDs or
+  a rationale outside 1–1000 characters before any transaction work. Nothing is written on refusal.
+- A new version of the same intent in a case supersedes its active versions in the same transaction, so at most one
+  version per (case, intent) is presented. Statuses only move forward (database trigger), so a superseded version
+  never regains authority.
+- `present` stores the exact text as one agent message with a presentation record and run events. A text that does not
+  fit one 4000-character case message is refused (`presentation.message_limit`); it is never truncated or split.
+
+**Consent and approval are separate records.**
+- Customer consent comes only from a customer message after the presentation of that exact version (see
+  **Customer, consent and approval**). Hedged replies ask again. Consent is current from confirmation until the earlier
+  of the proposal's expiry and 15 minutes.
+- A staff decision (`DecisionService.decide`) takes its locks in this order: run, then proposal row, then the
+  principal's active memberships (`FOR SHARE`). The reviewer role is required before any replay, and an admin without
+  it gets 403. The request's `action_digest` must equal the sealed one, or the response is 409. A new decision also
+  needs a presented, unexpired version and policy, and a current consent (rejection needs one too). The operator who
+  typed the consent cannot decide it (403 `api.separation_of_duties`). Its expiry is the minimum of the proposal expiry,
+  the consent expiry and the decision time plus 15 minutes.
+- Responses: `201` with the immutable `ApprovalDecision` for a new decision; `200` with `Idempotent-Replayed: true` and
+  the original canonical record for an identical request by the same reviewer. Identity here means the same reviewer,
+  proposal version, `action_digest`, decision and reason, not raw HTTP body byte equality: the returned canonical record
+  bytes are identical. For a new decision, `409` covers any other request on a decided version, a superseded or expired
+  version, or a missing consent. Replay is different: an identical persisted request still answers after its version
+  expires, is superseded or its run ends, provided the reviewer's current role and membership and the digest still pass.
+  The presentation, status, policy, expiry and current-consent checks apply to new decisions only. There is no
+  `Idempotency-Key`: the natural key `(proposal_id, proposal_version)` and that identity are the rule.
+- **Unknown outcome.** An exception raised by COMMIT after the decision body completed becomes
+  `DecisionCommitUnknown`, returned as `503 api.decision_outcome_unknown` with `retryable: true`. It is never reported as
+  success. The recovery is to resend the identical request: it replays the original if the first attempt committed.
+  Lock waits and COMMIT are synchronous and have no hard wall-clock interruption, so an acknowledged decision can
+  already be past its own expiry when the response arrives.
+- A new decision appends one `approval.decided` run event and one audit row. The run's status is unchanged, and nothing
+  is executed; the execution precheck re-collects facts and refuses a stale approval (T17, T19/T22).
+
+**Reads.**
+- Derived state (`awaiting_presentation`, `awaiting_consent`, `awaiting_decision`, `approved`, `approval_expired`,
+  `rejected`, `superseded`, `expired`) is computed per read from persisted records and one clock reading, and never
+  written. `approved` means only that a bound, unexpired decision exists.
+- The detail is mutable derived state over an immutable version, so it has no `ETag` or conditional read. The binding a
+  client needs is the decision's `action_digest`.
+- Lists are bounded (`limit` 1–100, default 50) and use a canonical cursor bound to the workspace and the list (`inbox`
+  or one case). An invalid cursor is 422. A cursor is untrusted pagination data, not a capability, and row-level security
+  still bounds every row.
+
+**Evidence currentness.** At create and when the execution precheck is invoked, `evidence_status` locks the cited corpora `FOR SHARE`
+in sorted key order and re-reads each citation: version digest, active generation, ready generation and an active
+document version. A mismatch is `stale_evidence`, and contradictory signals are `evidence_inconsistent`. If the active
+pointer names a generation that is not ready, row-level security hides its chunks from the runtime role, so its
+citations are not found and are refused as stale; the refusal does not separate this case from other missing citations. The port `PgEvidencePort.is_current` has no run argument, so it cannot recheck run
+provenance; provenance is checked at creation and preserved by the sealed proposal. Currentness says nothing about
+whether a cited text is true or supports a claim.
+
+**Limits.**
+- A decision approves one exact sealed version. It is a staff record, separate from the customer's consent, and it does
+  not by itself execute anything. Resource versions are not re-read at decision time (that would need the retail
+  service); the execution precheck re-collects facts and refuses a stale approval.
+- Commit and lock waits have no hard wall-clock interruption (see the unknown-outcome note above).
+- The tests that exercise these paths are `tests/unit/test_proposal_review.py`, `tests/unit/test_decision_service.py`,
+  `tests/integration/test_proposal_api.py`, `tests/integration/test_proposal_decisions.py` and
+  `tests/integration/test_proposal_evidence.py`. No hosted CI result is claimed.
 
 ## Model configuration and usage budgets
 

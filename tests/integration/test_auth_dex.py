@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from policyops.api.app import build_auth_runtime, create_app
+from policyops.api.auth import EXPECTED_PRINCIPAL_HEADER, EXPECTED_WORKSPACE_HEADER
 from policyops.auth import tokens
 from policyops.auth.oidc import OidcError
 from policyops.persistence import repositories as repo
@@ -110,7 +111,9 @@ def test_real_dex_login_creates_a_session_without_implicit_membership(app: Any, 
     assert client.post("/api/v1/auth/workspace", json={"workspace_id": str(workspace.id)},
                        headers=headers).status_code == 204
     assert client.get("/api/v1/me").json()["roles"] == ["admin"]
-    assert client.get("/api/v1/workspace/members").status_code == 200
+    expected = {EXPECTED_PRINCIPAL_HEADER: str(principal.id), EXPECTED_WORKSPACE_HEADER: str(workspace.id)}
+    assert client.get("/api/v1/workspace/members").status_code == 400  # the T25a expected-context headers
+    assert client.get("/api/v1/workspace/members", headers=expected).status_code == 200
     headers["X-CSRF-Token"] = client.cookies.get("policyops_csrf_local") or ""
     assert client.post("/api/v1/auth/logout", headers=headers).status_code == 204
     assert client.get("/api/v1/me").status_code == 401

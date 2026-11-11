@@ -38,14 +38,23 @@ class UnsafeTestHook(RuntimeError):
 def build_auth_runtime(settings: AuthSettings, *, auth_engine: Engine, app_engine: Engine, clock: Clock,
                        oidc_transport: httpx.BaseTransport | None = None) -> auth_api.AuthRuntime:
     """Wire authentication. Refuses runtime engines that authenticate as anything but the restricted auth/app
-    runtime roles, and refuses a substituted OIDC transport unless `settings.env == "test"`."""
+    runtime roles, and refuses a substituted OIDC transport unless `settings.env == "test"`. The engines stay
+    owned by the caller; the returned runtime owns an OIDC HTTP client (`runtime.service.oidc.close()`), which is
+    closed here if wiring fails after it was opened."""
     if oidc_transport is not None and settings.env != "test":
         raise UnsafeTestHook("a test OIDC transport is only allowed when POLICYOPS_ENV=test")
     verify_runtime_role(auth_engine, AUTH_RUNTIME)
     verify_runtime_role(app_engine, APP_RUNTIME)
     oidc = OidcClient(settings, clock, transport=oidc_transport)
-    service = AuthService(settings=settings, oidc=oidc, auth_engine=auth_engine, clock=clock)
-    return auth_api.AuthRuntime(settings=settings, service=service, app_engine=app_engine)
+    try:  # the HTTP client is owned here until the runtime that closes it is returned
+        service = AuthService(settings=settings, oidc=oidc, auth_engine=auth_engine, clock=clock)
+        return auth_api.AuthRuntime(settings=settings, service=service, app_engine=app_engine)
+    except BaseException as error:
+        try:
+            oidc.close()
+        except BaseException as cleanup:  # the original error propagates; a cleanup failure (or interruption) is noted
+            error.add_note(f"closing the OIDC client also failed: {type(cleanup).__name__}")
+        raise
 
 
 def include_api_routes(app: FastAPI) -> None:

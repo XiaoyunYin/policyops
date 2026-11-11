@@ -1,4 +1,4 @@
-"""Validated application settings (authentication and HTTP surface).
+"""Validated application settings (authentication, HTTP surface and the API server's runtime database logins).
 
 Values come from explicit `POLICYOPS_*` environment variables only (no `.env` file is read). Secrets are
 `SecretStr` and never appear in reprs or logs.
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import ipaddress
+import re
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
@@ -110,3 +111,56 @@ class AuthSettings(BaseSettings):
     @property
     def login_cookie(self) -> str:
         return "__Host-policyops_login" if self.secure_cookies else "policyops_login_local"
+
+
+DatabaseName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")]
+SslMode = Literal["disable", "require", "verify-ca", "verify-full"]
+_HOSTNAME = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                       r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+class DatabaseSettings(BaseSettings):
+    """The API server's two runtime logins to one PostgreSQL database (`POLICYOPS_DB_*`).
+
+    The login roles are fixed (`policyops_auth_runtime` and `policyops_app_runtime`); only their separately
+    configured passwords are read, so one credential is never assumed to serve both roles. No URL is accepted: a
+    libpq URL or `key=value` string could carry its own host, service or options. `host` is one IP literal or DNS
+    name (no list), `name` a plain identifier (libpq expands a database name containing `=` or a URI).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="POLICYOPS_DB_", env_file=None, extra="forbid", frozen=True,
+                                      hide_input_in_errors=True)
+
+    host: str
+    port: Annotated[int, Field(ge=1, le=65535)] = 5432
+    name: DatabaseName
+    sslmode: SslMode = "verify-full"
+    connect_timeout_seconds: Annotated[int, Field(ge=2, le=30)] = 5
+    pool_size: Annotated[int, Field(ge=1, le=50)] = 5
+    auth_password: SecretStr
+    app_password: SecretStr
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        if not (_is_ip(self.host) or _HOSTNAME.match(self.host)):
+            raise SettingsError("host must be one IP address or DNS name")
+        if self.sslmode == "disable" and not _is_loopback_ip(self.host):
+            raise SettingsError("sslmode=disable is allowed only for a loopback IP host (127.0.0.1 or ::1)")
+        for name in ("auth_password", "app_password"):
+            secret: SecretStr = getattr(self, name)
+            value = secret.get_secret_value()
+            if not 16 <= len(value) <= 1024 or "\x00" in value:
+                raise SettingsError(f"{name} must have 16 to 1024 characters and no NUL character")
+        return self
+
+    @property
+    def host_is_ip(self) -> bool:
+        return _is_ip(self.host)

@@ -2,14 +2,17 @@ import { createContext, use, useEffect, useState, useSyncExternalStore, type Rea
 import { useLocation, useNavigate } from "react-router";
 
 import { ApiError, toApiError, type BoundRequestOptions } from "../api/client";
+import { WriteLedger, type WriteEntry } from "../api/writes";
 import { SessionController, type SessionState } from "./controller";
 
 const SessionContext = createContext<SessionController | null>(null);
+const LedgerContext = createContext<WriteLedger | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [controller] = useState(() => new SessionController());
+  const [ledger] = useState(() => new WriteLedger(controller));
 
   useEffect(() => controller.onRouteReset((path) => {
     void navigate(path, { replace: true });
@@ -38,7 +41,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, [controller]);
 
-  return <SessionContext value={controller}>{children}</SessionContext>;
+  useEffect(() => {
+    // Leaving the page discards this tab's record of unresolved writes; ask first (the prompt names nothing).
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (ledger.hasUnresolved()) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [ledger]);
+
+  return (
+    <SessionContext value={controller}>
+      <LedgerContext value={ledger}>{children}</LedgerContext>
+    </SessionContext>
+  );
+}
+
+export function useWriteLedger(): WriteLedger {
+  const ledger = use(LedgerContext);
+  if (ledger === null) {
+    throw new Error("useWriteLedger must be used inside SessionProvider");
+  }
+  return ledger;
+}
+
+export function useWriteEntries(): readonly WriteEntry[] {
+  const ledger = useWriteLedger();
+  return useSyncExternalStore(ledger.subscribe, ledger.getSnapshot);
 }
 
 export function useSessionController(): SessionController {

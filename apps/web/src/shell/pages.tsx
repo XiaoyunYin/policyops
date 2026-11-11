@@ -2,14 +2,11 @@
 // controls; nothing here simulates a working feature.
 
 import type { ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useParams } from "react-router";
 
-import {
-  listCases,
-  listMembers,
-  type CaseStatus,
-  type MeOut,
-} from "../api/client";
+import { listMembers, type MeOut } from "../api/client";
+import { CaseDetail } from "../cases/CaseDetail";
+import { CaseQueue } from "../cases/CaseQueue";
 import { capabilities, ROLE_LABELS, type Capability } from "../session/permissions";
 import { useSessionResource } from "../session/SessionProvider";
 import { EmptyState, ErrorPanel, Status, useDocumentTitle } from "../ui/feedback";
@@ -54,81 +51,22 @@ function NotAvailable({ title }: { title: string }) {
   );
 }
 
-const STATUS_LABELS: Readonly<Record<CaseStatus, string>> = {
-  open: "Open",
-  in_progress: "In progress",
-  resolved: "Resolved",
-  closed: "Closed",
-};
-
-const DATE_TIME = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
-
-function Timestamp({ value }: { value: string }) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? <span>—</span> : <time dateTime={value}>{DATE_TIME.format(date)}</time>;
-}
-
-function CaseList() {
-  const { resource, reload } = useSessionResource(listCases, "cases");
-  if (resource.status === "loading") {
-    return <Status label="Loading cases…" />;
-  }
-  if (resource.status === "failed") {
-    return <ErrorPanel error={resource.error} onRetry={reload} />;
-  }
-  const { items, next_cursor: nextCursor } = resource.data;
-  if (items.length === 0) {
-    return (
-      <EmptyState title="No cases in this workspace">
-        <p className="muted">Cases opened in this workspace will be listed here.</p>
-      </EmptyState>
-    );
-  }
-  return (
-    <>
-      <div className="table-wrap">
-        <table className="table">
-          <caption className="visually-hidden">Cases</caption>
-          <thead>
-            <tr>
-              <th scope="col">Scenario</th>
-              <th scope="col">Status</th>
-              <th scope="col">Customer</th>
-              <th scope="col">Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.case_id}>
-                <td>{item.scenario}</td>
-                <td><span className={`status-pill status-${item.status}`}>{STATUS_LABELS[item.status]}</span></td>
-                <td>{item.customer_bound ? "Linked" : "Not linked"}</td>
-                <td><Timestamp value={item.updated_at} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {nextCursor !== null ? (
-        <p className="muted table-note">Showing the first {String(items.length)} cases.</p>
-      ) : null}
-    </>
-  );
-}
-
 export function CasesPage({ me }: { me: MeOut }) {
   return (
     <Gate me={me} need="readCases" title="Cases">
       <PageHeader title="Cases" description="Customer-support cases in this workspace." />
-      <CaseList />
+      <CaseQueue me={me} />
     </Gate>
   );
 }
 
 export function CaseDetailPage({ me }: { me: MeOut }) {
+  const { caseId = "" } = useParams();
   return (
     <Gate me={me} need="readCases" title="Case">
-      <NotAvailable title="Case" />
+      <PageHeader title="Case" />
+      {/* Keyed by case: nothing from one case's view survives into another's. */}
+      <CaseDetail key={caseId} caseId={caseId} me={me} />
     </Gate>
   );
 }

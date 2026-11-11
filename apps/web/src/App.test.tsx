@@ -95,11 +95,12 @@ describe("case list states", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  test("an empty workspace explains itself without offering unavailable actions", async () => {
+  test("an empty workspace explains itself and offers only the queue's real actions", async () => {
     new FakeApi().on("GET", "/api/v1/me", json(200, me())).on("GET", "/api/v1/cases", json(200, casePage()));
     renderApp();
     expect(await screen.findByRole("heading", { name: "No cases in this workspace" })).toBeTruthy();
-    expect(within(screen.getByRole("main")).queryByRole("button")).toBeNull();
+    expect(within(screen.getByRole("main")).getAllByRole("button").map((button) => button.textContent))
+      .toEqual(["Refresh", "New case"]);
   });
 
   test("a retryable failure can be retried; the reference is shown", async () => {

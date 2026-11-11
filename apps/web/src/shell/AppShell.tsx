@@ -1,19 +1,22 @@
 // Workspace shell: skip link, header (workspace switcher, roles, account menu), primary navigation and the main
 // landmark. Navigation entries follow the role union; the server still checks every request.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 // Per-component entry points: the package root (and its Popover entry) also export Group and OverlayArrow, whose
 // declarations do not type-check under this project's exactOptionalPropertyTypes with library checking enabled.
 import { Button } from "react-aria-components/Button";
+import { Dialog, Heading } from "react-aria-components/Dialog";
 import { ListBox, ListBoxItem } from "react-aria-components/ListBox";
 import { Menu, MenuItem, MenuTrigger } from "react-aria-components/Menu";
+import { Modal, ModalOverlay } from "react-aria-components/Modal";
 import { Label, Popover, Select, SelectValue } from "react-aria-components/Select";
 import { NavLink, useLocation, useNavigate } from "react-router";
 
-import type { MeOut } from "../api/client";
+import { expectedContextOf, sameContext, type MeOut } from "../api/client";
+import { isUnresolved } from "../api/writes";
 import type { SessionNotice } from "../session/controller";
 import { capabilities, roleSummary } from "../session/permissions";
-import { useSessionController } from "../session/SessionProvider";
+import { useSessionController, useWriteEntries } from "../session/SessionProvider";
 import { SessionNoticeBanner } from "./screens";
 
 export const PAGE_HEADING_ID = "page-heading";
@@ -66,24 +69,54 @@ function WorkspaceSwitcher({ me }: { me: MeOut }) {
   );
 }
 
-function AccountMenu() {
+// Signing out while a write of this principal and workspace is unresolved asks first: it neither cancels that request
+// nor keeps the text retained for retrying it. The warning names no request, count or other context's activity.
+function AccountMenu({ me }: { me: MeOut }) {
   const controller = useSessionController();
+  const entries = useWriteEntries();
+  const [confirming, setConfirming] = useState(false);
+  const context = expectedContextOf(me);
+  const pending = entries.some((entry) => isUnresolved(entry) && sameContext(entry.context, context));
   return (
-    <MenuTrigger>
-      <Button className="button button-quiet account-button" aria-label="Account">
-        <span className="avatar" aria-hidden="true" />
-        <span className="chevron" aria-hidden="true" />
-      </Button>
-      <Popover className="popover" placement="bottom end">
-        <Menu className="menu" onAction={(key) => {
-          if (key === "sign-out") {
-            controller.signOut();
-          }
-        }}>
-          <MenuItem className="menu-item" id="sign-out">Sign out</MenuItem>
-        </Menu>
-      </Popover>
-    </MenuTrigger>
+    <>
+      <MenuTrigger>
+        <Button className="button button-quiet account-button" aria-label="Account">
+          <span className="avatar" aria-hidden="true" />
+          <span className="chevron" aria-hidden="true" />
+        </Button>
+        <Popover className="popover" placement="bottom end">
+          <Menu className="menu" onAction={(key) => {
+            if (key === "sign-out") {
+              if (pending) {
+                setConfirming(true);
+              } else {
+                controller.signOut();
+              }
+            }
+          }}>
+            <MenuItem className="menu-item" id="sign-out">Sign out</MenuItem>
+          </Menu>
+        </Popover>
+      </MenuTrigger>
+      <ModalOverlay className="modal-overlay" isOpen={confirming} onOpenChange={setConfirming} isDismissable>
+        <Modal className="modal">
+          <Dialog className="dialog" role="alertdialog">
+            <Heading slot="title">Sign out before your request is confirmed?</Heading>
+            <p>Something you sent hasn't been confirmed yet. Signing out doesn't cancel it, so it may still be applied.
+              Any message text kept here for retrying it will be lost.</p>
+            <div className="actions">
+              <Button className="button button-primary" autoFocus onPress={() => {
+                setConfirming(false);
+              }}>Keep working</Button>
+              <Button className="button" onPress={() => {
+                setConfirming(false);
+                controller.signOut();
+              }}>Sign out anyway</Button>
+            </div>
+          </Dialog>
+        </Modal>
+      </ModalOverlay>
+    </>
   );
 }
 
@@ -124,7 +157,7 @@ export function AppShell({ me, notice, children }: { me: MeOut; notice: SessionN
           <span className="roles-text">{roleSummary(me.roles)}</span>
           {can.has("operateCases") ? null : <span className="badge">Read-only</span>}
         </p>
-        <AccountMenu />
+        <AccountMenu me={me} />
       </header>
       <div className="shell-body">
         <nav className="sidenav" aria-label="Primary">

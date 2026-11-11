@@ -26,6 +26,13 @@ export type CaseStatus = Schemas["CaseStatus"];
 export type MembershipOut = Schemas["MembershipOut"];
 export type ErrorCode = Schemas["ErrorCode"];
 export type ErrorEnvelope = Schemas["ErrorEnvelope"];
+export type MessageView = Schemas["MessageView"];
+export type MessagePage = Schemas["MessagePage"];
+export type MessagePosted = Schemas["MessagePosted"];
+export type MessageIn = Schemas["MessageIn"];
+export type StaffMessageSource = MessageIn["source"];
+export type MessageSource = MessageView["source"];
+export type RunView = Schemas["RunView"];
 
 type ApiPath = keyof paths;
 type JsonBody<Op extends keyof operations> = operations[Op]["responses"] extends { 200: { content: { "application/json": infer T } } }
@@ -46,6 +53,7 @@ export const REQUEST_TIMEOUT_MS = 15_000;
 /** Upper bound on a response body this client will parse (characters). */
 export const MAX_RESPONSE_CHARS = 1_000_000;
 const MAX_DETAIL_CHARS = 300;
+const RULE_ID = /^[a-z][a-z0-9_.-]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The server's canonical UUID spelling, the only one the expected-context headers accept. */
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -82,6 +90,8 @@ export class ApiError extends Error {
     readonly detail: string | null = null,
     readonly correlationId: string | null = null,
     readonly retryable = false,
+    /** The server's stable refusal rule (for example `api.stale_version`), when the envelope carried a valid one. */
+    readonly ruleId: string | null = null,
   ) {
     super(status === null ? `API request failed (${kind})` : `API request failed (${kind} ${String(status)})`);
   }
@@ -93,6 +103,23 @@ export class ApiError extends Error {
   /** The server refused because the session is no longer this tab's principal or workspace; nothing was applied. */
   get contextChanged(): boolean {
     return this.kind === "http" && this.status === 409 && this.code === "context_changed";
+  }
+
+  /** The write's If-Match no longer names the case's current version (checked after any idempotent replay). */
+  get staleVersion(): boolean {
+    return this.kind === "http" && this.status === 409 && this.code === "stale_version"
+      && this.ruleId === "api.stale_version";
+  }
+
+  /** No investigation runtime is installed on this server, so no run was started (checked after any replay). */
+  get runtimeUnconfigured(): boolean {
+    return this.kind === "http" && this.status === 503 && this.code === "unavailable"
+      && this.ruleId === "runtime.unconfigured";
+  }
+
+  /** The case already has an active run (checked after any replay); this request did not start one. */
+  get runActive(): boolean {
+    return this.kind === "http" && this.status === 409 && this.code === "conflict" && this.ruleId === "api.run_active";
   }
 }
 
@@ -168,18 +195,36 @@ function httpError(status: number, text: string): ApiError {
     // Not JSON (e.g. a proxy page): keep only the status.
   }
   if (isRecord(parsed)) {
-    const { code, detail, correlation_id: correlationId, retryable } = parsed;
+    const { code, detail, correlation_id: correlationId, retryable, rule_id: ruleId } = parsed;
     if (typeof code === "string" && Object.hasOwn(ERROR_CODES, code) && typeof detail === "string"
         && typeof retryable === "boolean") {
       return new ApiError("http", status, code as ErrorCode, plainText(detail),
-        typeof correlationId === "string" && UUID.test(correlationId) ? correlationId.toLowerCase() : null, retryable);
+        typeof correlationId === "string" && UUID.test(correlationId) ? correlationId.toLowerCase() : null, retryable,
+        typeof ruleId === "string" && RULE_ID.test(ruleId) ? ruleId : null);
     }
   }
   return new ApiError("http", status);
 }
 
+/** What a write sends beyond its body: its operation identity and, for an existing case, the version it is based on. */
+export interface WriteHeaders {
+  readonly idempotencyKey: string;
+  readonly ifMatch: number | null;
+}
+
+interface Exchange {
+  readonly status: number;
+  readonly text: string;
+  readonly headers: Headers;
+}
+
 async function send(method: "GET" | "POST", path: string, body: unknown, options: RequestOptions,
                     context: ExpectedContext | null): Promise<string> {
+  return (await exchangeWith(method, path, body, options, context, null)).text;
+}
+
+async function exchangeWith(method: "GET" | "POST", path: string, body: unknown, options: RequestOptions,
+                            context: ExpectedContext | null, write: WriteHeaders | null): Promise<Exchange> {
   const { signal, timeoutMs = REQUEST_TIMEOUT_MS } = options;
   const local = new AbortController();
   let timedOut = false;
@@ -211,8 +256,14 @@ async function send(method: "GET" | "POST", path: string, body: unknown, options
     headers.set(EXPECTED_PRINCIPAL_HEADER, context.principalId);
     headers.set(EXPECTED_WORKSPACE_HEADER, context.workspaceId);
   }
+  if (write !== null) {
+    headers.set("Idempotency-Key", write.idempotencyKey);
+    if (write.ifMatch !== null) {
+      headers.set("If-Match", `"${String(write.ifMatch)}"`);
+    }
+  }
 
-  const exchange = async (): Promise<{ status: number; text: string }> => {
+  const exchange = async (): Promise<Exchange> => {
     const response = await fetch(path, {
       method,
       headers,
@@ -223,11 +274,11 @@ async function send(method: "GET" | "POST", path: string, body: unknown, options
       signal: local.signal,
     });
     const text = await response.text();
-    return { status: response.status, text };
+    return { status: response.status, text, headers: response.headers };
   };
 
   try {
-    const { status, text } = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+    const result = await new Promise<Exchange>((resolve, reject) => {
       if (local.signal.aborted) {
         reject(failure());
         return;
@@ -239,13 +290,14 @@ async function send(method: "GET" | "POST", path: string, body: unknown, options
         reject(failure());
       });
     });
+    const { status, text } = result;
     if (text.length > MAX_RESPONSE_CHARS) {
       throw new ApiError("malformed", status);
     }
     if (status < 200 || status > 299) {
       throw httpError(status, text);
     }
-    return text;
+    return result;
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", forward);
@@ -297,7 +349,8 @@ export function parseMe(value: unknown): MeOut {
 }
 
 function caseView(value: unknown): CaseView {
-  if (!isRecord(value) || typeof value["case_id"] !== "string" || typeof value["scenario"] !== "string"
+  if (!isRecord(value) || typeof value["case_id"] !== "string" || !CANONICAL_UUID.test(value["case_id"])
+      || !isVersion(value["version"]) || typeof value["scenario"] !== "string"
       || typeof value["status"] !== "string" || !Object.hasOwn(CASE_STATUSES, value["status"])
       || typeof value["customer_bound"] !== "boolean" || typeof value["version"] !== "number"
       || typeof value["created_at"] !== "string" || typeof value["updated_at"] !== "string") {
@@ -316,6 +369,9 @@ function casePage(value: unknown): CasePage {
   }
   const cursor = value["next_cursor"];
   if (cursor !== null && typeof cursor !== "string") {
+    malformed();
+  }
+  if (value["items"].length > CASE_PAGE_LIMIT || (cursor !== null && (cursor.length === 0 || cursor.length > 400))) {
     malformed();
   }
   return { items: value["items"].map(caseView), next_cursor: cursor };
@@ -337,10 +393,24 @@ export async function getMe(options: RequestOptions): Promise<JsonBody<"me">> {
 
 export const CASE_PAGE_LIMIT = 25;
 
-export async function listCases(options: BoundRequestOptions): Promise<JsonBody<"list_cases">> {
-  const query = new URLSearchParams({ limit: String(CASE_PAGE_LIMIT) });
-  return casePage(parseJson(await send("GET", `${CASES_PATH}?${query.toString()}`, undefined, options,
-                                       options.context)));
+export interface CaseQuery {
+  readonly status?: CaseStatus | null;
+  readonly cursor?: string | null;
+}
+
+/** One page of the queue, optionally filtered by status and continued from a server cursor. */
+export async function listCases(options: BoundRequestOptions, query: CaseQuery = {}): Promise<JsonBody<"list_cases">> {
+  const params = new URLSearchParams({ limit: String(CASE_PAGE_LIMIT) });
+  const status = query.status ?? null;
+  if (status !== null) {
+    params.set("status", status);
+  }
+  if (query.cursor != null) {
+    params.set("cursor", query.cursor);
+  }
+  const page = casePage(parseJson(await send("GET", `${CASES_PATH}?${params.toString()}`, undefined, options,
+                                             options.context)));
+  return status !== null && page.items.some((item) => item.status !== status) ? malformed() : page;
 }
 
 export async function listMembers(options: BoundRequestOptions): Promise<JsonBody<"members">> {
@@ -355,6 +425,202 @@ export async function selectWorkspace(workspaceId: string, options: RequestOptio
 
 export async function logout(options: RequestOptions): Promise<void> {
   await send("POST", LOGOUT_PATH, undefined, options, null);
+}
+
+// -- cases, conversation and runs -------------------------------------------------------------------------------
+//
+// Reads validate that every returned ID belongs to the requested resource. Writes carry an Idempotency-Key (the
+// operation's identity, chosen once by the caller and repeated unchanged on an explicit retry) and, for an existing
+// case, If-Match with the case version the request was composed against. A write result is accepted only with its
+// expected status, a strict body, an ETag agreeing with the body's version and a valid Idempotent-Replayed header
+// (absent on a fresh result, "true" on a replay). Anything else is `malformed`: a response arrived, so the write may
+// well have applied, and the caller must treat its outcome as unknown.
+
+const MESSAGE_SOURCES: Record<MessageSource, true> = {
+  seeded: true, simulated_customer: true, operator_entered_customer: true, staff_note: true, agent: true,
+};
+const RUN_STATES: Record<RunView["state"], true> = {
+  queued: true, running: true, waiting_input: true, waiting_approval: true, reconciling: true, succeeded: true,
+  failed: true, cancelled: true, budget_exceeded: true,
+};
+const STRONG_ETAG = /^"([1-9][0-9]{0,15})"$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+const MAX_VERSION = 2 ** 53;
+/** Server bound on one message page. */
+export const MESSAGE_PAGE_LIMIT = 200;
+const MAX_MESSAGE_TEXT = 4000;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9._~-]{8,128}$/;
+
+function isVersion(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= MAX_VERSION;
+}
+
+function caseIdOk(value: unknown): value is string {
+  return typeof value === "string" && CANONICAL_UUID.test(value);
+}
+
+function casePath(caseId: string, suffix = ""): string {
+  if (!caseIdOk(caseId)) {
+    // A route parameter that is not a canonical case ID is never sent; it reads as missing.
+    throw new ApiError("http", 404, "not_found");
+  }
+  return `${CASES_PATH}/${caseId}${suffix}`;
+}
+
+function messageView(value: unknown, caseId: string): MessageView {
+  if (!isRecord(value) || !caseIdOk(value["message_id"]) || value["case_id"] !== caseId
+      || (value["entered_by"] !== null && !caseIdOk(value["entered_by"]))
+      || !isVersion(value["sequence"]) || typeof value["source"] !== "string"
+      || !Object.hasOwn(MESSAGE_SOURCES, value["source"]) || typeof value["text"] !== "string"
+      || value["text"].length === 0 || value["text"].length > 2 * MAX_MESSAGE_TEXT
+      || typeof value["text_sha256"] !== "string" || !SHA256_HEX.test(value["text_sha256"])
+      || typeof value["created_at"] !== "string") {
+    malformed();
+  }
+  return {
+    message_id: value["message_id"], case_id: caseId, entered_by: value["entered_by"], sequence: value["sequence"],
+    source: value["source"] as MessageSource, text: value["text"], text_sha256: value["text_sha256"],
+    created_at: value["created_at"],
+  };
+}
+
+function messagePage(value: unknown, caseId: string, after: number): MessagePage {
+  if (!isRecord(value) || !Array.isArray(value["items"]) || value["items"].length > MESSAGE_PAGE_LIMIT) {
+    malformed();
+  }
+  const items = value["items"].map((item) => messageView(item, caseId));
+  let previous = after;
+  for (const item of items) {
+    if (item.sequence <= previous) {
+      malformed(); // out of order, duplicated or not after the requested sequence
+    }
+    previous = item.sequence;
+  }
+  const next = value["next_after_sequence"];
+  if (next !== null && (!isVersion(next) || items.length === 0 || next !== previous)) {
+    malformed();
+  }
+  return { items, next_after_sequence: next };
+}
+
+function runView(value: unknown, caseId: string): RunView {
+  if (!isRecord(value) || !caseIdOk(value["run_id"]) || value["case_id"] !== caseId
+      || !isVersion(value["case_version"]) || !isVersion(value["version"]) || value["mode"] !== "workbench"
+      || typeof value["state"] !== "string" || !Object.hasOwn(RUN_STATES, value["state"])
+      || (value["initiated_by"] !== null && !caseIdOk(value["initiated_by"]))
+      || typeof value["event_highwater"] !== "number" || !Number.isSafeInteger(value["event_highwater"])
+      || typeof value["config_sha256"] !== "string" || typeof value["graph_sha256"] !== "string"
+      || typeof value["prompt_sha256"] !== "string" || typeof value["created_at"] !== "string"
+      || typeof value["updated_at"] !== "string" || typeof value["deadline_at"] !== "string") {
+    malformed();
+  }
+  return {
+    run_id: value["run_id"], case_id: caseId, case_version: value["case_version"], version: value["version"],
+    mode: "workbench", state: value["state"] as RunView["state"], initiated_by: value["initiated_by"],
+    event_highwater: value["event_highwater"], config_sha256: value["config_sha256"],
+    graph_sha256: value["graph_sha256"], prompt_sha256: value["prompt_sha256"], created_at: value["created_at"],
+    updated_at: value["updated_at"], deadline_at: value["deadline_at"],
+  };
+}
+
+/** The version a strong ETag names, or null when the header is absent or not exactly one strong version. */
+function etagVersion(headers: Headers): number | null {
+  const match = STRONG_ETAG.exec(headers.get("ETag") ?? "");
+  const version = match === null ? Number.NaN : Number(match[1]);
+  return isVersion(version) ? version : null;
+}
+
+function replayedHeader(headers: Headers): boolean {
+  const value = headers.get("Idempotent-Replayed");
+  if (value === null) {
+    return false;
+  }
+  return value === "true" ? true : malformed();
+}
+
+/** A validated write result. `replayed`: the server returned the stored original result of this same request. */
+export interface Written<T> {
+  readonly value: T;
+  readonly replayed: boolean;
+}
+
+function written<T>(result: Exchange, expectedStatus: number, parse: (value: unknown) => T,
+                    version: (value: T) => number): Written<T> {
+  if (result.status !== expectedStatus) {
+    malformed();
+  }
+  const value = parse(parseJson(result.text));
+  if (etagVersion(result.headers) !== version(value)) {
+    malformed();
+  }
+  return { value, replayed: replayedHeader(result.headers) };
+}
+
+function writeHeaders(idempotencyKey: string, ifMatch: number | null): WriteHeaders {
+  if (!IDEMPOTENCY_KEY.test(idempotencyKey) || (ifMatch !== null && !isVersion(ifMatch))) {
+    throw new ApiError("malformed"); // a caller bug; nothing is sent
+  }
+  return { idempotencyKey, ifMatch };
+}
+
+/** A case and the version its strong ETag names (they must agree). */
+export async function getCase(caseId: string, options: BoundRequestOptions): Promise<CaseView> {
+  const path = casePath(caseId);
+  const result = await exchangeWith("GET", path, undefined, options, options.context, null);
+  const value = caseView(parseJson(result.text));
+  if (value.case_id !== caseId || etagVersion(result.headers) !== value.version) {
+    malformed();
+  }
+  return value;
+}
+
+/** Messages after `after`, in sequence order (at most MESSAGE_PAGE_LIMIT). */
+export async function listMessages(caseId: string, after: number, options: BoundRequestOptions,
+): Promise<MessagePage> {
+  if (!Number.isSafeInteger(after) || after < 0 || after > MAX_VERSION) {
+    throw new ApiError("malformed");
+  }
+  const params = new URLSearchParams({ after_sequence: String(after), limit: String(MESSAGE_PAGE_LIMIT) });
+  const path = `${casePath(caseId, "/messages")}?${params.toString()}`;
+  return messagePage(parseJson(await send("GET", path, undefined, options, options.context)), caseId, after);
+}
+
+export async function createCase(idempotencyKey: string, options: BoundRequestOptions): Promise<Written<CaseView>> {
+  const body: Schemas["CreateCaseIn"] = { scenario: "retail" };
+  const result = await exchangeWith("POST", CASES_PATH, body, options, options.context,
+                                    writeHeaders(idempotencyKey, null));
+  return written(result, 201, caseView, (value) => value.version);
+}
+
+/** Post a staff note or an operator-entered customer message against case version `ifMatch`. The returned message
+ *  must be the one this request describes (same case, source and text) and the case must be at a newer version. */
+export async function postMessage(caseId: string, message: MessageIn, idempotencyKey: string, ifMatch: number,
+                                  options: BoundRequestOptions): Promise<Written<MessagePosted>> {
+  const path = casePath(caseId, "/messages");
+  const body: MessageIn = { source: message.source, text: message.text };
+  const result = await exchangeWith("POST", path, body, options, options.context,
+                                    writeHeaders(idempotencyKey, ifMatch));
+  return written(result, 201, (value): MessagePosted => {
+    if (!isRecord(value)) {
+      malformed();
+    }
+    const posted = { message: messageView(value["message"], caseId), case: caseView(value["case"]) };
+    if (posted.case.case_id !== caseId || posted.case.version <= ifMatch || posted.message.source !== body.source
+        || posted.message.text !== body.text) {
+      malformed();
+    }
+    return posted;
+  }, (value) => value.case.version);
+}
+
+/** Start a workbench investigation on case version `ifMatch`. */
+export async function startRun(caseId: string, idempotencyKey: string, ifMatch: number,
+                               options: BoundRequestOptions): Promise<Written<RunView>> {
+  const path = casePath(caseId, "/runs");
+  const body: Schemas["StartRunIn"] = { mode: "workbench" };
+  const result = await exchangeWith("POST", path, body, options, options.context,
+                                    writeHeaders(idempotencyKey, ifMatch));
+  return written(result, 202, (value) => runView(value, caseId), (value) => value.version);
 }
 
 /** Full-page sign-in navigation; `returnTo` must already be a safe local path (see safeReturnTo). */

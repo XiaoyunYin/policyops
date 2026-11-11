@@ -704,3 +704,34 @@ a {
     padding: var(--space-5) var(--space-4);
   }
 }
+
+/* Case queue, detail and composer */
+.toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.filter-group { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.filter-label { font-weight: 600; }
+.filter-choice, .source-choice { display: flex; gap: 0.5rem; align-items: baseline; cursor: default; }
+.filter-choice::before, .source-choice::before { content: ""; flex: none; width: 0.9rem; height: 0.9rem; border: 2px solid currentColor; border-radius: 50%; }
+.filter-choice[data-selected]::before, .source-choice[data-selected]::before { background: currentColor; box-shadow: inset 0 0 0 2px var(--color-surface, #fff); }
+.filter-choice[data-focus-visible], .source-choice[data-focus-visible] { outline: 2px solid currentColor; outline-offset: 2px; }
+.source-choice[data-disabled] { opacity: 0.6; }
+.source-group { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.choice-help { display: block; }
+.case-ref { overflow-wrap: anywhere; }
+.case-summary { display: grid; gap: 1rem; margin-bottom: 1.5rem; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.75rem; margin: 0; }
+.facts dt { font-weight: 600; }
+.facts dd { margin: 0; }
+.wrap-anywhere { overflow-wrap: anywhere; }
+.messages { list-style: none; padding: 0; display: grid; gap: 0.75rem; }
+.message { border: 1px solid currentColor; border-radius: 0.5rem; padding: 0.75rem; }
+.message-staff_note { border-style: dashed; }
+.message-meta { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin: 0 0 0.5rem; }
+.source-badge { font-weight: 600; overflow-wrap: anywhere; }
+.message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.composer { display: grid; gap: 0.75rem; max-width: 48rem; }
+.text-field { display: grid; gap: 0.25rem; }
+.textarea { font: inherit; padding: 0.5rem; min-height: 6rem; resize: vertical; }
+.field-error { color: var(--color-danger, #b42318); }
+.confirm { border: 2px solid currentColor; border-radius: 0.5rem; padding: 0.75rem; }
+.write-status { margin-bottom: 1rem; }

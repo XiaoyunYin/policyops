@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 
-import { NetworkBlockedError, installFake, takeBlockedAttempts, verifyNoBlockedAttempts } from "./network";
+import { FETCH_BUDGET, FetchBudgetExhaustedError, NetworkBlockedError, installFake, takeBlockedAttempts,
+         verifyNoBlockedAttempts } from "./network";
 
 test("fetch is refused and the attempt is recorded", async () => {
   await expect(fetch("https://example.com/api")).rejects.toBeInstanceOf(NetworkBlockedError);
@@ -35,4 +36,28 @@ test("the fake was reset after the previous test", async () => {
   // Runs after the fake-installing test (file order).
   await expect(fetch("https://example.com/")).rejects.toBeInstanceOf(NetworkBlockedError);
   takeBlockedAttempts();
+});
+
+test("a fetch fake is metered: past the per-test budget requests are refused and a swallowed refusal is reported",
+     async () => {
+  let served = 0;
+  installFake("fetch", () => {
+    served += 1;
+    return Promise.resolve(new Response("ok"));
+  });
+  for (let index = 0; index < FETCH_BUDGET; index += 1) {
+    await fetch("/api/v1/me");
+  }
+  await expect(fetch("/api/v1/me")).rejects.toBeInstanceOf(FetchBudgetExhaustedError);
+  await fetch("/api/v1/me").catch(() => undefined); // swallowed by the caller
+  expect(served).toBe(FETCH_BUDGET); // the refused requests never reached the fake
+  expect(() => {
+    verifyNoBlockedAttempts();
+  }).toThrow(/per-test budget of 200 \(request 201\).*\(request 202\)/);
+});
+
+test("the budget was reset with the fake", async () => {
+  // Runs after the budget test (file order).
+  installFake("fetch", () => Promise.resolve(new Response("fresh")));
+  expect(await (await fetch("/api/v1/me")).text()).toBe("fresh");
 });

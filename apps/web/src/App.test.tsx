@@ -49,7 +49,7 @@ describe("session bootstrap", () => {
       .on("GET", "/api/v1/me", json(200, me())).on("GET", "/api/v1/cases", json(200, casePage()));
     const { user } = renderApp();
     expect(await screen.findByRole("heading", { name: "Can't reach PolicyOps" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await user.click(screen.getByRole("button", { name: "Reload session" }));
     expect(await screen.findByRole("heading", { name: "No cases in this workspace" })).toBeTruthy();
   });
 

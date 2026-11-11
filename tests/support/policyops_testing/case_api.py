@@ -3,7 +3,8 @@
 It serves exactly the production composition, `create_app(build_auth_runtime(...))`, with the actual auth/app
 runtime roles, the test-only fake issuer (allowed only with `env="test"`) and a controlled clock; it adds no
 routes. Every response passing through `call` is checked against the committed OpenAPI document and recorded,
-so the contract tests can also type-check real bodies against the generated TypeScript.
+so the contract tests can also type-check real bodies against the generated TypeScript. Like the web client, a
+browser from `member` or `bind` sends the expected principal/workspace headers taken from its own `GET /me`.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import httpx
 from pydantic import SecretStr
 
 from policyops.api.app import build_auth_runtime, create_app
-from policyops.api.auth import AuthRuntime
+from policyops.api.auth import EXPECTED_PRINCIPAL_HEADER, EXPECTED_WORKSPACE_HEADER, AuthRuntime
 from policyops.api.runs import StreamSettings, build_runs_runtime
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import transaction
@@ -44,6 +45,7 @@ SETTINGS = AuthSettings(env="test", public_origin=ORIGIN, oidc_issuer=ISSUER, oi
                         oidc_client_secret=SecretStr(CLIENT_SECRET), session_absolute_ttl=timedelta(hours=8),
                         session_idle_ttl=timedelta(hours=4))
 CSRF_COOKIE = "policyops_csrf_local"
+CONTEXT_HEADERS = (EXPECTED_PRINCIPAL_HEADER, EXPECTED_WORKSPACE_HEADER)
 
 
 @dataclass(frozen=True)
@@ -104,13 +106,33 @@ class CaseApi:
             selected = self.call(browser, "POST", "/api/v1/auth/workspace", "/api/v1/auth/workspace",
                                  json={"workspace_id": str(workspace)}, key=None)
             assert selected.status_code == 204
+        return self.bind(browser)
+
+    def context(self, browser: TestClient) -> dict[str, str]:
+        """The browser's current expected-context headers (for raw clients that do not share its defaults)."""
+        return {name: browser.headers[name] for name in CONTEXT_HEADERS if name in browser.headers}
+
+    def bind(self, browser: TestClient) -> TestClient:
+        """Set the browser's default expected-context headers from its own `GET /me`, as a tab does after loading
+        it (no workspace header while none is selected). Returns the same browser."""
+        me = self.get(browser, "/api/v1/me", "/api/v1/me")
+        assert me.status_code == 200
+        body = me.json()
+        browser.headers[EXPECTED_PRINCIPAL_HEADER] = body["principal_id"]
+        if body["workspace_id"] is None:
+            browser.headers.pop(EXPECTED_WORKSPACE_HEADER, None)
+        else:
+            browser.headers[EXPECTED_WORKSPACE_HEADER] = body["workspace_id"]
         return browser
 
-    def clone(self, browser: TestClient) -> TestClient:
-        """Another client with the same session and CSRF cookies (for concurrent requests)."""
+    def clone(self, browser: TestClient, *, context: bool = True) -> TestClient:
+        """Another client with the same session and CSRF cookies (for concurrent requests) and, unless
+        `context=False`, the same expected-context headers."""
         other = self.browser()
         for name, value in browser.cookies.items():
             other.cookies.set(name, value)
+        if context:
+            other.headers.update(self.context(browser))
         return other
 
     # -- requests -------------------------------------------------------------------------------------------

@@ -52,7 +52,7 @@ Retrieval experiments will compare full-policy context, PostgreSQL full-text sea
 
 ## Authentication
 
-OIDC authorization code flow with PKCE through the backend, durable browser-bound login state, opaque server-side sessions (digest-only storage, absolute and idle expiry, rotation, revocation), synchronizer CSRF tokens with exact origin checks, and a reusable `require_action` dependency that reads the principal's current workspace membership on every request. Local identity is the pinned Dex with fictional users (`infra/dex/config.yaml.tmpl`). [docs/authentication.md](docs/authentication.md) describes the flow, validation rules, cookie and deployment settings, tests and limits.
+OIDC authorization code flow with PKCE through the backend, durable browser-bound login state, opaque server-side sessions (digest-only storage, absolute and idle expiry, rotation, revocation), synchronizer CSRF tokens with exact origin checks, and a reusable `require_action` dependency that reads the principal's current workspace membership on every request. Every workspace-bound operation also requires `PolicyOps-Expected-Principal` and `PolicyOps-Expected-Workspace` headers copied from the client's `/me`. The server refuses with 409 `context_changed`, applying nothing, when the shared session cookie now belongs to another principal or workspace, for example after a switch in another tab. This is a pre-release contract change: older clients that omit the headers get 400. Local identity is the pinned Dex with fictional users (`infra/dex/config.yaml.tmpl`). [docs/authentication.md](docs/authentication.md) describes the flow, validation rules, cookie and deployment settings, tests and limits.
 
 ## Case and message API
 

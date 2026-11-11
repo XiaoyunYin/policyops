@@ -23,9 +23,11 @@ function SessionGate() {
     case "signedOut":
       return <SignInScreen byUser={state.byUser} />;
     case "noWorkspace":
-      return <NoWorkspaceScreen />;
+      return <NoWorkspaceScreen notice={state.notice} />;
     case "chooseWorkspace":
       return <ChooseWorkspaceScreen me={state.me} notice={state.notice} />;
+    case "reconciling":
+      return <LoadingScreen title="Reloading session" label="Your session changed. Reloading…" />;
     case "switching":
       return <LoadingScreen title="Switching workspace" label={`Switching to ${state.workspaceName}…`} />;
     case "expired":

@@ -1,14 +1,19 @@
 import { createContext, use, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 
-import { ApiError, toApiError, type RequestOptions } from "../api/client";
+import { ApiError, toApiError, type BoundRequestOptions } from "../api/client";
 import { SessionController, type SessionState } from "./controller";
 
 const SessionContext = createContext<SessionController | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [controller] = useState(() => new SessionController());
+
+  useEffect(() => controller.onRouteReset((path) => {
+    void navigate(path, { replace: true });
+  }), [controller, navigate]);
 
   useEffect(() => {
     controller.trackPath(location.pathname);
@@ -57,11 +62,14 @@ export type Resource<T> =
 const LOADING = { status: "loading" } as const;
 
 /**
- * Load data under the current session generation. A result is applied only if the component is still mounted for
- * the same request and the generation is still current; a 401 is reported to the session (which ignores stale ones).
- * `load` must be stable (defined at module level or memoized).
+ * Load workspace-bound data under the current session generation, with the expected context captured in the same
+ * scope (never read again at dispatch). A result is applied only if the component is still mounted for the same
+ * request and the generation is still current; a 401 or a 409 context_changed is reported to the session (which
+ * ignores stale ones and reconciles at most once per incident); other failures, ordinary conflicts included, stay
+ * with the resource. `key` names the resource to the session: only its own success closes a recovery its refusal
+ * opened. `load` must be stable (defined at module level or memoized).
  */
-export function useSessionResource<T>(load: (options: RequestOptions) => Promise<T>, key: string,
+export function useSessionResource<T>(load: (options: BoundRequestOptions) => Promise<T>, key: string,
 ): { resource: Resource<T>; reload: () => void } {
   const controller = useSessionController();
   const [attempt, setAttempt] = useState(0);
@@ -79,9 +87,14 @@ export function useSessionResource<T>(load: (options: RequestOptions) => Promise
       local.abort();
     }
     const live = (): boolean => !local.signal.aborted && controller.isCurrent(scope);
-    load({ signal: local.signal }).then(
+    const context = scope.context;
+    const pending = context === null
+      ? Promise.reject(new ApiError("malformed")) // no valid context to bind: nothing is sent
+      : load({ signal: local.signal, context });
+    pending.then(
       (data) => {
         if (live()) {
+          controller.reportSuccess(scope, key);
           setSettled({ token, result: { status: "ready", data } });
         }
       },
@@ -91,7 +104,9 @@ export function useSessionResource<T>(load: (options: RequestOptions) => Promise
         }
         const failure = toApiError(error);
         if (failure.unauthenticated) {
-          controller.reportUnauthenticated(scope);
+          controller.reportUnauthenticated(scope, key);
+        } else if (failure.contextChanged) {
+          controller.reportContextChanged(scope, failure, key);
         } else {
           setSettled({ token, result: { status: "failed", error: failure } });
         }
@@ -101,7 +116,7 @@ export function useSessionResource<T>(load: (options: RequestOptions) => Promise
       scope.signal.removeEventListener("abort", abort);
       local.abort();
     };
-  }, [controller, load, token]);
+  }, [controller, key, load, token]);
 
   const resource: Resource<T> = settled !== null && settled.token === token ? settled.result : LOADING;
   return {

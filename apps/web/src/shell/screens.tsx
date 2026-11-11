@@ -7,7 +7,7 @@ import { Modal, ModalOverlay } from "react-aria-components/Modal";
 import { useLocation } from "react-router";
 
 import { loginHref, type ApiError, type MeOut } from "../api/client";
-import type { SwitchNotice } from "../session/controller";
+import type { SessionNotice } from "../session/controller";
 import { roleSummary } from "../session/permissions";
 import { DEFAULT_RETURN_PATH, safeReturnTo } from "../session/returnTo";
 import { useSessionController } from "../session/SessionProvider";
@@ -57,14 +57,19 @@ export function SignInScreen({ byUser }: { byUser: boolean }) {
   );
 }
 
+/**
+ * The session could not be loaded, or a recovered view was refused again. `retryable` describes the failed request
+ * and is not consulted: the action here only reloads /me (a read) under a new generation and replays no earlier write.
+ */
 export function BootFailedScreen({ error }: { error: ApiError }) {
   const controller = useSessionController();
   return (
     <CenteredPage title="Unavailable">
       <h1>PolicyOps couldn't load your session</h1>
-      <ErrorPanel error={error} onRetry={() => {
+      <ErrorPanel error={error} />
+      <Button className="button" onPress={() => {
         controller.boot();
-      }} />
+      }}>Reload session</Button>
     </CenteredPage>
   );
 }
@@ -78,10 +83,11 @@ function SignOutButton() {
   );
 }
 
-export function NoWorkspaceScreen() {
+export function NoWorkspaceScreen({ notice }: { notice: SessionNotice | null }) {
   return (
     <CenteredPage title="No workspace access">
       <h1>No workspace access</h1>
+      {notice !== null ? <SessionNoticeBanner notice={notice} /> : null}
       <p className="muted">
         Your account isn't a member of any workspace yet. Ask a workspace administrator to add you.
       </p>
@@ -90,7 +96,17 @@ export function NoWorkspaceScreen() {
   );
 }
 
-export function SwitchNoticeBanner({ notice }: { notice: SwitchNotice }) {
+export function SessionNoticeBanner({ notice }: { notice: SessionNotice }) {
+  if (notice.kind === "contextChanged") {
+    // Generic on purpose: true for a principal or a workspace change, and it repeats nothing from the earlier view.
+    return (
+      <div className="banner" role="status">
+        <p className="banner-title">Your session changed in another window</p>
+        <p>This window now shows your current sign-in and workspace. The earlier view was cleared, and earlier
+          changes were not retried.</p>
+      </div>
+    );
+  }
   return (
     <div className="banner banner-error" role="alert">
       <p className="banner-title">Couldn't switch to {notice.workspaceName}</p>
@@ -99,12 +115,12 @@ export function SwitchNoticeBanner({ notice }: { notice: SwitchNotice }) {
   );
 }
 
-export function ChooseWorkspaceScreen({ me, notice }: { me: MeOut; notice: SwitchNotice | null }) {
+export function ChooseWorkspaceScreen({ me, notice }: { me: MeOut; notice: SessionNotice | null }) {
   const controller = useSessionController();
   return (
     <CenteredPage title="Choose a workspace">
       <h1>Choose a workspace</h1>
-      {notice !== null ? <SwitchNoticeBanner notice={notice} /> : null}
+      {notice !== null ? <SessionNoticeBanner notice={notice} /> : null}
       <ul className="workspace-choices" aria-label="Workspaces">
         {me.workspaces.map((choice) => (
           <li key={choice.workspace_id}>

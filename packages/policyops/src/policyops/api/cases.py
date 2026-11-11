@@ -13,8 +13,9 @@
 
 Order of refusals (FastAPI 0.162 behavior, covered by tests): `BodyLimit` refuses a malformed, duplicate or
 oversized Content-Length (400/413) before the app runs, and FastAPI refuses an undecodable body (400) or malformed
-JSON (422) while reading it, both before authorization. Authorization (session, CSRF/Origin on writes, selected
-workspace, current role) then runs before the body is validated against its model and before any header parsing,
+JSON (422) while reading it, both before authorization. Authorization (session, CSRF/Origin on writes, the expected
+principal/workspace headers and their match with the session, selected workspace, current role; see
+`policyops.api.auth`) then runs before the body is validated against its model and before any header parsing,
 idempotency lookup, replay or service work; the service rechecks the role after each lock wait. A message's
 source-specific permission needs the validated body, so it is checked after body validation, still before the
 service. Response bodies are canonical JSON (sorted keys), so a replay is byte-identical to the original
@@ -34,7 +35,7 @@ from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel
 
 from policyops.api import docs
-from policyops.api.auth import NO_STORE, Model, Runtime, Session, require_action
+from policyops.api.auth import NO_STORE, Model, Runtime, Session, expected_context, require_action
 from policyops.auth.service import AuthError, Authorized, forbidden
 from policyops.domain.case_status import CaseStatus
 from policyops.domain.roles import Action, is_allowed
@@ -91,9 +92,10 @@ def case_service(auth: Runtime) -> CaseService:
 Cases = Annotated[CaseService, Depends(case_service)]
 
 
-def message_author(session: Session, auth: Runtime) -> Authorized:
-    """A member whose role may post some message source; the body's source is checked against it next."""
-    authorized = auth.service.authorize(session, Action.VIEW_CASE)
+def message_author(request: Request, session: Session, auth: Runtime) -> Authorized:
+    """The expected principal in the expected workspace, whose role may post some message source; the body's source
+    is checked against it next."""
+    authorized = auth.service.authorize(session, Action.VIEW_CASE, expected=expected_context(request.headers))
     if not any(is_allowed(authorized.roles, action) for action in SOURCE_ACTION.values()):
         raise forbidden("Your role does not allow this action.", "auth.role")
     return authorized
@@ -146,7 +148,7 @@ def build_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/cases", response_model=CasePage,
-                **docs.operation(session=True, errors=(401, 403, 422)))
+                **docs.operation(session=True, context=True, errors=(401, 403, 422)))
     def list_cases(authorized: Annotated[Authorized, Depends(require_action(Action.VIEW_CASE))], service: Cases,
                    status: CaseStatus | None = None,
                    cursor: Annotated[str | None, Query(min_length=1, max_length=MAX_CURSOR_LENGTH)] = None,
@@ -154,7 +156,8 @@ def build_router() -> APIRouter:
         return view(service.list_cases(authorized, status=status, cursor=cursor, limit=limit))
 
     @router.post("/cases", status_code=201, response_model=CaseView,
-                 **docs.operation(csrf=True, headers=[docs.IDEMPOTENCY_KEY], errors=(400, 401, 403, 409, 422),
+                 **docs.operation(csrf=True, context=True, headers=[docs.IDEMPOTENCY_KEY],
+                                  errors=(400, 401, 403, 409, 422),
                                   success={201: {"description": "Created (or the replayed original).",
                                                  "headers": {**WRITE_HEADERS, "Location": docs.LOCATION_HEADER}}}))
     def create_case(request: Request, body: CreateCaseIn,
@@ -165,7 +168,7 @@ def build_router() -> APIRouter:
         return written(result, location=f"/api/v1/cases/{result.case_id}")
 
     @router.get("/cases/{case_id}", response_model=CaseView,
-                **docs.operation(session=True, errors=(401, 403, 404, 422),
+                **docs.operation(session=True, context=True, errors=(401, 403, 404, 422),
                                  success={200: {"description": "The case.", "headers": {"ETag": docs.ETAG_HEADER}}}))
     def get_case(case_id: UUID, authorized: Annotated[Authorized, Depends(require_action(Action.VIEW_CASE))],
                  service: Cases) -> Response:
@@ -173,7 +176,7 @@ def build_router() -> APIRouter:
         return view(case, headers={"ETag": etag(case.version)})
 
     @router.patch("/cases/{case_id}", response_model=CaseView,
-                  **docs.operation(csrf=True, headers=[docs.IDEMPOTENCY_KEY, docs.IF_MATCH],
+                  **docs.operation(csrf=True, context=True, headers=[docs.IDEMPOTENCY_KEY, docs.IF_MATCH],
                                    errors=(400, 401, 403, 404, 409, 422, 428),
                                    success={200: {"description": "The case after the change (or the replayed "
                                                   "original).", "headers": WRITE_HEADERS}}))
@@ -185,14 +188,14 @@ def build_router() -> APIRouter:
                                              status=CaseStatus(body.status)))
 
     @router.get("/cases/{case_id}/messages", response_model=MessagePage,
-                **docs.operation(session=True, errors=(401, 403, 404, 422)))
+                **docs.operation(session=True, context=True, errors=(401, 403, 404, 422)))
     def list_messages(case_id: UUID, authorized: Annotated[Authorized, Depends(require_action(Action.VIEW_CASE))],
                       service: Cases, after_sequence: Annotated[int, Query(ge=0, le=MAX_VERSION)] = 0,
                       limit: Annotated[int, Query(ge=1, le=MAX_MESSAGE_PAGE)] = DEFAULT_PAGE) -> Response:
         return view(service.list_messages(authorized, case_id, after_sequence=after_sequence, limit=limit))
 
     @router.post("/cases/{case_id}/messages", status_code=201, response_model=MessagePosted,
-                 **docs.operation(csrf=True, headers=[docs.IDEMPOTENCY_KEY, docs.IF_MATCH],
+                 **docs.operation(csrf=True, context=True, headers=[docs.IDEMPOTENCY_KEY, docs.IF_MATCH],
                                   errors=(400, 401, 403, 404, 409, 422, 428),
                                   success={201: {"description": "The appended message and the case at its new "
                                                  "version (or the replayed original).", "headers": WRITE_HEADERS}}))

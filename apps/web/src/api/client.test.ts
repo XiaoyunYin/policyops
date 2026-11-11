@@ -1,10 +1,20 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { FakeApi, envelope, json, me, noContent, setCsrfCookie } from "../test/fakeApi";
-import { ApiError, CSRF_HEADER, MAX_RESPONSE_CHARS, getMe, listCases, loginHref, logout, readCsrfToken,
-         selectWorkspace } from "./client";
+import { FakeApi, WORKSPACE_A, WORKSPACE_B, casePage, envelope, json, me, members, noContent,
+         setCsrfCookie } from "../test/fakeApi";
+import { ApiError, CSRF_HEADER, EXPECTED_PRINCIPAL_HEADER, EXPECTED_WORKSPACE_HEADER, MAX_RESPONSE_CHARS,
+         expectedContextOf, getMe, listCases, listMembers, loginHref, logout, readCsrfToken, sameContext,
+         selectWorkspace, type BoundRequestOptions, type ExpectedContext } from "./client";
 
 const live = (): { signal: AbortSignal } => ({ signal: new AbortController().signal });
+function contextOf(workspace = WORKSPACE_A): ExpectedContext {
+  const context = expectedContextOf(me({ workspace }));
+  if (context === null) {
+    throw new Error("fixture context");
+  }
+  return context;
+}
+const bound = (): BoundRequestOptions => ({ ...live(), context: contextOf() });
 
 async function failure(promise: Promise<unknown>): Promise<ApiError> {
   try {
@@ -103,7 +113,65 @@ describe("failures", () => {
 
   test("a case page with an unknown status is refused rather than shown", async () => {
     new FakeApi().on("GET", "/api/v1/cases", json(200, { items: [{ status: "deleted" }], next_cursor: null }));
-    expect((await failure(listCases(live()))).kind).toBe("malformed");
+    expect((await failure(listCases(bound()))).kind).toBe("malformed");
+  });
+});
+
+describe("expected context", () => {
+  test("bound endpoints send both headers from the captured context; global ones send neither", async () => {
+    const api = new FakeApi().on("GET", "/api/v1/cases", json(200, casePage()))
+      .on("GET", "/api/v1/workspace/members", json(200, members())).on("GET", "/api/v1/me", json(200, me()))
+      .on("POST", "/api/v1/auth/workspace", noContent()).on("POST", "/api/v1/auth/logout", noContent());
+    await listCases(bound());
+    await listMembers({ ...live(), context: contextOf(WORKSPACE_B) });
+    await getMe(live());
+    await selectWorkspace(WORKSPACE_B.workspace_id, live());
+    await logout(live());
+    const sent = api.calls.map((call) => [call.path, call.headers.get(EXPECTED_PRINCIPAL_HEADER),
+                                          call.headers.get(EXPECTED_WORKSPACE_HEADER)]);
+    const principal = me().principal_id;
+    expect(sent).toEqual([
+      ["/api/v1/cases", principal, WORKSPACE_A.workspace_id],
+      ["/api/v1/workspace/members", principal, WORKSPACE_B.workspace_id],
+      ["/api/v1/me", null, null], ["/api/v1/auth/workspace", null, null], ["/api/v1/auth/logout", null, null],
+    ]);
+  });
+
+  test("a bound call without a context does not type-check", () => {
+    // @ts-expect-error -- workspace-bound endpoints require the expected context
+    const unbound = (): Promise<unknown> => listCases(live());
+    // @ts-expect-error -- a plain object is not an ExpectedContext (only expectedContextOf creates one)
+    const forged = (): Promise<unknown> => listCases({ ...live(), context: { principalId: "p", workspaceId: "w" } });
+    expect([typeof unbound, typeof forged]).toEqual(["function", "function"]);
+  });
+
+  test("a context exists only for a selected workspace with canonical IDs", () => {
+    expect(expectedContextOf(me({ workspace: null }))).toBeNull();
+    expect(expectedContextOf({ ...me(), principal_id: "not-a-uuid" })).toBeNull();
+    expect(expectedContextOf({ ...me(), workspace_id: WORKSPACE_A.workspace_id.toUpperCase() })).toBeNull();
+    expect(expectedContextOf({ ...me(), workspace_id: "{0a0a0a0a-0000-4000-8000-00000000000a}" })).toBeNull();
+    const context = contextOf();
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(sameContext(context, contextOf())).toBe(true);
+    expect(sameContext(context, contextOf(WORKSPACE_B))).toBe(false);
+    expect(sameContext(context, null)).toBe(false);
+  });
+
+  test("only an explicit 409 context_changed is a context change; other conflicts stay resource-level", async () => {
+    const api = new FakeApi();
+    const outcomes: [Response, boolean][] = [
+      [json(409, envelope("context_changed", "Your session changed.")), true],
+      [json(409, envelope("stale_version", "The case changed.")), false],
+      [json(409, envelope("conflict", "Already decided.")), false],
+      [json(409, { detail: "no envelope" }), false],
+      [json(400, envelope("context_changed", "wrong status")), false],
+      [json(401, envelope("unauthenticated", "Sign in again.")), false],
+    ];
+    for (const [reply, expected] of outcomes) {
+      api.next("GET", "/api/v1/cases", reply);
+      const error = await failure(listCases(bound()));
+      expect(error.contextChanged).toBe(expected);
+    }
   });
 });
 

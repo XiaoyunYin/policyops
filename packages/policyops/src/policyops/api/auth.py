@@ -12,16 +12,23 @@ synchronizer token in `X-CSRF-Token`. The CSRF token reaches the browser in its 
 session is created; the server stores only its digest and compares against it, so it is not a bare double-submit
 cookie. CORS stays disabled (no CORS middleware). Auth responses are `no-store` and `Referrer-Policy: no-referrer`.
 
-`require_action(Action.X)` is the reusable dependency for later routes: it resolves the session, the selected
-workspace and the principal's current roles, and refuses (401/403) before the route runs. Routes that load a
-resource must then use `workspace_transaction(app_engine, authorized.workspace_id)`, so another workspace's
-resource is simply not found (404).
+`require_action(Action.X)` is the reusable dependency for workspace-bound routes. In order it resolves the session
+(401), checks Origin and CSRF on unsafe methods (403), reads the required `PolicyOps-Expected-Principal` and
+`PolicyOps-Expected-Workspace` headers (missing 400, malformed or repeated 422), refuses if the session is not that
+principal in that workspace (409 `context_changed`), then checks the selected workspace, membership and role (403),
+all before the route runs. The headers are refusal preconditions copied from the client's `/me`; they never select
+a workspace or grant anything. The comparison uses the same frozen session snapshot that becomes `Authorized`, so a
+session rotated in another window cannot run a request composed for the previous principal or workspace. Routes
+that load a resource must then use `workspace_transaction(app_engine, authorized.workspace_id)`, so another
+workspace's resource is simply not found (404). `/me`, workspace selection, logout and the login flow are global
+and take no expected-context headers.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import re
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -30,10 +37,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Engine
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from policyops.api import docs
-from policyops.auth.service import AuthError, Authorized, AuthService, IssuedSession, SessionContext, forbidden
+from policyops.auth.service import (
+    AuthError,
+    Authorized,
+    AuthService,
+    ExpectedContext,
+    IssuedSession,
+    SessionContext,
+    forbidden,
+)
 from policyops.domain.roles import Action, Role
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import workspace_transaction
@@ -44,6 +60,9 @@ from policyops_contracts.errors import ErrorCode, ErrorEnvelope
 UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CSRF_HEADER = "X-CSRF-Token"
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache", "Referrer-Policy": "no-referrer"}
+EXPECTED_PRINCIPAL_HEADER = "PolicyOps-Expected-Principal"
+EXPECTED_WORKSPACE_HEADER = "PolicyOps-Expected-Workspace"
+CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 @dataclass(frozen=True)
@@ -140,10 +159,30 @@ def check_origin(request: Request, settings: AuthSettings) -> None:
 Session = Annotated[SessionContext, Depends(current_session)]
 
 
+def _expected_id(headers: Headers, name: str, label: str) -> UUID:
+    values = headers.getlist(name)
+    if not values:
+        raise AuthError(400, ErrorCode.INVALID_INPUT, f"A {name} header is required.", f"api.expected_{label}_required")
+    if len(values) != 1 or len(values[0]) != 36 or not CANONICAL_UUID.fullmatch(values[0]):  # bounded; never echoed
+        raise AuthError(422, ErrorCode.INVALID_INPUT, f"The {name} header is not valid.",
+                        f"api.invalid_expected_{label}")
+    return UUID(values[0])
+
+
+def expected_context(headers: Headers) -> ExpectedContext:
+    """The request's expected principal and workspace: exactly one canonical lowercase UUID each (the principal is
+    checked first). Call only after the session has been resolved and, on unsafe methods, Origin/CSRF checked, so an
+    anonymous or forged request is refused as such rather than for its headers."""
+    return ExpectedContext(principal_id=_expected_id(headers, EXPECTED_PRINCIPAL_HEADER, "principal"),
+                           workspace_id=_expected_id(headers, EXPECTED_WORKSPACE_HEADER, "workspace"))
+
+
 def require_action(action: Action) -> Callable[..., Authorized]:
-    """Reusable dependency: an authenticated session, a selected workspace and a role allowing `action`."""
-    def dependency(session: Session, auth: Runtime) -> Authorized:
-        return auth.service.authorize(session, action)
+    """Reusable dependency: an authenticated session that is the request's expected principal in its expected
+    workspace, with a role allowing `action`. The session dependency resolves first, so its 401/403 precede the
+    header refusals."""
+    def dependency(request: Request, session: Session, auth: Runtime) -> Authorized:
+        return auth.service.authorize(session, action, expected=expected_context(request.headers))
 
     dependency.__name__ = f"require_{action.value}"
     return dependency
@@ -213,7 +252,7 @@ def build_router() -> APIRouter:
         return response
 
     @router.get("/workspace/members", response_model=list[MembershipOut],
-                **docs.operation(session=True, errors=(401, 403)))
+                **docs.operation(session=True, context=True, errors=(401, 403)))
     def members(authorized: Annotated[Authorized, Depends(require_action(Action.MANAGE_MEMBERSHIP))],
                 auth: Runtime) -> list[MembershipOut]:
         with workspace_transaction(auth.app_engine, authorized.workspace_id) as connection:
@@ -222,7 +261,7 @@ def build_router() -> APIRouter:
                               active=m.revoked_at is None) for m in rows]
 
     @router.post("/workspace/members/{membership_id}/revoke", status_code=204,
-                 **docs.operation(csrf=True, errors=(401, 403, 404, 422)))
+                 **docs.operation(csrf=True, context=True, errors=(401, 403, 404, 422)))
     def revoke_member(membership_id: UUID,
                       authorized: Annotated[Authorized, Depends(require_action(Action.MANAGE_MEMBERSHIP))],
                       auth: Runtime) -> Response:

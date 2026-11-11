@@ -9,8 +9,12 @@ Sessions: an opaque random cookie whose SHA-256 is stored, a CSRF token whose SH
 expiry, revocation, and rotation (a new cookie and CSRF token, the old session revoked) whenever the workspace
 changes. Rotation never extends the absolute lifetime.
 
-Authorization: the workspace must be selected, and the principal's roles are read from active memberships on every
-request, so a revocation takes effect immediately. Permissions come from `policyops.domain.roles.PERMISSIONS`.
+Authorization: the request's expected context (the principal and workspace the client composed it for) must equal
+the resolved session's, so a session rotated or replaced in another window refuses the request (409
+`context_changed`) instead of running it under a different identity or workspace. The expected context is only a
+refusal precondition: it never selects a workspace or grants anything. The workspace must be selected, and the
+principal's roles are read from active memberships on every request, so a revocation takes effect immediately.
+Permissions come from `policyops.domain.roles.PERMISSIONS`.
 """
 
 from __future__ import annotations
@@ -53,6 +57,14 @@ def forbidden(detail: str, rule_id: str) -> AuthError:
     return AuthError(403, ErrorCode.FORBIDDEN, detail, rule_id)
 
 
+def context_changed(rule_id: str) -> AuthError:
+    """The session no longer matches the request's expected principal or workspace. Raised before the operation's
+    resources, roles or writes are touched, so the requested operation was not applied; resolving the session may
+    still have refreshed its own `last_seen_at`."""
+    return AuthError(409, ErrorCode.CONTEXT_CHANGED, "Your sign-in or selected workspace changed in another window, "
+                     "so this request was not applied. Reload to continue.", rule_id)
+
+
 def provider_unavailable() -> AuthError:
     return AuthError(503, ErrorCode.UNAVAILABLE, "The identity provider is unavailable. Try again later.",
                      "auth.provider")
@@ -84,6 +96,15 @@ class SessionContext:
     workspace_id: UUID | None
     expires_at: datetime
     csrf_sha256: str
+
+
+@dataclass(frozen=True)
+class ExpectedContext:
+    """The principal and workspace a request was composed for (from the client's own `/me`). Compared with the
+    resolved session before any authorization work; never a selector or a source of authority."""
+
+    principal_id: UUID
+    workspace_id: UUID
 
 
 @dataclass(frozen=True)
@@ -223,7 +244,16 @@ class AuthService:
             names = identity.active_roles(connection, session.principal_id, session.workspace_id)
         return frozenset(Role(name) for name in names)
 
-    def authorize(self, session: SessionContext, action: Action) -> Authorized:
+    def authorize(self, session: SessionContext, action: Action, *, expected: ExpectedContext) -> Authorized:
+        """Refuse unless `session` is the expected principal in the expected workspace (409, before any membership
+        read), then require a selected workspace, a membership and a role allowing `action` (403). `expected` is
+        mandatory: there is no unbound path to an `Authorized`."""
+        if not isinstance(expected, ExpectedContext):  # typed callers cannot omit it; refuse a None at runtime too
+            raise TypeError("an ExpectedContext is required")
+        if session.principal_id != expected.principal_id:
+            raise context_changed("auth.principal_changed")
+        if session.workspace_id != expected.workspace_id:  # including an unselected session
+            raise context_changed("auth.workspace_changed")
         if session.workspace_id is None:
             raise forbidden("Select a workspace first.", "auth.workspace_required")
         roles = self.roles(session)

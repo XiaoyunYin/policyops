@@ -11,10 +11,10 @@ import { Label, Popover, Select, SelectValue } from "react-aria-components/Selec
 import { NavLink, useLocation, useNavigate } from "react-router";
 
 import type { MeOut } from "../api/client";
-import type { SwitchNotice } from "../session/controller";
+import type { SessionNotice } from "../session/controller";
 import { capabilities, roleSummary } from "../session/permissions";
 import { useSessionController } from "../session/SessionProvider";
-import { SwitchNoticeBanner } from "./screens";
+import { SessionNoticeBanner } from "./screens";
 
 export const PAGE_HEADING_ID = "page-heading";
 
@@ -87,7 +87,7 @@ function AccountMenu() {
   );
 }
 
-export function AppShell({ me, notice, children }: { me: MeOut; notice: SwitchNotice | null; children: ReactNode }) {
+export function AppShell({ me, notice, children }: { me: MeOut; notice: SessionNotice | null; children: ReactNode }) {
   const can = capabilities(me.roles);
   const location = useLocation();
   const shownPath = useRef(location.pathname);
@@ -139,7 +139,7 @@ export function AppShell({ me, notice, children }: { me: MeOut; notice: SwitchNo
           </ul>
         </nav>
         <main className="content" id="main" tabIndex={-1}>
-          {notice !== null ? <SwitchNoticeBanner notice={notice} /> : null}
+          {notice !== null ? <SessionNoticeBanner notice={notice} /> : null}
           {children}
         </main>
       </div>

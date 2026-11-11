@@ -7,6 +7,12 @@
 //
 // A request settles as soon as its signal aborts or its timeout passes, even when the underlying fetch ignores the
 // signal. A cancelled or timed-out unsafe request is not evidence that the server did not apply it.
+//
+// Workspace-bound endpoints take BoundRequestOptions: the principal and workspace this tab's own /me reported, sent as
+// PolicyOps-Expected-Principal/-Workspace. The server refuses (409 context_changed) when the shared session cookie
+// now belongs to another principal or workspace, so a request is never applied under a context the tab did not show.
+// The headers are a refusal precondition, never a selector. A context_changed refusal is definitive (the requested
+// operation was not applied); a cancelled, timed-out or lost write stays unknown and keeps its original context.
 
 import type { components, operations, paths } from "./schema";
 
@@ -41,6 +47,12 @@ export const REQUEST_TIMEOUT_MS = 15_000;
 export const MAX_RESPONSE_CHARS = 1_000_000;
 const MAX_DETAIL_CHARS = 300;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The server's canonical UUID spelling, the only one the expected-context headers accept. */
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+type BoundHeaders = keyof NonNullable<operations["list_cases"]["parameters"]["header"]>;
+export const EXPECTED_PRINCIPAL_HEADER = "PolicyOps-Expected-Principal" satisfies BoundHeaders;
+export const EXPECTED_WORKSPACE_HEADER = "PolicyOps-Expected-Workspace" satisfies BoundHeaders;
 
 // Exhaustive by construction: a code added to the contract fails the type check until it is listed here.
 const ERROR_CODES: Record<ErrorCode, true> = {
@@ -48,7 +60,7 @@ const ERROR_CODES: Record<ErrorCode, true> = {
   expired: true, customer_not_authenticated: true, customer_mismatch: true, policy_denied: true,
   policy_unsupported: true, consent_required: true, consent_ambiguous: true, approval_required: true,
   separation_of_duties: true, protocol_violation: true, upstream_money_precision: true, rate_limited: true,
-  unavailable: true, internal: true,
+  unavailable: true, internal: true, context_changed: true,
 };
 const ROLES: Record<Role, true> = { analyst: true, reviewer: true, admin: true, auditor: true };
 const CASE_STATUSES: Record<CaseStatus, true> = { open: true, in_progress: true, resolved: true, closed: true };
@@ -77,6 +89,11 @@ export class ApiError extends Error {
   get unauthenticated(): boolean {
     return this.kind === "http" && this.status === 401;
   }
+
+  /** The server refused because the session is no longer this tab's principal or workspace; nothing was applied. */
+  get contextChanged(): boolean {
+    return this.kind === "http" && this.status === 409 && this.code === "context_changed";
+  }
 }
 
 export function toApiError(error: unknown): ApiError {
@@ -86,6 +103,34 @@ export function toApiError(error: unknown): ApiError {
 export interface RequestOptions {
   signal: AbortSignal;
   timeoutMs?: number;
+}
+
+declare const contextBrand: unique symbol;
+
+/** The principal and workspace a request is composed for. Only `expectedContextOf` creates one. */
+export interface ExpectedContext {
+  readonly principalId: string;
+  readonly workspaceId: string;
+  readonly [contextBrand]: true;
+}
+
+/** Options for a workspace-bound endpoint: the context is required, so an unbound call does not type-check. */
+export interface BoundRequestOptions extends RequestOptions {
+  readonly context: ExpectedContext;
+}
+
+/** The expected context from a server-validated /me, or null when no workspace is selected (or the IDs are not
+ *  canonical UUIDs, which the server never sends). */
+export function expectedContextOf(me: MeOut): ExpectedContext | null {
+  const { principal_id: principalId, workspace_id: workspaceId } = me;
+  if (workspaceId === null || !CANONICAL_UUID.test(principalId) || !CANONICAL_UUID.test(workspaceId)) {
+    return null;
+  }
+  return Object.freeze({ principalId, workspaceId }) as ExpectedContext;
+}
+
+export function sameContext(a: ExpectedContext | null, b: ExpectedContext | null): boolean {
+  return a !== null && b !== null && a.principalId === b.principalId && a.workspaceId === b.workspaceId;
 }
 
 export function readCsrfToken(cookies: string = document.cookie): string | null {
@@ -133,7 +178,8 @@ function httpError(status: number, text: string): ApiError {
   return new ApiError("http", status);
 }
 
-async function send(method: "GET" | "POST", path: string, body: unknown, options: RequestOptions): Promise<string> {
+async function send(method: "GET" | "POST", path: string, body: unknown, options: RequestOptions,
+                    context: ExpectedContext | null): Promise<string> {
   const { signal, timeoutMs = REQUEST_TIMEOUT_MS } = options;
   const local = new AbortController();
   let timedOut = false;
@@ -160,6 +206,10 @@ async function send(method: "GET" | "POST", path: string, body: unknown, options
     if (token !== null) {
       headers.set(CSRF_HEADER, token);
     }
+  }
+  if (context !== null) {
+    headers.set(EXPECTED_PRINCIPAL_HEADER, context.principalId);
+    headers.set(EXPECTED_WORKSPACE_HEADER, context.workspaceId);
   }
 
   const exchange = async (): Promise<{ status: number; text: string }> => {
@@ -282,28 +332,29 @@ function membership(value: unknown): MembershipOut {
 }
 
 export async function getMe(options: RequestOptions): Promise<JsonBody<"me">> {
-  return parseMe(parseJson(await send("GET", ME_PATH, undefined, options)));
+  return parseMe(parseJson(await send("GET", ME_PATH, undefined, options, null)));
 }
 
 export const CASE_PAGE_LIMIT = 25;
 
-export async function listCases(options: RequestOptions): Promise<JsonBody<"list_cases">> {
+export async function listCases(options: BoundRequestOptions): Promise<JsonBody<"list_cases">> {
   const query = new URLSearchParams({ limit: String(CASE_PAGE_LIMIT) });
-  return casePage(parseJson(await send("GET", `${CASES_PATH}?${query.toString()}`, undefined, options)));
+  return casePage(parseJson(await send("GET", `${CASES_PATH}?${query.toString()}`, undefined, options,
+                                       options.context)));
 }
 
-export async function listMembers(options: RequestOptions): Promise<JsonBody<"members">> {
-  const value = parseJson(await send("GET", MEMBERS_PATH, undefined, options));
+export async function listMembers(options: BoundRequestOptions): Promise<JsonBody<"members">> {
+  const value = parseJson(await send("GET", MEMBERS_PATH, undefined, options, options.context));
   return Array.isArray(value) ? value.map(membership) : malformed();
 }
 
 export async function selectWorkspace(workspaceId: string, options: RequestOptions): Promise<void> {
   const body: Schemas["SelectWorkspaceIn"] = { workspace_id: workspaceId };
-  await send("POST", WORKSPACE_PATH, body, options);
+  await send("POST", WORKSPACE_PATH, body, options, null);
 }
 
 export async function logout(options: RequestOptions): Promise<void> {
-  await send("POST", LOGOUT_PATH, undefined, options);
+  await send("POST", LOGOUT_PATH, undefined, options, null);
 }
 
 /** Full-page sign-in navigation; `returnTo` must already be a safe local path (see safeReturnTo). */

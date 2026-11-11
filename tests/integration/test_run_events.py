@@ -75,8 +75,9 @@ class Setup:
     url: str
 
     def client(self, browser: Any | None = None) -> httpx.Client:
-        jar = {name: value for name, value in (browser or self.browser).cookies.items()}  # httpx2 jar -> plain
-        return httpx.Client(base_url=self.url, cookies=jar, timeout=15)
+        source = browser or self.browser
+        jar = {name: value for name, value in source.cookies.items()}  # httpx2 jar -> plain
+        return httpx.Client(base_url=self.url, cookies=jar, headers=self.api.context(source), timeout=15)
 
     def started_run(self) -> str:
         case = self.api.create(self.browser).json()["case_id"]
@@ -285,7 +286,8 @@ def test_the_served_app_cuts_off_a_stalled_event_stream(fresh: AppDatabase, poll
     path = f"/api/v1/runs/{run}/events"
     scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
              "method": "GET", "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
-             "root_path": "", "headers": [(b"host", b"127.0.0.1:8000"), (b"cookie", cookie.encode())],
+             "root_path": "", "headers": [(b"host", b"127.0.0.1:8000"), (b"cookie", cookie.encode()),
+                                          *((k.lower().encode(), v.encode()) for k, v in api.context(browser).items())],
              "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8000)}
 
     async def drive() -> float:
@@ -369,7 +371,8 @@ def test_pre_header_work_is_cut_off_at_the_connection_deadline(fresh: AppDatabas
     path = f"/api/v1/runs/{run}/events"
     scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
              "method": "GET", "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
-             "root_path": "", "headers": [(b"host", b"127.0.0.1:8000"), (b"cookie", cookie.encode())],
+             "root_path": "", "headers": [(b"host", b"127.0.0.1:8000"), (b"cookie", cookie.encode()),
+                                          *((k.lower().encode(), v.encode()) for k, v in api.context(browser).items())],
              "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 8000)}
 
     async def drive() -> float:

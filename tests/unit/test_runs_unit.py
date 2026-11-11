@@ -19,7 +19,7 @@ from starlette.requests import Request
 
 from policyops.api import runs as runs_api
 from policyops.api.runs import StreamSettings, build_runs_runtime, start_position
-from policyops.auth.service import AuthError
+from policyops.auth.service import AuthError, ExpectedContext
 from policyops.persistence import runs as store
 from policyops.runtime.clock import DatabaseLeaseClock, FixedLeaseClock, UnsafeTestHook, require_test_environment
 from policyops.runtime.outbox import build_dispatcher
@@ -166,6 +166,10 @@ def test_a_valid_stored_event_decodes_as_its_envelope() -> None:
 
 # -- stream settings, positions and the loop ---------------------------------------------------------------------
 
+def expected(run: store.Run) -> ExpectedContext:
+    return ExpectedContext(principal_id=uuid4(), workspace_id=run.workspace_id)
+
+
 def collect(stream: AsyncIterator[bytes]) -> list[bytes]:
     async def drain() -> list[bytes]:
         return [chunk async for chunk in stream]
@@ -205,7 +209,8 @@ def test_the_stream_lifetime_holds_under_a_permanent_backlog() -> None:
     settings = StreamSettings(poll_interval=0.01, heartbeat_interval=0.01, max_lifetime=1.0, batch=3)
     run = run_record()
     authorized = SimpleNamespace(workspace_id=run.workspace_id)
-    service = SimpleNamespace(resolve=lambda cookie: object(), authorize=lambda session, action: authorized)
+    service = SimpleNamespace(resolve=lambda cookie: object(),
+                              authorize=lambda session, action, *, expected: authorized)
 
     def snapshot(_authorized: Any, _run_id: Any, *, after: int, limit: int) -> EventSnapshot:
         events = [EventEnvelope(event_id=uuid4(), scope=run.scope, sequence=after + i + 1, occurred_at=NOW,
@@ -215,7 +220,7 @@ def test_the_stream_lifetime_holds_under_a_permanent_backlog() -> None:
     runtime = SimpleNamespace(stream=settings, service=SimpleNamespace(snapshot=snapshot))
     started = time.monotonic()
     chunks = collect(runs_api._stream(cast(Any, SimpleNamespace(service=service)), cast(Any, runtime),
-                                      run.workspace_id, run.id, "cookie", 0))
+                                      expected(run), run.id, "cookie", 0))
     assert time.monotonic() - started < 3
     assert chunks[-1] == b"event: reconnect\ndata: {}\n\n"
     ids = [int(chunk.split(b"\n", 1)[0][4:]) for chunk in chunks if chunk.startswith(b"id: ")]
@@ -268,7 +273,8 @@ def test_the_lifetime_is_checked_before_every_event_of_a_batch() -> None:
     settings = StreamSettings(poll_interval=0.01, heartbeat_interval=0.01, max_lifetime=1.0, batch=3)
     run = run_record()
     authorized = SimpleNamespace(workspace_id=run.workspace_id)
-    service = SimpleNamespace(resolve=lambda cookie: object(), authorize=lambda session, action: authorized)
+    service = SimpleNamespace(resolve=lambda cookie: object(),
+                              authorize=lambda session, action, *, expected: authorized)
 
     def snapshot(_authorized: Any, _run_id: Any, *, after: int, limit: int) -> EventSnapshot:
         events = [EventEnvelope(event_id=uuid4(), scope=run.scope, sequence=after + i + 1, occurred_at=NOW,
@@ -276,7 +282,7 @@ def test_the_lifetime_is_checked_before_every_event_of_a_batch() -> None:
         return EventSnapshot(events=list(events), highwater=after + limit, floor=0, terminal=False)
 
     runtime = SimpleNamespace(stream=settings, service=SimpleNamespace(snapshot=snapshot))
-    frames = runs_api._stream(cast(Any, SimpleNamespace(service=service)), cast(Any, runtime), run.workspace_id,
+    frames = runs_api._stream(cast(Any, SimpleNamespace(service=service)), cast(Any, runtime), expected(run),
                               run.id, "cookie", 0)
 
     async def consume() -> list[bytes]:
@@ -294,7 +300,8 @@ def test_an_idle_poll_longer_than_the_lifetime_still_ends_on_time() -> None:
     settings = StreamSettings(poll_interval=10, heartbeat_interval=10, max_lifetime=1.0, delivery_grace=0.1)
     run = run_record()
     authorized = SimpleNamespace(workspace_id=run.workspace_id)
-    service = SimpleNamespace(resolve=lambda cookie: object(), authorize=lambda session, action: authorized)
+    service = SimpleNamespace(resolve=lambda cookie: object(),
+                              authorize=lambda session, action, *, expected: authorized)
 
     def snapshot(_authorized: Any, _run_id: Any, *, after: int, limit: int) -> EventSnapshot:
         return EventSnapshot(events=[], highwater=after, floor=0, terminal=False)
@@ -302,7 +309,7 @@ def test_an_idle_poll_longer_than_the_lifetime_still_ends_on_time() -> None:
     runtime = SimpleNamespace(stream=settings, service=SimpleNamespace(snapshot=snapshot))
     started = time.monotonic()
     chunks = collect(runs_api._stream(cast(Any, SimpleNamespace(service=service)), cast(Any, runtime),
-                                      run.workspace_id, run.id, "cookie", 0))
+                                      expected(run), run.id, "cookie", 0))
     assert 0.9 <= time.monotonic() - started < 2 and chunks == [b"event: reconnect\ndata: {}\n\n"]
 
 

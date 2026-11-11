@@ -639,6 +639,7 @@
           "not_found",
           "conflict",
           "stale_version",
+          "context_changed",
           "expired",
           "customer_not_authenticated",
           "customer_mismatch",
@@ -2187,6 +2188,28 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2208,7 +2231,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -2229,6 +2252,16 @@
               }
             },
             "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -2348,7 +2381,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -2461,7 +2494,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "413": {
             "content": {
@@ -2530,7 +2563,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -2615,7 +2648,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -2736,6 +2769,28 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2757,7 +2812,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -2778,6 +2833,16 @@
               }
             },
             "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -2820,6 +2885,28 @@
       "post": {
         "operationId": "create_case",
         "parameters": [
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
           {
             "description": "Client-chosen key, unique per intended write. A retry with the same key and request replays the original response; the same key with a different request is a 409.",
             "in": "header",
@@ -2883,7 +2970,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -2913,7 +3000,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -2968,6 +3055,28 @@
               "title": "Case Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2997,7 +3106,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -3028,6 +3137,16 @@
               }
             },
             "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -3077,6 +3196,28 @@
             "schema": {
               "format": "uuid",
               "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
               "type": "string"
             }
           },
@@ -3147,7 +3288,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -3187,7 +3328,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -3276,6 +3417,28 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3297,7 +3460,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -3328,6 +3491,16 @@
               }
             },
             "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -3377,6 +3550,28 @@
             "schema": {
               "format": "uuid",
               "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
               "type": "string"
             }
           },
@@ -3447,7 +3642,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -3487,7 +3682,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -3582,6 +3777,28 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3603,7 +3820,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -3634,6 +3851,16 @@
               }
             },
             "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -3685,6 +3912,28 @@
             "schema": {
               "format": "uuid",
               "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
               "type": "string"
             }
           },
@@ -3761,7 +4010,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -3801,7 +4050,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -3885,7 +4134,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "413": {
             "content": {
@@ -3933,7 +4182,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4005,6 +4254,28 @@
               ],
               "title": "Version"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4026,7 +4297,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4057,6 +4328,16 @@
               }
             },
             "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -4108,6 +4389,28 @@
             "schema": {
               "format": "uuid",
               "title": "Proposal Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
               "type": "string"
             }
           }
@@ -4162,7 +4465,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4202,7 +4505,7 @@
                 }
               }
             },
-            "description": "Conflict: digest mismatch, already decided, superseded, not presented, policy changed, expired proposal or consent, ended run, or no current customer confirmation."
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), digest mismatch, already decided, superseded, not presented, policy changed, expired proposal or consent, ended run, or no current customer confirmation."
           },
           "413": {
             "content": {
@@ -4267,6 +4570,28 @@
               "title": "Run Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4296,7 +4621,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4327,6 +4652,16 @@
               }
             },
             "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -4382,6 +4717,28 @@
             }
           },
           {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
             "description": "Client-chosen key, unique per intended write. A retry with the same key and request replays the original response; the same key with a different request is a 409.",
             "in": "header",
             "name": "Idempotency-Key",
@@ -4428,7 +4785,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4468,7 +4825,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -4543,6 +4900,28 @@
             }
           },
           {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
             "description": "Reconnect position (the last received event id); takes precedence over `after`.",
             "in": "header",
             "name": "Last-Event-ID",
@@ -4572,7 +4951,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4612,7 +4991,7 @@
                 }
               }
             },
-            "description": "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {
@@ -4656,6 +5035,30 @@
     "/api/v1/workspace/members": {
       "get": {
         "operationId": "members",
+        "parameters": [
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -4679,7 +5082,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4701,6 +5104,16 @@
             },
             "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
           "413": {
             "content": {
               "application/json": {
@@ -4710,6 +5123,16 @@
               }
             },
             "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
           },
           "500": {
             "content": {
@@ -4743,6 +5166,28 @@
               "title": "Membership Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4757,7 +5202,7 @@
                 }
               }
             },
-            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a missing Idempotency-Key header."
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
           },
           "401": {
             "content": {
@@ -4788,6 +5233,16 @@
               }
             },
             "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
           },
           "413": {
             "content": {

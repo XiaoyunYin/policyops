@@ -164,8 +164,10 @@ def test_unauthenticated_unselected_and_csrf(api: CaseApi) -> None:
                      api.create(anonymous), api.patch(anonymous, case["case_id"], "in_progress", '"1"')):
         assert response.status_code in (401, 403)
     assert_error(api.get(anonymous, CASES, CASES), 401, "unauthenticated", "auth.session")
-    unselected = api.member(subject(), workspace, None)
-    assert_error(api.get(unselected, CASES, CASES), 403, "forbidden", "auth.workspace_required")
+    unselected = api.bind(api.member(subject(), workspace, None))  # no workspace to expect yet
+    assert_error(api.get(unselected, CASES, CASES), 400, "invalid_input", "api.expected_workspace_required")
+    assert_error(api.call(unselected, "GET", CASES, CASES, headers={"PolicyOps-Expected-Workspace": str(workspace)}),
+                 409, "context_changed", "auth.workspace_changed")  # the session has none selected
     no_csrf = api.call(owner, "POST", CASES, CASES, json={"scenario": "retail"}, key=new_key(), csrf=False,
                        headers={"Origin": case_api.ORIGIN})
     assert_error(no_csrf, 403, "forbidden", "auth.csrf")
@@ -204,6 +206,7 @@ def test_cached_reply_is_not_returned_for_a_case_outside_the_selected_workspace(
     api.grant(who, beta, "analyst")
     assert api.call(browser, "POST", "/api/v1/auth/workspace", "/api/v1/auth/workspace",
                     json={"workspace_id": str(beta)}).status_code == 204
+    api.bind(browser)  # the tab reloads /me and now expects beta
     assert_error(api.patch(browser, case, "in_progress", '"1"', key=key), 404, "not_found", "api.case_not_found")
     assert counts(api, beta)["ledger"] == 0
 
@@ -651,6 +654,7 @@ def test_failure_after_the_mutation_rolls_everything_back(api: CaseApi, monkeypa
     failing = TestClient(api.app, base_url=case_api.ORIGIN, follow_redirects=False, raise_server_exceptions=False)
     for name, value in browser.cookies.items():
         failing.cookies.set(name, value)
+    failing.headers.update(api.context(browser))
 
     def boom(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError("ledger write failed")
@@ -743,7 +747,8 @@ def asgi_request(app: Any, method: str, path: str, headers: list[tuple[bytes, by
 def raw_headers(browser: TestClient, *extra: tuple[str, str]) -> list[tuple[bytes, bytes]]:
     cookie = "; ".join(f"{name}={value}" for name, value in browser.cookies.items())
     base = [("cookie", cookie), ("origin", case_api.ORIGIN), ("x-csrf-token", browser.cookies.get(
-        case_api.CSRF_COOKIE) or ""), ("content-type", "application/json")]
+        case_api.CSRF_COOKIE) or ""), ("content-type", "application/json"),
+            *((name.lower(), browser.headers[name]) for name in case_api.CONTEXT_HEADERS)]
     return [(k.encode(), v.encode()) for k, v in (*base, *extra)]
 
 

@@ -11,13 +11,15 @@ export const WORKSPACE_A: WorkspaceOut = {
 export const WORKSPACE_B: WorkspaceOut = {
   workspace_id: "0b0b0b0b-0000-4000-8000-00000000000b", slug: "south", name: "South support", roles: ["analyst"],
 };
-const PRINCIPAL = "11111111-1111-4111-8111-111111111111";
+export const PRINCIPAL = "11111111-1111-4111-8111-111111111111";
+export const OTHER_PRINCIPAL = "22222222-2222-4222-8222-222222222222";
 
-export function me(options: { roles?: Role[]; workspace?: WorkspaceOut | null; workspaces?: WorkspaceOut[] } = {}): MeOut {
+export function me(options: { roles?: Role[]; workspace?: WorkspaceOut | null; workspaces?: WorkspaceOut[];
+                              principal?: string } = {}): MeOut {
   const roles = options.roles ?? ["analyst"];
   const workspaces = (options.workspaces ?? [WORKSPACE_A, WORKSPACE_B]).map((choice) => ({ ...choice, roles }));
   const workspace = options.workspace === undefined ? WORKSPACE_A : options.workspace;
-  return { principal_id: PRINCIPAL, workspace_id: workspace?.workspace_id ?? null, roles: workspace === null ? [] : roles,
+  return { principal_id: options.principal ?? PRINCIPAL, workspace_id: workspace?.workspace_id ?? null, roles: workspace === null ? [] : roles,
            workspaces };
 }
 
@@ -51,6 +53,11 @@ export function noContent(): Response {
 
 export function unauthenticated(): Response {
   return json(401, envelope("unauthenticated", "Sign in again."));
+}
+
+export function contextChanged(): Response {
+  return json(409, envelope("context_changed", "Your sign-in or selected workspace changed in another window, so this "
+    + "request was not applied. Reload to continue."));
 }
 
 export interface RecordedCall {

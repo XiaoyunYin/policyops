@@ -1,7 +1,8 @@
 """OpenAPI documentation for requirements our own dependencies enforce (T08).
 
 FastAPI documents only what it discovers from declared parameters. The session cookie, the CSRF token with an
-exact Origin, `Idempotency-Key` and `If-Match` are read from the request by PolicyOps dependencies, so each route
+exact Origin, the expected principal/workspace headers, `Idempotency-Key` and `If-Match` are read from the request by
+PolicyOps dependencies, so each route
 states them through `operation(...)`, together with every error status it can return as an `ErrorEnvelope`.
 Declaring 422 explicitly also keeps FastAPI from documenting its default `HTTPValidationError` body, which this
 API never returns (`policyops.api.openapi` refuses a document that still mentions it).
@@ -21,13 +22,15 @@ CSRF_SCHEME = "csrf"
 # Content-Length, 413 for an oversized body) and any route can fail unexpectedly (500).
 ALWAYS = (400, 413, 500)
 ERROR_DESCRIPTIONS = {
-    400: "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, or (on writes) a "
-         "missing Idempotency-Key header.",
+    400: "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a "
+         "missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing "
+         "Idempotency-Key header.",
     401: "No valid session (sign in again).",
     403: "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused.",
     404: "Not found in the selected workspace.",
-    409: "Conflict: stale version, refused status transition, Idempotency-Key reused for another request, an "
-         "already active run, or an event position that is no longer retained.",
+    409: "Conflict: the session is no longer the expected principal or workspace (code context_changed: the "
+         "request was not applied), stale version, refused status transition, Idempotency-Key reused for another "
+         "request, an already active run, or an event position that is no longer retained.",
     413: "The request body is larger than 64 KiB.",
     422: "The request is not valid: malformed JSON, or a body, path, query or header value that fails "
          "validation (no input is echoed).",
@@ -35,6 +38,25 @@ ERROR_DESCRIPTIONS = {
     500: "Unexpected failure (no internals are disclosed).",
     503: "A required service is unavailable: the identity provider, or (run start) no run runtime is installed.",
 }
+
+CANONICAL_UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+EXPECTED_PRINCIPAL: dict[str, Any] = {
+    "name": "PolicyOps-Expected-Principal", "in": "header", "required": True,
+    "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never "
+                   "a selector: if the session now belongs to another principal, the request is refused with 409 "
+                   "context_changed and not applied.",
+    "schema": {"type": "string", "format": "uuid", "pattern": CANONICAL_UUID_PATTERN},
+}
+EXPECTED_WORKSPACE: dict[str, Any] = {
+    "name": "PolicyOps-Expected-Workspace", "in": "header", "required": True,
+    "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never "
+                   "a selector: if the session's selected workspace is now another one (or none), the request is "
+                   "refused with 409 context_changed and not applied.",
+    "schema": {"type": "string", "format": "uuid", "pattern": CANONICAL_UUID_PATTERN},
+}
+# A workspace-bound operation can refuse its expected-context headers: missing 400, malformed or repeated 422, and a
+# session that no longer matches them 409.
+CONTEXT_ERRORS = (400, 409, 422)
 
 IDEMPOTENCY_KEY: dict[str, Any] = {
     "name": "Idempotency-Key", "in": "header", "required": True,
@@ -68,15 +90,20 @@ SECURITY_SCHEMES: dict[str, Any] = {
 }
 
 
-def operation(*, session: bool = False, csrf: bool = False, headers: Iterable[dict[str, Any]] = (),
+def operation(*, session: bool = False, csrf: bool = False, context: bool = False,
+              headers: Iterable[dict[str, Any]] = (),
               errors: Iterable[int] = (), success: dict[int, dict[str, Any]] | None = None,
               error_headers: dict[int, dict[str, Any]] | None = None, streaming: bool = False) -> dict[str, Any]:
     """Route-decorator keyword arguments (`responses`, `openapi_extra`) documenting enforced requirements;
-    `error_headers` names response headers some error statuses carry (such as a cookie being cleared).
+    `error_headers` names response headers some error statuses carry (such as a cookie being cleared). A `context`
+    (workspace-bound) operation requires the expected principal/workspace headers and documents their refusals.
 
     FastAPI documents a `model` under the route's own media type. A `streaming` route (text/event-stream) still
     answers errors as JSON envelopes, so its errors reference the `ErrorEnvelope` component explicitly."""
     responses: dict[int | str, dict[str, Any]] = {status: dict(entry) for status, entry in (success or {}).items()}
+    if context:
+        errors = (*errors, *CONTEXT_ERRORS)
+        headers = (EXPECTED_PRINCIPAL, EXPECTED_WORKSPACE, *headers)
     for status in sorted({*errors, *ALWAYS}):
         if streaming:
             responses[status] = {"description": ERROR_DESCRIPTIONS[status], "content": {"application/json": {

@@ -4,6 +4,11 @@
 // test file or application module is imported, and again before each test. A test may install a fake for one
 // global; fakes are reset after each test.
 //
+// An installed fetch fake is also metered: a test may make at most FETCH_BUDGET requests through it. The request
+// after that is refused without reaching the fake and recorded like a blocked attempt, so a request loop (a missing
+// recovery guard, say) ends in a finite, reported failure instead of running until the tool times out, even when
+// the code under test swallows the refusal. The meter is reset with the blockers, before and after each test.
+//
 // Limitation: this covers these globals only. Node modules imported directly by a test (node:http, node:net)
 // are not intercepted, and jsdom does not load subresources (images, scripts) unless configured to.
 
@@ -14,8 +19,16 @@ export class NetworkBlockedError extends Error {
   override name = "NetworkBlockedError";
 }
 
+/** Requests one test may send through an installed fetch fake; far above what any single scenario needs. */
+export const FETCH_BUDGET = 200;
+
+export class FetchBudgetExhaustedError extends Error {
+  override name = "FetchBudgetExhaustedError";
+}
+
 const attempts: string[] = [];
 const blockers = new WeakSet<object>();
+let fetches = 0;
 
 function define(name: GuardedGlobal, value: unknown): void {
   Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
@@ -52,6 +65,7 @@ function blocker(name: GuardedGlobal): unknown {
 }
 
 export function blockNetwork(): void {
+  fetches = 0;
   for (const name of GUARDED) {
     const value = blocker(name) as object;
     blockers.add(value);
@@ -66,7 +80,20 @@ export function isBlocked(name: GuardedGlobal): boolean {
 }
 
 export function installFake(name: GuardedGlobal, fake: unknown): void {
-  define(name, fake);
+  if (name !== "fetch" || typeof fake !== "function") {
+    define(name, fake);
+    return;
+  }
+  const target = fake as (...args: unknown[]) => unknown;
+  define(name, (...args: unknown[]): unknown => {
+    fetches += 1;
+    if (fetches > FETCH_BUDGET) {
+      const attempt = `fetch beyond the per-test budget of ${String(FETCH_BUDGET)} (request ${String(fetches)})`;
+      attempts.push(attempt);
+      return Promise.reject(new FetchBudgetExhaustedError(attempt));
+    }
+    return target(...args);
+  });
 }
 
 /** Returns and clears the recorded blocked attempts (for tests that expect a block). */

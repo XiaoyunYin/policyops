@@ -86,6 +86,7 @@
         "not_found",
         "conflict",
         "stale_version",
+        "context_changed",
         "expired",
         "customer_not_authenticated",
         "customer_mismatch",

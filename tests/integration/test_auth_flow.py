@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import text
 
 from policyops.api.app import build_auth_runtime, create_app
-from policyops.api.auth import AuthRuntime, require_action
+from policyops.api.auth import EXPECTED_PRINCIPAL_HEADER, EXPECTED_WORKSPACE_HEADER, AuthRuntime, require_action
 from policyops.auth.service import Authorized
 from policyops.domain.roles import PERMISSIONS, Action, Role
 from policyops.persistence import repositories as repo
@@ -63,6 +63,17 @@ class Harness:
         code, state = self.fake.issue_code(started.headers["location"], self.clock.now(), code=f"code-{uuid4()}",
                                            sub=subject, **claims)
         return browser.get("/api/v1/auth/callback", params={"code": code, "state": state})
+
+    def bind(self, browser: TestClient) -> TestClient:
+        """Default expected-context headers from the browser's own /me, as a tab sends them."""
+        me = browser.get("/api/v1/me")
+        assert me.status_code == 200
+        browser.headers[EXPECTED_PRINCIPAL_HEADER] = me.json()["principal_id"]
+        if me.json()["workspace_id"] is None:
+            browser.headers.pop(EXPECTED_WORKSPACE_HEADER, None)
+        else:
+            browser.headers[EXPECTED_WORKSPACE_HEADER] = me.json()["workspace_id"]
+        return browser
 
     def principal(self, subject: str) -> UUID:
         with transaction(self.db.engine(AUTH_RUNTIME)) as conn:
@@ -127,8 +138,10 @@ def test_login_select_workspace_and_logout(harness: Harness) -> None:
     assert not browser.cookies.get(LOGIN)  # the binding cookie is cleared
     me = browser.get("/api/v1/me").json()
     assert me["workspace_id"] is None and me["workspaces"] == [] and me["roles"] == []  # no implicit membership
-    denied = browser.get("/api/v1/workspace/members")
-    assert denied.status_code == 403 and denied.json()["rule_id"] == "auth.workspace_required"
+    denied = harness.bind(browser).get("/api/v1/workspace/members")  # no workspace to expect yet
+    assert denied.status_code == 400 and denied.json()["rule_id"] == "api.expected_workspace_required"
+    denied = browser.get("/api/v1/workspace/members", headers={EXPECTED_WORKSPACE_HEADER: str(w1)})
+    assert denied.status_code == 409 and denied.json()["rule_id"] == "auth.workspace_changed"  # none selected
     assert unsafe(browser, "/api/v1/auth/workspace", {"workspace_id": str(w1)}).status_code == 404
     harness.grant("subject-flow", w1, "admin")
     first_cookie = browser.cookies.get(SESSION)
@@ -140,7 +153,8 @@ def test_login_select_workspace_and_logout(harness: Harness) -> None:
     assert stale.get("/api/v1/me").status_code == 401  # rotation revoked the old session
     me = browser.get("/api/v1/me").json()
     assert me["workspace_id"] == str(w1) and me["roles"] == ["admin"]
-    assert browser.get("/api/v1/workspace/members").status_code == 200
+    assert browser.get("/api/v1/workspace/members").status_code == 400  # no workspace header until /me reloads
+    assert harness.bind(browser).get("/api/v1/workspace/members").status_code == 200
     old_csrf = browser.cookies.get(CSRF)
     assert unsafe(browser, "/api/v1/auth/logout").status_code == 204
     assert not browser.cookies.get(SESSION)
@@ -262,7 +276,7 @@ def _member(harness: Harness, subject: str, workspace: UUID, role: str) -> tuple
     harness.login(browser, subject)
     membership = harness.grant(subject, workspace, role)
     assert unsafe(browser, "/api/v1/auth/workspace", {"workspace_id": str(workspace)}).status_code == 204
-    return browser, membership
+    return harness.bind(browser), membership
 
 
 def test_role_action_matrix_through_the_real_dependencies(harness: Harness) -> None:
@@ -531,7 +545,7 @@ def test_validation_and_unexpected_errors_use_the_safe_envelope(harness: Harness
     _safe_error(unsafe(browser, "/api/v1/auth/workspace", {"workspace_id": str(w1), "extra": 1}), 422,
                 "api.invalid_input")
     assert unsafe(browser, "/api/v1/auth/workspace", {"workspace_id": str(w1)}).status_code == 204
-    members = browser.get("/api/v1/workspace/members")
+    members = harness.bind(browser).get("/api/v1/workspace/members")
     assert members.status_code == 200 and members.headers["cache-control"] == "no-store"
     assert members.headers["referrer-policy"] == "no-referrer"
 

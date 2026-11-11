@@ -192,8 +192,11 @@ with a selected workspace and runs in that workspace's row-level-security scope,
 
 The OpenAPI document `packages/policyops/openapi/v1.json` is exported from the served route composition, without
 a runtime, settings or database (`python -m policyops.api.openapi --check FILE`). Requirements that PolicyOps
-dependencies enforce (session cookie, CSRF token and Origin, `Idempotency-Key`, `If-Match`, cookie-setting
-responses) and every error status are documented explicitly with the error envelope. FastAPI's default
+dependencies enforce (session cookie, CSRF token and Origin, the required `PolicyOps-Expected-Principal` and
+`PolicyOps-Expected-Workspace` headers on the 16 workspace-bound operations, `Idempotency-Key`, `If-Match`,
+cookie-setting responses) and every error status are documented explicitly with the error envelope. The expected
+context is a refusal precondition (409 `context_changed`), never a selector; see
+[authentication](authentication.md#expected-context-cross-tab-binding). FastAPI's default
 validation-error body is refused because the API never returns it. `apps/web/src/api/schema.d.ts` is generated
 from it by `scripts/api_types.py` with openapi-typescript 7.13.0, in an isolated, exactly locked generator project
 (`scripts/api-types`). openapi-typescript 7.13.0 declares a TypeScript 5 peer, while the web app uses TypeScript 6,

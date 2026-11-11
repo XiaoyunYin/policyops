@@ -292,9 +292,15 @@ describe("controller timeouts", () => {
     await vi.waitFor(() => {
       expect(controller.getState().status).toBe("ready");
     });
-    controller.reportUnauthenticated(first);
+    controller.reportUnauthenticated(first, "cases");
     expect(controller.getState().status).toBe("ready");
-    controller.reportUnauthenticated(controller.scope());
+    // A current 401 reconciles once through /me (still 200 here); the same incident again then ends the session.
+    controller.reportUnauthenticated(controller.scope(), "cases");
+    expect(controller.getState().status).toBe("reconciling");
+    await vi.waitFor(() => {
+      expect(controller.getState().status).toBe("ready");
+    });
+    controller.reportUnauthenticated(controller.scope(), "cases");
     expect(controller.getState().status).toBe("expired");
     controller.dispose();
   });

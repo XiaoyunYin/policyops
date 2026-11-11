@@ -21,11 +21,16 @@ The event stream:
 - **Refused before any headers are sent.** A malformed position is 422 `api.invalid_event_position`. A position
   beyond the run's high-water mark is 422 `api.event_position_ahead`. A position below its retention floor (the
   last retired sequence) is 409 `api.event_gap_resync_required`.
+- **Expected context.** Like every workspace-bound route, the stream needs `PolicyOps-Expected-Principal` and
+  `PolicyOps-Expected-Workspace` (a native `EventSource` cannot send them; clients read the stream with `fetch`).
+  They are read only after the session has been resolved, in the same worker as the initial authorization, and the
+  parsed values are kept for every later poll: the stream never re-reads a browser cookie jar, and a session that is
+  no longer that principal in that workspace ends it.
 - **Cancellation.** The initial authorization (an async dependency) and preflight snapshot, like every later poll,
   run in worker threads that a cancellation (the delivery deadline, a disconnect) abandons rather than awaits, so
   `StreamDeadline` can end the request even before headers are sent. An abandoned query still finishes and ends its
   own transaction.
-- **Each poll.** The session and the current membership (VIEW_CASE in the same workspace) are checked again, then
+- **Each poll.** The session, its expected context and the current membership (VIEW_CASE) are checked again, then
   the run's bounds, state and a bounded batch of events are read in one short transaction, which closes before
   anything is yielded. A revoked session or membership, or a run that is no longer visible, ends the stream with
   no further data.
@@ -53,9 +58,9 @@ from sqlalchemy import Engine
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from policyops.api import docs
-from policyops.api.auth import NO_STORE, AuthRuntime, Model, Runtime, require_action
+from policyops.api.auth import NO_STORE, AuthRuntime, Model, Runtime, expected_context, require_action
 from policyops.api.cases import WRITE_HEADERS, expected_version, idempotency_key, view, written
-from policyops.auth.service import AuthError, Authorized
+from policyops.auth.service import AuthError, Authorized, ExpectedContext
 from policyops.domain.roles import Action
 from policyops.persistence.runs import UnsupportedEvent
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
@@ -145,14 +150,29 @@ def runs_runtime(request: Request) -> RunsRuntime:
 Runs = Annotated[RunsRuntime, Depends(runs_runtime)]
 
 
-async def stream_viewer(request: Request, auth: Runtime) -> Authorized:
-    """The event stream's authorization (VIEW_CASE, the same rules as `require_action`). It is an async dependency
-    whose session/membership queries run in a worker thread that a cancellation abandons. A synchronous dependency
-    would run in a thread the request must wait for, so the delivery deadline could not end the request before
-    the response headers. It still runs before path/query validation errors are raised (401/403 first)."""
-    cookie = request.cookies.get(auth.settings.session_cookie)
-    return await anyio.to_thread.run_sync(
-        lambda: auth.service.authorize(auth.service.resolve(cookie), Action.VIEW_CASE), abandon_on_cancel=True)
+@dataclass(frozen=True)
+class StreamViewer:
+    """The stream's initial authorization and the expected context it was checked against (kept for every poll)."""
+
+    authorized: Authorized
+    expected: ExpectedContext
+
+
+async def stream_viewer(request: Request, auth: Runtime) -> StreamViewer:
+    """The event stream's authorization (VIEW_CASE, the same rules and order as `require_action`). It is an async
+    dependency whose session/membership queries run in a worker thread that a cancellation abandons. A synchronous
+    dependency would run in a thread the request must wait for, so the delivery deadline could not end the request
+    before the response headers. The cookie and headers are immutable request values; the headers are parsed in the
+    worker only after the session resolves (401 first). It still runs before path/query validation errors are
+    raised."""
+    cookie, headers = request.cookies.get(auth.settings.session_cookie), request.headers
+
+    def check() -> StreamViewer:
+        session = auth.service.resolve(cookie)
+        expected = expected_context(headers)
+        return StreamViewer(auth.service.authorize(session, Action.VIEW_CASE, expected=expected), expected)
+
+    return await anyio.to_thread.run_sync(check, abandon_on_cancel=True)
 
 
 class StartRunIn(Model):
@@ -198,7 +218,7 @@ def build_router() -> APIRouter:
     router = APIRouter()
 
     @router.post("/cases/{case_id}/runs", status_code=202, response_model=RunView,
-                 **docs.operation(csrf=True, headers=[docs.IDEMPOTENCY_KEY, docs.IF_MATCH],
+                 **docs.operation(csrf=True, context=True, headers=[docs.IDEMPOTENCY_KEY, docs.IF_MATCH],
                                   errors=(401, 403, 404, 409, 422, 428, 503),
                                   success={202: {"description": "Queued (or the replayed original).",
                                                  "headers": {**WRITE_HEADERS, **LOCATION}}}))
@@ -211,7 +231,7 @@ def build_router() -> APIRouter:
         return written(result, location=f"/api/v1/runs/{result.run_id}")
 
     @router.get("/runs/{run_id}", response_model=RunView,
-                **docs.operation(session=True, errors=(401, 403, 404, 422),
+                **docs.operation(session=True, context=True, errors=(401, 403, 404, 422),
                                  success={200: {"description": "The run.", "headers": {"ETag": docs.ETAG_HEADER}}}))
     def get_run(run_id: UUID, authorized: Annotated[Authorized, Depends(require_action(Action.VIEW_CASE))],
                 runs: Runs) -> Response:
@@ -219,7 +239,8 @@ def build_router() -> APIRouter:
         return view(run, headers={"ETag": etag(run.version)})
 
     @router.post("/runs/{run_id}/cancel", response_model=RunView,
-                 **docs.operation(csrf=True, headers=[docs.IDEMPOTENCY_KEY], errors=(401, 403, 404, 409, 422),
+                 **docs.operation(csrf=True, context=True, headers=[docs.IDEMPOTENCY_KEY],
+                                  errors=(401, 403, 404, 409, 422),
                                   success={200: {"description": "The run after the request (or the replayed "
                                                  "original); a terminal run is unchanged.",
                                                  "headers": WRITE_HEADERS}}))
@@ -229,15 +250,16 @@ def build_router() -> APIRouter:
         return written(runs.service.cancel(authorized, key=idempotency_key(request), run_id=run_id))
 
     @router.get("/runs/{run_id}/events", response_class=EventStreamResponse,
-                **docs.operation(session=True, headers=[LAST_EVENT_ID], errors=(401, 403, 404, 409, 422),
+                **docs.operation(session=True, context=True, headers=[LAST_EVENT_ID], errors=(401, 403, 404, 409, 422),
                                  streaming=True,
                                  success={200: {"description": STREAM_DESCRIPTION,
                                                 "content": {"text/event-stream": {"schema": {"type": "string"}}}}}))
-    async def run_events(run_id: UUID, request: Request, authorized: Annotated[Authorized, Depends(stream_viewer)],
+    async def run_events(run_id: UUID, request: Request, viewer: Annotated[StreamViewer, Depends(stream_viewer)],
                          auth: Runtime, runs: Runs, after: Annotated[str | None, Query(
                              description="Initial position (digits; 0 = from the start). Ignored when Last-Event-ID "
                                          "is sent; only the selected position is validated.")] = None) -> Response:
         position = start_position(request, after)
+        authorized = viewer.authorized
         # Abandoned, not awaited, on cancellation (the delivery deadline): the snapshot ends its own transaction.
         snapshot = await anyio.to_thread.run_sync(
             partial(runs.service.snapshot, authorized, run_id, after=0, limit=1), abandon_on_cancel=True)
@@ -250,14 +272,14 @@ def build_router() -> APIRouter:
             raise AuthError(409, ErrorCode.CONFLICT, "Events before this position are no longer retained; reload "
                             "the run and resynchronize.", "api.event_gap_resync_required")
         cookie = request.cookies.get(auth.settings.session_cookie)
-        stream = _stream(auth, runs, authorized.workspace_id, run_id, cookie, position)
+        stream = _stream(auth, runs, viewer.expected, run_id, cookie, position)
         return EventStreamResponse(stream, headers={**NO_STORE, "X-Accel-Buffering": "no"})
 
     return router
 
 
-async def _stream(auth: AuthRuntime, runs: RunsRuntime, workspace_id: UUID, run_id: UUID, cookie: str | None,
-                  position: int) -> AsyncIterator[bytes]:
+async def _stream(auth: AuthRuntime, runs: RunsRuntime, expected: ExpectedContext, run_id: UUID,
+                  cookie: str | None, position: int) -> AsyncIterator[bytes]:
     """The event stream as an async generator, so cancellation (the delivery deadline, a disconnect) is honoured at
     every wait. The synchronous session/membership check and database poll run in worker threads that a
     cancellation abandons instead of awaiting: such a poll still ends its own short transaction and returns its
@@ -271,12 +293,11 @@ async def _stream(auth: AuthRuntime, runs: RunsRuntime, workspace_id: UUID, run_
         return settings.max_lifetime - (time.monotonic() - started)
 
     while True:
-        try:  # the current session and membership, on every poll
+        try:  # the current session, still the expected principal in the expected workspace, and its membership
             authorized = await anyio.to_thread.run_sync(
-                lambda: service.authorize(service.resolve(cookie), Action.VIEW_CASE), abandon_on_cancel=True)
+                lambda: service.authorize(service.resolve(cookie), Action.VIEW_CASE, expected=expected),
+                abandon_on_cancel=True)
         except AuthError:
-            return
-        if authorized.workspace_id != workspace_id:
             return
         snapshot = await anyio.to_thread.run_sync(
             partial(runs.service.snapshot, authorized, run_id, after=last, limit=settings.batch),

@@ -9,31 +9,61 @@
 // response, timeout): the server may have rotated or revoked the session anyway. An uncertain switch therefore reloads
 // /me before any workspace is shown again, and an uncertain sign-out is reported as unconfirmed, never as "still
 // signed in" or "signed out".
+//
+// A scope also carries the expected context (principal and workspace) of the view it was created for; workspace-bound
+// requests send it, and the server refuses them with 409 context_changed when the shared session has moved on. Only
+// that explicit refusal, or a 401 (an in-flight cookie another tab revoked), reconciles: the view is cleared at once,
+// /me is reloaded once for the incident and the route returns to /cases.
+//
+// Automatic recovery is bounded per incident. A reconciliation records the generation it produced and the resource
+// whose refusal started it. While that generation is current, only a success of that same resource closes the
+// incident; a sibling resource succeeding does not, because the refused resource has not recovered. Any further 401
+// or context_changed in that generation stops instead of reloading again: a 401 ends the session (expiry), a
+// context_changed shows the refusal with an explicit "Reload session" action. Every other transition (boot or that
+// explicit reload, a workspace switch, sign-out, a changed context found by refresh) starts a new generation, so the
+// next refusal is a new incident. With an endpoint that keeps refusing, a view therefore costs at most one automatic
+// /me reload. No earlier write is replayed automatically, least of all in a new context; resource reads are simply
+// loaded again for the regenerated view.
 
 import {
   ApiError,
   REQUEST_TIMEOUT_MS,
+  expectedContextOf,
   getMe,
   logout,
+  sameContext,
   selectWorkspace,
   toApiError,
+  type ExpectedContext,
   type MeOut,
 } from "../api/client";
 import { safeReturnTo } from "./returnTo";
 
 /** A failed workspace switch, shown once the server's current session has been reloaded. */
 export interface SwitchNotice {
+  kind: "switchFailed";
   workspaceName: string;
   error: ApiError;
 }
+
+/** The session changed in another window; the view was reloaded for the current one. Carries no earlier content. */
+export interface ContextNotice {
+  kind: "contextChanged";
+}
+
+export type SessionNotice = SwitchNotice | ContextNotice;
+
+/** Where a reconciliation sends the router: an ID-bearing path belongs to the earlier context. */
+export const LANDING_PATH = "/cases";
 
 export type SessionState =
   | { status: "booting" }
   | { status: "bootFailed"; error: ApiError }
   | { status: "signedOut"; byUser: boolean }
-  | { status: "noWorkspace"; me: MeOut }
-  | { status: "chooseWorkspace"; me: MeOut; notice: SwitchNotice | null }
-  | { status: "ready"; me: MeOut; generation: number; notice: SwitchNotice | null }
+  | { status: "noWorkspace"; me: MeOut; notice: SessionNotice | null }
+  | { status: "chooseWorkspace"; me: MeOut; notice: SessionNotice | null }
+  | { status: "ready"; me: MeOut; generation: number; notice: SessionNotice | null }
+  | { status: "reconciling" }
   | { status: "switching"; workspaceName: string }
   | { status: "expired"; returnTo: string }
   | { status: "signingOut" }
@@ -42,6 +72,16 @@ export type SessionState =
 export interface Scope {
   readonly generation: number;
   readonly signal: AbortSignal;
+  /** The ready view's principal and workspace when the scope was created; null outside a ready view. */
+  readonly context: ExpectedContext | null;
+}
+
+type Reconciliation = { previous: ExpectedContext | null; changed: boolean };
+
+/** An open automatic recovery: the generation the reconciliation produced and the resource that was refused. */
+interface Recovery {
+  readonly generation: number;
+  readonly resource: string;
 }
 
 export interface SessionOptions {
@@ -56,6 +96,9 @@ export class SessionController {
   private readonly timeoutMs: number;
   /** Current local path, used as the sign-in return path when the session expires. */
   private path = "/";
+  /** The open automatic recovery, until its refused resource succeeds in the generation it produced. */
+  private recovery: Recovery | null = null;
+  private routeReset: ((path: string) => void) | null = null;
 
   constructor(options: SessionOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
@@ -74,9 +117,21 @@ export class SessionController {
     };
   };
 
-  /** The current generation and its signal. */
+  /** Navigation used to leave an earlier context's route (registered by the provider). */
+  onRouteReset(navigate: (path: string) => void): () => void {
+    this.routeReset = navigate;
+    return () => {
+      if (this.routeReset === navigate) {
+        this.routeReset = null;
+      }
+    };
+  }
+
+  /** The current generation, its signal and the ready view's expected context, captured together. */
   scope(): Scope {
-    return { generation: this.generation, signal: this.controller.signal };
+    const state = this.state;
+    return { generation: this.generation, signal: this.controller.signal,
+             context: state.status === "ready" ? expectedContextOf(state.me) : null };
   }
 
   isCurrent(scope: Scope): boolean {
@@ -88,10 +143,33 @@ export class SessionController {
     void this.loadMe(scope, "signedOut", null);
   }
 
-  /** A data request under `scope` was refused with 401: the session ended (ignored if `scope` is stale). */
-  reportUnauthenticated(scope: Scope): void {
+  /**
+   * A data request under `scope` was refused with 401 (ignored if `scope` is stale). The request may have carried a
+   * cookie that another tab has since replaced, so /me is reloaded once before the session is declared ended.
+   * `resource` identifies the refused request (the resource key), for the recovery bound described above.
+   */
+  reportUnauthenticated(scope: Scope, resource: string): void {
     if (this.isCurrent(scope) && this.state.status === "ready") {
-      this.expire();
+      this.reconcile(scope, new ApiError("http", 401, "unauthenticated"), resource);
+    }
+  }
+
+  /** A bound request under `scope` was refused with 409 context_changed (ignored if `scope` is stale). */
+  reportContextChanged(scope: Scope, error: ApiError, resource: string): void {
+    if (this.isCurrent(scope) && this.state.status === "ready" && error.contextChanged) {
+      this.reconcile(scope, error, resource);
+    }
+  }
+
+  /**
+   * A bound request for `resource` under `scope` succeeded. If it is the resource whose refusal opened the current
+   * recovery, the reconciliation is confirmed and the incident closed; a sibling's success leaves it open.
+   */
+  reportSuccess(scope: Scope, resource: string): void {
+    const recovery = this.recovery;
+    if (this.isCurrent(scope) && recovery !== null && recovery.generation === scope.generation
+        && recovery.resource === resource) {
+      this.recovery = null;
     }
   }
 
@@ -138,13 +216,17 @@ export class SessionController {
             && me.workspace_id === current.me.workspace_id
             && me.workspaces.some((choice) => choice.workspace_id === me.workspace_id)) {
           this.set({ ...current, me });
-        } else if (current.status === "ready" || current.status === "expired") {
+        } else if (current.status === "ready") {
+          this.leaveRoute();
+          this.advanceTo(me, { kind: "contextChanged" });
+        } else if (current.status === "expired") {
           this.advanceTo(me, null);
         }
       },
       (error: unknown) => {
-        if (toApiError(error).unauthenticated) {
-          this.reportUnauthenticated(scope);
+        // /me itself answered 401: there is nothing further to reconcile against.
+        if (toApiError(error).unauthenticated && this.isCurrent(scope) && this.state.status === "ready") {
+          this.expire();
         }
         // Other failures of a background check change nothing; the next request reports them.
       },
@@ -177,7 +259,7 @@ export class SessionController {
     return this.scope();
   }
 
-  private advanceTo(me: MeOut, notice: SwitchNotice | null): void {
+  private advanceTo(me: MeOut, notice: SessionNotice | null): void {
     this.controller.abort();
     this.generation += 1;
     this.controller = new AbortController();
@@ -188,9 +270,34 @@ export class SessionController {
     this.advance({ status: "expired", returnTo: safeReturnTo(this.path) });
   }
 
-  private fromMe(me: MeOut, notice: SwitchNotice | null): SessionState {
+  private leaveRoute(): void {
+    this.path = LANDING_PATH;
+    this.routeReset?.(LANDING_PATH);
+  }
+
+  private reconcile(scope: Scope, error: ApiError, resource: string): void {
+    if (this.recovery?.generation === scope.generation) {
+      // This view came from a reconciliation whose refused resource has not succeeded since: stop here.
+      this.recovery = null;
+      if (error.unauthenticated) {
+        this.expire();
+      } else {
+        this.advance({ status: "bootFailed", error });
+      }
+      return;
+    }
+    const previous = scope.context;
+    const next = this.advance({ status: "reconciling" }); // clears the earlier view at once
+    this.recovery = { generation: next.generation, resource };
+    if (error.contextChanged) {
+      this.leaveRoute();
+    }
+    void this.loadMe(next, "expired", null, { previous, changed: error.contextChanged });
+  }
+
+  private fromMe(me: MeOut, notice: SessionNotice | null): SessionState {
     if (me.workspaces.length === 0) {
-      return { status: "noWorkspace", me };
+      return { status: "noWorkspace", me, notice };
     }
     const selected = me.workspaces.some((choice) => choice.workspace_id === me.workspace_id);
     return selected
@@ -200,6 +307,7 @@ export class SessionController {
 
   private async loadMe(scope: Scope, onUnauthenticated: "signedOut" | "expired",
                        failedSwitch: { workspaceId: string; workspaceName: string; error: ApiError } | null,
+                       reconciliation: Reconciliation | null = null,
   ): Promise<void> {
     let me: MeOut;
     try {
@@ -224,9 +332,16 @@ export class SessionController {
       return;
     }
     // After an uncertain switch, the reloaded session decides: if the target is now selected, the switch applied.
-    const notice = failedSwitch !== null && me.workspace_id !== failedSwitch.workspaceId
-      ? { workspaceName: failedSwitch.workspaceName, error: failedSwitch.error }
+    let notice: SessionNotice | null = failedSwitch !== null && me.workspace_id !== failedSwitch.workspaceId
+      ? { kind: "switchFailed", workspaceName: failedSwitch.workspaceName, error: failedSwitch.error }
       : null;
+    if (reconciliation !== null
+        && (reconciliation.changed || !sameContext(reconciliation.previous, expectedContextOf(me)))) {
+      if (!reconciliation.changed) {
+        this.leaveRoute();
+      }
+      notice = { kind: "contextChanged" };
+    }
     this.set(this.fromMe(me, notice));
   }
 

@@ -67,13 +67,14 @@ Decisions = Annotated[DecisionService, Depends(decision_service)]
 
 
 def _documented(errors: tuple[int, ...], **kwargs: Any) -> dict[str, Any]:
-    operation = docs.operation(errors=errors, **kwargs)
+    operation = docs.operation(errors=errors, context=True, **kwargs)
     responses = operation["responses"]
-    if 409 in responses:
-        responses[409] = {**responses[409], "description": "Conflict: digest mismatch, already decided, superseded, "
-                          "not presented, policy changed, expired proposal or consent, ended run, or no current "
-                          "customer confirmation."}
-    if 503 in responses:
+    if 409 in errors:  # a decision's own conflicts; other routes keep the generic text
+        responses[409] = {**responses[409], "description": "Conflict: the session is no longer the expected "
+                          "principal or workspace (code context_changed: the request was not applied), digest "
+                          "mismatch, already decided, superseded, not presented, policy changed, expired proposal or "
+                          "consent, ended run, or no current customer confirmation."}
+    if 503 in errors:
         responses[503] = {**responses[503], "description": "The decision's commit outcome is unknown (retryable: "
                           "resend the identical request, which replays the original if it committed)."}
     return operation

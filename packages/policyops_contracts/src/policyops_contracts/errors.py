@@ -21,6 +21,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
     STALE_VERSION = "stale_version"
+    CONTEXT_CHANGED = "context_changed"
     EXPIRED = "expired"
     CUSTOMER_NOT_AUTHENTICATED = "customer_not_authenticated"
     CUSTOMER_MISMATCH = "customer_mismatch"

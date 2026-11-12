@@ -29,6 +29,7 @@ from policyops.persistence.roles import APP_RUNTIME
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
 from policyops.services.execution import Executor, Reserved, RetailFactory, RetailOperations, ScopeResolver
 from policyops.services.review_outcomes import RefusalReason, finish_outcome, finish_refusal
+from policyops.telemetry import annotate, claim, count, observed
 from policyops_contracts.events import RunStateChanged
 from policyops_contracts.scalars import RunScope
 from policyops_contracts.seeds import CaseCustomerBinding
@@ -104,10 +105,13 @@ class ReviewRuntime:
     executor: Executor
     test_only: bool = False
 
+    @observed("review.job")
     def process(self, job_id: UUID, workspace_id: UUID, owner: UUID) -> bool:
+        annotate(job_id=job_id, kind=jobs.REVIEW_KIND)
         token = self.claim(job_id, workspace_id, owner)
         if token is None:
             return False
+        claim(run_id=token.run_id, job_id=token.job_id, attempt=token.attempt, generation=token.generation)
         try:
             result = self.execute(token)
         except store.Fenced:
@@ -115,18 +119,24 @@ class ReviewRuntime:
         except (ImmutableRecord, ValidationError):
             result = ReviewRefusal(RefusalReason.RECORD_INVALID)
         except Exception as exc:
-            log.warning("review_error job=%s type=%s", token.job_id, type(exc).__name__)
+            log.warning("review_error", extra={"job_id": token.job_id, "exception_type": type(exc).__name__})
             result = ReviewRetry()
         try:
             self.finish(token, result)
         except store.Fenced:
             pass
         except Exception as exc:
-            log.warning("review_finish_error job=%s type=%s", token.job_id, type(exc).__name__)
+            log.warning("review_finish_error", extra={"job_id": token.job_id, "exception_type": type(exc).__name__})
             # A failed projection transaction rolls back every message/event/state write.
             # Retry only the delivery; never turn a projection failure into a no-effect refusal.
             with suppress(store.Fenced):
                 self.finish(token, ReviewRetry())
+            result = ReviewRetry()
+        outcome = "retry" if isinstance(result, ReviewRetry) else (
+            "refused" if isinstance(result, ReviewRefusal) else "completed")
+        annotate(outcome=outcome)
+        count("reviews", outcome=outcome)
+        count("jobs", kind=jobs.REVIEW_KIND, outcome=outcome)
         return True
 
     def _locked(self, connection: Connection, job_id: UUID) -> tuple[store.Run, store.Job] | None:
@@ -153,7 +163,9 @@ class ReviewRuntime:
             raise ImmutableRecord("review execution binding changed")
         return Reserved(execution, False)
 
+    @observed("review.claim")
     def claim(self, job_id: UUID, workspace_id: UUID, owner: UUID) -> store.ClaimToken | None:
+        annotate(job_id=job_id)
         with workspace_transaction(self.executor.engine, workspace_id, profile=SqlProfile.LEASE) as connection:
             locked = self._locked(connection, job_id)
             if locked is None:
@@ -197,6 +209,7 @@ class ReviewRuntime:
                 store.append_event(connection, updated, RunStateChanged(previous=run.state, current="reconciling"), now)
             return token
 
+    @observed("review.execute")
     def execute(self, token: store.ClaimToken) -> Result:
         with workspace_transaction(self.executor.engine, token.workspace_id) as connection:
             run, job, now = jobs.check_claim(connection, token, self.executor.clock)
@@ -249,6 +262,7 @@ class ReviewRuntime:
             return ReviewRetry() if reserved.retryable else ReviewRefusal(RefusalReason.PRECHECK_REFUSED)
         return reserved
 
+    @observed("review.finish")
     def finish(self, token: store.ClaimToken, result: Result) -> None:
         with workspace_transaction(self.executor.engine, token.workspace_id) as connection:
             locked = self._locked(connection, token.job_id)

@@ -52,6 +52,7 @@ from policyops.gateway.ports import (
 from policyops.persistence.customer_authentications import AuthenticationConflict
 from policyops.providers.canonical import CanonicalError, strict_loads
 from policyops.providers.tools import StepRefused, to_agent_step
+from policyops.telemetry import annotate, observed
 from policyops_contracts.agent import AgentStep, MessageStep, ToolCallStep
 from policyops_contracts.clock import Clock
 from policyops_contracts.errors import ErrorCode
@@ -66,6 +67,7 @@ from policyops_contracts.gateway import (
 from policyops_contracts.model import ModelResult
 from policyops_contracts.presentation import render_effect
 from policyops_contracts.retail import (
+    TOOL_KINDS,
     Calculate,
     FindUserIdByEmail,
     FindUserIdByNameZip,
@@ -76,6 +78,7 @@ from policyops_contracts.retail import (
     ListAllProductTypes,
     ResourceVersion,
     ToolCall,
+    ToolKind,
     ToolName,
     TransferToHumanAgents,
 )
@@ -159,7 +162,14 @@ class Gateway:
         return CustomerSession(binding=self.scope.binding, run=self.scope.run,
                                authentication=self._sessions.load(self.scope.run))
 
+    @observed("gateway.step")
     def step(self, step: AgentStep, *, previous: AgentStep | None, sequence: int) -> StepResult:
+        annotate(run_id=self.scope.run.run_id)
+        result = self._step(step, previous=previous, sequence=sequence)
+        annotate(outcome="refused" if isinstance(result.observation, ToolError) else "completed")
+        return result
+
+    def _step(self, step: AgentStep, *, previous: AgentStep | None, sequence: int) -> StepResult:
         try:  # re-validated: a constructed object that bypassed validation is not trusted
             step = _STEP.validate_json(step.model_dump_json())
             if previous is not None:
@@ -173,6 +183,7 @@ class Gateway:
         if isinstance(step, MessageStep):
             return StepResult(None)
         call = step.call
+        annotate(tool=call.tool, access="write" if TOOL_KINDS[ToolName(call.tool)] == ToolKind.WRITE else "read")
         try:
             session = self.session()
         except ValueError:

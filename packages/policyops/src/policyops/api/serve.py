@@ -24,28 +24,21 @@ no investigation runtime (starting a run answers 503 `runtime.unconfigured`). Cl
 process `SystemClock` (UTC); leases, runs and events use the database clock via `create_app`'s default runs
 runtime. The two are not interchangeable.
 
-Logging. `main()` installs `SERVE_LOG_CONFIG`: `policyops.api.logging.LOG_CONFIG` (query strings redacted from
-access lines) plus one stderr handler, for uvicorn's own messages and every other logger at WARNING or above,
-filtered by `SafeErrorFilter`. A logged exception (an unexpected request error, a lifespan or library failure) is
-rendered as the fixed categories of its chain and its innermost code locations, never its message, arguments,
-locals or traceback text; an exception passed as a log argument (positional, named, or inside a plain container)
-becomes its category. Text a caller already formatted into the message string, or an arbitrary object's own
-`str`, is not recognizable and is rendered as given: this is no generic secret redactor. Another ASGI host must
-run with lifespan on and install the same filters itself. Startup and configuration errors are fixed categories:
-variable names, stage, exception type and SQLSTATE, never configured values, connection parameters or driver
-messages.
+Logging. `main()` installs one allowlisted JSON formatter for access, error and library logs.
+Free-form messages, arguments, raw paths, exception messages, stack frames and traceback text are never rendered.
+Only fixed event codes, safe typed fields, exception type names and active trace/span IDs are emitted.
+Startup configuration diagnostics remain fixed categories with no configured values or driver messages.
+
 """
 
 from __future__ import annotations
 
 import argparse
-from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 import ipaddress
 import logging
 import os
 import sys
-import traceback
 from typing import Any
 
 from fastapi import FastAPI
@@ -61,7 +54,8 @@ from policyops.api.logging import LOG_CONFIG
 from policyops.auth.service import AuthError
 from policyops.persistence.database import DatabaseUnavailable, RuntimeRoleError, make_engine, verify_runtime_role
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
-from policyops.settings import AuthSettings, DatabaseSettings
+from policyops.settings import AuthSettings, DatabaseSettings, TelemetrySettings
+from policyops.telemetry import configure
 from policyops_contracts.clock import SystemClock
 from policyops_contracts.errors import ErrorCode
 
@@ -75,7 +69,6 @@ SESSION_OPTIONS = ("-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=10
 APPLICATION_NAMES = {AUTH_RUNTIME: "policyops-api-auth", APP_RUNTIME: "policyops-api-app"}
 GRACEFUL_SHUTDOWN_SECONDS = 10
 MAX_PROBLEMS, MAX_TEXT = 20, 240
-MAX_CHAIN, MAX_FRAMES, MAX_LOG_MESSAGE, MAX_ARG_DEPTH = 5, 3, 1000, 4
 CONNECT_FAILURES = (("password authentication failed", "password authentication refused"),
                     ("authentication method requirement", "authentication method refused"),
                     ("timeout expired", "connect timeout"), ("Connection refused", "connection refused"),
@@ -95,6 +88,10 @@ class ServeStartupError(RuntimeError):
     ExceptionType`), not a release. The message is a fixed category; the original error is `__cause__` (in-process
     diagnosis only: driver messages are not part of the rendered category)."""
 
+    def __init__(self, phase: str, cause: Exception) -> None:
+        self.phase, self.category = phase, _category(cause)
+        super().__init__(f"API server startup failed at {phase}: {self.category}")
+
 
 class ServerClosed(RuntimeError):
     """A connection was requested from a runtime engine after the server released it."""
@@ -103,10 +100,12 @@ class ServerClosed(RuntimeError):
 class ServeConfig:
     """Validated server configuration (both settings objects keep their secrets as `SecretStr`)."""
 
-    __slots__ = ("auth", "database")
+    __slots__ = ("auth", "database", "telemetry")
 
-    def __init__(self, auth: AuthSettings, database: DatabaseSettings) -> None:
+    def __init__(self, auth: AuthSettings, database: DatabaseSettings,
+                 telemetry: TelemetrySettings | None = None) -> None:
         self.auth, self.database = auth, database
+        self.telemetry = telemetry or TelemetrySettings(enabled=False)
 
     def __repr__(self) -> str:
         return f"ServeConfig(env={self.auth.env!r})"
@@ -145,6 +144,11 @@ def load_config() -> ServeConfig:
     """Read and validate the server configuration from the process environment (no `.env` file, no I/O)."""
     problems: list[str] = []
     auth, database = _auth_settings(problems), _database_settings(problems)
+    try:
+        telemetry = TelemetrySettings()
+    except ValidationError as error:
+        problems.extend(_problems(error, "POLICYOPS_TELEMETRY_"))
+        telemetry = TelemetrySettings(enabled=False)
     problems += [f"{name}: must not be set for the API server (libpq would take connection parameters from it)"
                  for name in REFUSED_LIBPQ_ENV if os.environ.get(name)]
     if auth is not None and auth.env == "test":
@@ -153,7 +157,7 @@ def load_config() -> ServeConfig:
         problems.append("POLICYOPS_DB_SSLMODE: deployment requires verify-full")
     if problems or auth is None or database is None:
         raise ServeConfigError(problems)
-    return ServeConfig(auth, database)
+    return ServeConfig(auth, database, telemetry)
 
 
 class RuntimeConnector:
@@ -256,67 +260,15 @@ def _category(error: BaseException) -> str:
     return type(error).__name__
 
 
-def exception_summary(error: BaseException) -> str:
-    """Trusted metadata for a logged exception: the fixed categories of its cause/context chain (outermost first)
-    and the innermost code locations (`module:line function`) of the raised error. Never its message, arguments,
-    locals or source text."""
-    chain: list[str] = []
-    seen: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and len(chain) < MAX_CHAIN and id(current) not in seen:
-        seen.add(id(current))
-        chain.append(_category(current))
-        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
-    frames: deque[str] = deque(maxlen=MAX_FRAMES)
-    for frame, line in traceback.walk_tb(error.__traceback__):
-        frames.append(f"{frame.f_globals.get('__name__', '?')}:{line} {frame.f_code.co_name}")
-    return " <- ".join(chain) + (" at " + ", ".join(frames) if frames else "") + "; traceback withheld"
-
-
-def _safe_arg(value: object, depth: int = 0) -> object:
-    """`value` with every exception in it replaced by its category: the value itself, or an item, key or value of a
-    plain container (tuple, list, set, mapping) nested up to `MAX_ARG_DEPTH`. A deeper container is withheld as its
-    type name. Containers keep their shape, and other values are unchanged, so `%s`, `%(name)d` and `%.2f` still
-    format as written. An arbitrary object's own `str`/`repr` is trusted, like a preformatted string."""
-    if isinstance(value, BaseException):
-        return _category(value)
-    if not isinstance(value, (tuple, list, set, frozenset, Mapping)):
-        return value
-    if depth >= MAX_ARG_DEPTH:
-        return f"<{type(value).__name__} withheld>"
-    if isinstance(value, Mapping):
-        return {_safe_arg(key, depth + 1): _safe_arg(item, depth + 1) for key, item in value.items()}
-    items = [_safe_arg(item, depth + 1) for item in value]
-    if isinstance(value, (set, frozenset)):
-        try:
-            return frozenset(items) if isinstance(value, frozenset) else set(items)
-        except TypeError:  # an element became an (unhashable) dict
-            return tuple(items)
-    return tuple(items) if isinstance(value, tuple) else items
-
-
 class SafeErrorFilter(logging.Filter):
-    """Make a record safe to render: an attached exception becomes `exception_summary` (the record keeps no
-    `exc_info`, cached traceback text or stack), an exception in the message object or the arguments becomes its
-    category (`_safe_arg`), and the message is one bounded line. Format strings are trusted (uvicorn's and the
-    project's own); their arguments are not. `record.args` is a tuple, or the single mapping `LogRecord` unwraps
-    from a one-mapping call (named `%(key)s` fields, or the whole mapping for `%s`)."""
+    """Retain only a type name; never evaluate arbitrary objects or render message/argument text."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         error = record.exc_info[1] if record.exc_info else None
-        if not isinstance(record.msg, str):
-            record.msg = _safe_arg(record.msg)
-        if isinstance(record.args, (tuple, Mapping)):
-            args = _safe_arg(record.args)  # a tuple stays a tuple and a mapping becomes a dict
-            record.args = args if isinstance(args, (tuple, dict)) else None
-        try:
-            message = record.getMessage()
-        except Exception:  # a malformed format: the format string alone
-            message = str(record.msg)
-        message = message.strip().replace("\r", "\\r").replace("\n", "\\n")[:MAX_LOG_MESSAGE]
+        if error is None and isinstance(record.msg, BaseException):
+            error = record.msg
         if error is not None:
-            message += f" [{exception_summary(error)}]"
-        record.msg, record.args = message, None
+            record.exception_type = type(error).__name__
         record.exc_info, record.exc_text, record.stack_info = None, None, None
         return True
 
@@ -324,9 +276,7 @@ class SafeErrorFilter(logging.Filter):
 SERVE_LOG_CONFIG: dict[str, Any] = {
     **LOG_CONFIG,
     "filters": {**LOG_CONFIG["filters"], "safe_errors": {"()": SafeErrorFilter}},
-    "formatters": {**LOG_CONFIG["formatters"],
-                   "default": {"()": "uvicorn.logging.DefaultFormatter", "fmt": "%(levelprefix)s %(message)s",
-                               "use_colors": False}},
+    "formatters": LOG_CONFIG["formatters"],
     "handlers": {**LOG_CONFIG["handlers"],
                  "default": {"class": "logging.StreamHandler", "formatter": "default", "filters": ["safe_errors"],
                              "stream": "ext://sys.stderr"}},
@@ -344,6 +294,9 @@ def open_runtime(config: ServeConfig) -> ServedRuntime:
     runtime = ServedRuntime()
     stage = "auth runtime engine"
     try:
+        telemetry = configure(config.telemetry)
+        if telemetry is not None:
+            runtime.own("telemetry", telemetry.close)
         engines = {}
         for role, label in ((AUTH_RUNTIME, "auth"), (APP_RUNTIME, "app")):
             stage = f"{label} runtime engine"
@@ -365,7 +318,7 @@ def open_runtime(config: ServeConfig) -> ServedRuntime:
         if not isinstance(error, Exception):
             runtime.close_after(error)
             raise
-        startup = ServeStartupError(f"API server startup failed at {stage}: {_category(error)}")
+        startup = ServeStartupError(stage, error)
         runtime.close_after(startup)
         raise startup from error
     return runtime
@@ -408,6 +361,9 @@ class ServedApp:
         try:
             self._runtime = open_runtime(self._config)
         except ServeStartupError as error:
+            logging.getLogger("uvicorn.error").error("api.startup_failed", extra={
+                "event": "api.startup_failed", "startup_phase": error.phase, "startup_category": error.category,
+            })
             notes = " (" + "; ".join(error.__notes__) + ")" if getattr(error, "__notes__", None) else ""
             await send({"type": "lifespan.startup.failed", "message": str(error) + notes})
             return

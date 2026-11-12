@@ -9,6 +9,7 @@ import asyncio
 from collections.abc import Callable, Iterator
 import contextlib
 import io
+import json
 import logging
 import logging.config
 import os
@@ -552,11 +553,14 @@ def test_logged_exceptions_render_categories_and_locations_only(logging_state: N
     text = output.getvalue()
     lines = text.splitlines()
     assert canary not in text and "Traceback" not in text and len(lines) == 5  # one bounded line per record
-    assert lines[0].startswith("ERROR:    Exception in ASGI application [RuntimeError <- OSError at ")
-    assert lines[0].endswith(" fail; traceback withheld]")
-    assert lines[1:3] == ["ERROR:    Error loading ASGI app factory: RuntimeError", "ERROR:    RuntimeError"]
-    assert lines[3].startswith("ERROR:    library failure [RuntimeError <- OSError at ")
-    assert lines[4] == "WARNING:  stack"
+    records = [json.loads(line) for line in lines]
+    assert records[0]["exception_type"] == "RuntimeError"
+    assert records[2]["exception_type"] == "RuntimeError"
+    assert records[3]["exception_type"] == "RuntimeError"
+    assert all(record["event"] == "application_log" for record in records)
+    assert [r["severity"] for r in records] == [40, 40, 40, 40, 30]
+    assert all("message" not in r and "traceback" not in r for r in records)
+
 
 
 def test_driver_errors_in_logs_keep_only_the_fixed_category(logging_state: None) -> None:
@@ -564,9 +568,87 @@ def test_driver_errors_in_logs_keep_only_the_fixed_category(logging_state: None)
     output = _configured_output()
     error = psycopg.OperationalError(f"password authentication failed for user {canary}")
     logging.getLogger("uvicorn.error").error("x\r\nforged line %s", "arg", exc_info=error)
-    assert output.getvalue() == ("ERROR:    x\\r\\nforged line arg "
-                                 "[OperationalError (no SQLSTATE: password authentication refused); "
-                                 "traceback withheld]\n")
+    record = json.loads(output.getvalue())
+    assert record == {"event": "application_log", "severity": 40, "exception_type": "OperationalError",
+                      "error_code": "boundary_error"}
+    assert canary not in output.getvalue() and "forged" not in output.getvalue()
+
+
+def test_supported_entry_logs_safe_startup_diagnostic_through_json_formatter(
+        world: World, monkeypatch: pytest.MonkeyPatch, logging_state: None) -> None:
+    """Actual lifespan + uvicorn logging, with a fake DB failure instead of a PostgreSQL dependency."""
+    def verify(engine: FakeEngine, role: str) -> None:
+        world.verify(engine, role)
+        if role == APP_RUNTIME:
+            driver = psycopg.OperationalError(f"password authentication failed for user {CANARY}")
+            original = DBAPIError("private SQL " + CANARY, {"password": CANARY}, driver)
+            raise DatabaseUnavailable("acquire", None) from original
+    monkeypatch.setattr(serve, "verify_runtime_role", verify)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output), pytest.raises(SystemExit) as raised:
+        serve.main([])  # fails before binding a socket
+    assert raised.value.code == 3
+    text = output.getvalue()
+    assert ("API server startup failed at app runtime role check: OperationalError (no SQLSTATE: password "
+            "authentication refused)") in text
+    assert "Application startup failed. Exiting." in text
+    records = [json.loads(line) for line in text.splitlines()]
+    failure = next(record for record in records if record["event"] == "api.startup_failed")
+    assert failure["startup_phase"] == "app runtime role check"
+    assert failure["startup_category"] == "OperationalError (no SQLSTATE: password authentication refused)"
+    assert any(record["event"] == "api.startup_exiting" for record in records)
+    assert_no_canary(text)
+    assert "Traceback" not in text and "private SQL" not in text and world.released()
+
+
+@pytest.mark.parametrize("category", [
+    "OperationalError (no SQLSTATE: connection refused)",
+    "ConnectionTimeout (no SQLSTATE: connect timeout)",
+    "LockNotAvailable (SQLSTATE 55P03)",
+    f"RuntimeRoleError: {APP_RUNTIME} {PRIVILEGED}",
+    "RuntimeError",
+])
+def test_startup_log_categories_are_allowlisted(category: str, logging_state: None) -> None:
+    output = _configured_output()
+    logging.getLogger("uvicorn.error").error(CANARY, extra={
+        "event": "api.startup_failed", "startup_phase": "application", "startup_category": category,
+        "diagnostic": CANARY,
+    })
+    record = json.loads(output.getvalue())
+    assert record["diagnostic"] == f"API server startup failed at application: {category}"
+    assert record["startup_category"] == category
+    assert_no_canary(output.getvalue())
+
+
+@pytest.mark.parametrize("phase, category", [
+    (CANARY, "RuntimeError"),
+    ("application", CANARY),
+    ("application", f"OperationalError (no SQLSTATE: password authentication refused) {CANARY}"),
+    ("application", f"RuntimeRoleError: the engine authenticates as '{CANARY}'"),
+    ("application", f"OperationalError (SQLSTATE {CANARY})"),
+    ("application", {"error": CANARY}),
+    ("application", "A" * 1000),
+])
+def test_startup_log_rejects_free_form_fields(phase: object, category: object, logging_state: None) -> None:
+    output = _configured_output()
+    log = logging.getLogger("uvicorn.error")
+    log.error(CANARY, extra={"event": "api.startup_failed", "startup_phase": phase,
+                             "startup_category": category, "diagnostic": CANARY})
+    record = json.loads(output.getvalue())
+    if phase == "application":
+        assert record["startup_category"] == "StartupError"
+        assert record["diagnostic"] == "API server startup failed at application: StartupError"
+    else:
+        assert set(record) == {"event", "severity"}
+    # A library cannot preserve arbitrary text by imitating a prefix or interpolating a lifecycle message.
+    log.error("API server startup failed at application: " + CANARY)
+    log.error("Application startup failed. Exiting. %s", CANARY)
+    log.error("Application startup failed. Exiting.\n" + CANARY)
+    log.error("Application startup failed. Exiting.", CANARY)
+    assert all(json.loads(line) == {"event": "application_log", "severity": 40}
+               for line in output.getvalue().splitlines()[1:])
+    assert_no_canary(output.getvalue())
+
 
 
 def test_exceptions_in_named_and_nested_log_arguments_render_categories_only(logging_state: None) -> None:
@@ -583,14 +665,11 @@ def test_exceptions_in_named_and_nested_log_arguments_render_categories_only(log
     log.error("%s", [[[[error]]]])  # deeper than `MAX_ARG_DEPTH`
     text = output.getvalue()
     assert canary not in text and "Traceback" not in text
-    assert text.splitlines() == ["ERROR:    operation failed: RuntimeError",
-                                 "WARNING:  3 retries at 0.50 for pool, 'pool'",
-                                 "WARNING:  2 of pool at 1.2",
-                                 "ERROR:    context {'error': 'RuntimeError'}",
-                                 "ERROR:    {'RuntimeError': 1}",
-                                 "ERROR:    nested ['RuntimeError', ('RuntimeError',)] {'key': {'RuntimeError'}}",
-                                 "ERROR:    {'error': 'RuntimeError'}",
-                                 "ERROR:    [[['<list withheld>']]]"]
+    records = [json.loads(line) for line in text.splitlines()]
+    assert len(records) == 8
+    assert all(set(r) == {"event", "severity"} for r in records)
+    assert all(r["event"] == "application_log" for r in records)
+
 
 
 def test_an_unexpected_request_error_over_real_uvicorn_logs_no_secret(configured: dict[str, str],
@@ -621,8 +700,10 @@ def test_an_unexpected_request_error_over_real_uvicorn_logs_no_secret(configured
     text = output.getvalue()
     assert failed.status_code == 500 and canary not in failed.text and live.status_code == 200
     assert canary not in text and "Traceback" not in text
-    assert '"GET /api/v1/__failing_probe?[REDACTED] HTTP/1.1" 500' in text
-    assert "Exception in ASGI application [RuntimeError at " in text and " failing; traceback withheld]" in text
+    records = [json.loads(line) for line in text.splitlines()]
+    assert any(r["event"] == "http_access" for r in records)
+    assert any(r.get("exception_type") == "RuntimeError" for r in records)
+    assert "__failing_probe" not in text
     assert releases == [True] and served.close() == []
 
 

@@ -64,6 +64,7 @@ from policyops.persistence import runs as run_store
 from policyops.persistence.database import IdempotencyConflict, workspace_transaction
 from policyops.persistence.records import AuditEvent, ExecutionRecord
 from policyops.runtime.clock import LeaseClock
+from policyops.telemetry import annotate, count, observed
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.events import ExecutionChanged
 from policyops_contracts.retail import OrderOperationHistory, ToolName
@@ -148,6 +149,12 @@ class Step:
 class Reserved:
     execution: ExecutionRecord
     created: bool
+
+
+def _observed_result(result: Step) -> Step:
+    annotate(outcome=result.state if result.state in {"succeeded", "reconciled", "failed", "unknown"}
+             else result.action)
+    return result
 
 
 def _slug(value: str) -> str:
@@ -259,15 +266,18 @@ class Executor:
 
     # -- reservation ----------------------------------------------------------------------------------------
 
+    @observed("execution.reserve")
     def reserve(self, scope: GatewayScope, refs: AuthorityRefs, *,
                 token: run_store.ClaimToken | None = None) -> Reserved | PrecheckRefused:
         """Reserve the approval's execution after a clearing precheck. Idempotent per approval: the stored
         operation ID is returned on every repeat that names the same run (hence case and server-derived customer
         binding) and the same proposal, consent and approval; any other combination is an IdempotencyConflict. A
         repeat is not re-prechecked: it neither renews an expired approval nor mints another operation."""
+        annotate(run_id=scope.run.run_id, proposal_id=refs.proposal_id, operation="reserve")
         with workspace_transaction(self.engine, scope.run.workspace_id) as connection:
             existing = ledger.by_approval(connection, refs.approval_id)
         if existing is not None:
+            annotate(operation_id=existing.operation_id)
             if not ledger.matches_reservation(existing, run=scope.run, approval_id=refs.approval_id,
                                               consent_id=refs.consent_id, proposal_id=refs.proposal_id,
                                               proposal_version=refs.proposal_version):
@@ -276,6 +286,7 @@ class Executor:
         with self.retail(scope) as client:
             cleared = self._precheck(scope, None, refs, client)
             if isinstance(cleared, PrecheckRefused):
+                annotate(outcome="refused")
                 return cleared
             with workspace_transaction(self.engine, scope.run.workspace_id) as connection:
                 run = run_store.get_run(connection, scope.run.run_id, lock=True)
@@ -288,6 +299,7 @@ class Executor:
                             consent_id=refs.consent_id, proposal_id=refs.proposal_id,
                             proposal_version=refs.proposal_version):
                         raise IdempotencyConflict("approval reserved with other references")
+                    annotate(operation_id=existing.operation_id)
                     return Reserved(existing, False)
                 if token is not None:
                     fenced_run, job, _ = run_store.check_fence(connection, token, self.clock)
@@ -314,11 +326,20 @@ class Executor:
                     authorization_not_after=cleared.authorization_not_after, now=now)
                 if created:
                     self._changed(connection, run, execution, now, "execution.reserved")
+        annotate(operation_id=execution.operation_id)
         return Reserved(execution, created)
 
     # -- one bounded step -----------------------------------------------------------------------------------
 
+    @observed("execution.step")
     def step(self, workspace_id: UUID, execution_id: UUID) -> Step:
+        result = self._step(workspace_id, execution_id)
+        outcome = result.state if result.state in {"succeeded", "reconciled", "failed", "unknown"} else result.action
+        annotate(outcome=outcome)
+        count("executions", outcome=outcome)
+        return result
+
+    def _step(self, workspace_id: UUID, execution_id: UUID) -> Step:
         """Claim one due execution and advance it by one bounded step (at most a lookup and one mutate or fence)."""
         with workspace_transaction(self.engine, workspace_id) as connection:
             found = ledger.get(connection, execution_id, skip_locked=True)
@@ -327,6 +348,8 @@ class Executor:
                     found.lease_expires_at is not None and found.lease_expires_at > now):
                 return Step(execution_id, "skipped", "busy" if found is None else found.state)
             claimed = ledger.claim(connection, found, owner=self.owner, lease=self.limits.lease, now=now)
+        annotate(run_id=claimed.run_id, operation_id=claimed.operation_id, proposal_id=claimed.proposal_id,
+                 attempt=claimed.attempts)
         scope = self.scopes.scope(RunScope(workspace_id=claimed.workspace_id, case_id=claimed.case_id,
                                            run_id=claimed.run_id))
         if scope.run != RunScope(workspace_id=claimed.workspace_id, case_id=claimed.case_id, run_id=claimed.run_id):
@@ -417,16 +440,19 @@ class Executor:
             self._changed(connection, run, dispatched, now, "execution.dispatched")
         return dispatched  # committed: only now may the request be sent
 
+    @observed("execution.dispatch")
     def _dispatch(self, execution: ExecutionRecord, scope: GatewayScope, client: RetailOperations,
                   cleared: Cleared) -> Step:
+        annotate(run_id=execution.run_id, operation_id=execution.operation_id, proposal_id=execution.proposal_id,
+                 operation="dispatch", attempt=execution.attempts)
         if client.fingerprint(execution.operation_id, cleared.request) != execution.operation_sha256:
             raise ExecutionIntegrityError("the re-derived request differs from the stored one; nothing was sent")
         self.hooks.before_checkpoint(execution)
         checked = self._checkpoint(execution, cleared)
         if isinstance(checked, Step):
-            return checked
+            return _observed_result(checked)
         if isinstance(checked, str):
-            return self._fence(execution, client, checked)
+            return _observed_result(self._fence(execution, client, checked))
         self.hooks.before_send(checked)
         lease_end = checked.lease_expires_at or checked.authorization_not_after
         not_after = min(checked.authorization_not_after - self.limits.authority_margin, lease_end)
@@ -439,23 +465,26 @@ class Executor:
         except Refused as refused:
             result = refused  # a refusal of this attempt does not prove an earlier attempt had no effect
         self.hooks.after_response(checked, result)
-        return self.record(checked, result, "response")
+        return _observed_result(self.record(checked, result, "response"))
 
+    @observed("execution.reconcile")
     def _reconcile(self, execution: ExecutionRecord, scope: GatewayScope, client: RetailOperations) -> Step:
+        annotate(run_id=execution.run_id, operation_id=execution.operation_id, proposal_id=execution.proposal_id,
+                 operation="reconcile", attempt=execution.attempts)
         try:
             found = client.lookup(execution.operation_id, execution.request)
         except Refused as refused:
             found = Unknown(f"lookup_refused_{refused.status}")
         if isinstance(found, LookupResult) and found.result is not None:
-            return self.record(execution, found.result, "lookup")
+            return _observed_result(self.record(execution, found.result, "lookup"))
         now = _Now(self.engine, self.clock, execution.workspace_id).now()
         if execution.attempts < self.limits.max_dispatches and \
                 now < execution.authorization_not_after - self.limits.authority_margin:
             cleared = self._precheck(scope, execution, self._refs(execution), client)
             if isinstance(cleared, Cleared):
-                return self._dispatch(execution, scope, client, cleared)  # the same operation ID and request
-            return self._fence(execution, client, cleared.detail)
-        return self._fence(execution, client, "authority_ended")
+                return _observed_result(self._dispatch(execution, scope, client, cleared))  # same operation/request
+            return _observed_result(self._fence(execution, client, cleared.detail))
+        return _observed_result(self._fence(execution, client, "authority_ended"))
 
     def _fence(self, execution: ExecutionRecord, client: RetailOperations, reason: str) -> Step:
         """Send a fence only under a live claim (re-read now, after any slow lookup), with the service token capped

@@ -57,13 +57,23 @@ import httpx2
 from pydantic import SecretStr
 
 from policyops.budget.config import Actor
-from policyops.budget.ledger import Binding, BudgetExhausted, CountGranted, DispatchGranted, Ledger, Settlement
+from policyops.budget.ledger import (
+    Binding,
+    BudgetExhausted,
+    CountGranted,
+    DispatchGranted,
+    Ledger,
+    RunBinding,
+    Settlement,
+)
+from policyops.budget.pricing import cost
 from policyops.persistence.database import TransactionOutcomeUnknown
 from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.providers.adapters import CountFailed, Invocation, as_contract_gap, count, invoke
 from policyops.providers.contract import ContractGap, Provider
 from policyops.providers.results import Evidence
 from policyops.providers.serialize import PreparedRequest, prepare
+from policyops.telemetry import annotate, enabled, observed, provider_usage
 from policyops_contracts.model import Message, ModelRequest, ModelResult, TextPart
 
 
@@ -232,10 +242,12 @@ class _AttemptExpired(Exception):
     pass
 
 
+@observed("provider.call")
 async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: UUID, operation: str,
                    prepared: PreparedRequest, actor: Actor, pending: list[_Pending | None],
                    report: CallReport, deadline: float, limits: CallLimits) -> Invocation:
     attempt_id = uuid5(key, operation)
+    annotate(provider=prepared.provider, model=prepared.model, operation="chat", cost_class="not_dispatched")
     record = AttemptRecord(attempt_id, operation, prepared.request_sha256)
     report.attempts.append(record)
     try:
@@ -298,11 +310,21 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
     except _AttemptExpired:
         # Possibly sent and billed: the hold stays. Its close was never observed, so it is not claimed.
         invocation = Invocation(sent=True, error="timeout", cleanup_confirmed=False)
+    except BaseException:
+        provider_usage(provider=prepared.provider, model=prepared.model, outcome="error")
+        raise
     record.cleanup_confirmed = invocation.cleanup_confirmed and record.cleanup_confirmed is not False
     config = ledger.configuration.actors[actor]
     invocation = _count_deviation(invocation, attempt.counted_input_tokens, config.count_headroom_percent,
                                   config.count_headroom_min)
     record.evidence = invocation.evidence
+    if enabled():
+        usage = invocation.evidence.usage if invocation.evidence is not None else None
+        provider_usage(provider=prepared.provider, model=prepared.model,
+                       outcome=invocation.result.outcome if invocation.result is not None else "failed",
+                       input_tokens=usage.input_total if usage is not None else None,
+                       output_tokens=usage.output if usage is not None else None,
+                       usd=cost(ledger.configuration.price(actor), usage).usd if usage is not None else None)
     pending[0] = _Pending(record, "dispatched", invocation)
     try:
         record.fate = _settle_or_hold(ledger, attempt_id, invocation)
@@ -345,10 +367,22 @@ async def _run(ledger: Ledger, providers: Providers, binding: Binding, key: UUID
     return CallReport(None, "failed", "repair_exhausted", report.attempts)
 
 
+@observed("provider.request")
 async def call(ledger: Ledger, providers: Providers, binding: Binding, invocation_key: UUID, operation: str,
                request: ModelRequest, actor: Actor, *, deadline: float, limits: CallLimits | None = None
                ) -> CallReport:
     """`deadline` is an absolute `time.monotonic()` instant (the event loop's clock)."""
+    if isinstance(binding, RunBinding):
+        annotate(run_id=binding.run_id)
+    result = await _call(ledger, providers, binding, invocation_key, operation, request, actor,
+                         deadline=deadline, limits=limits)
+    annotate(outcome=result.status)
+    return result
+
+
+async def _call(ledger: Ledger, providers: Providers, binding: Binding, invocation_key: UUID, operation: str,
+                request: ModelRequest, actor: Actor, *, deadline: float, limits: CallLimits | None = None
+                ) -> CallReport:
     if isinstance(deadline, bool) or not isinstance(deadline, float | int) or not math.isfinite(deadline):
         raise ValueError("deadline is a finite time.monotonic() instant")
     if deadline <= time.monotonic():

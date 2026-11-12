@@ -23,6 +23,8 @@ from sqlalchemy import Connection, Engine, create_engine, event, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 
+from policyops.telemetry import annotate, count, enabled, span
+
 
 SCOPE_SETTING = "policyops.workspace_id"
 POOL_TIMEOUT_SECONDS = 2
@@ -56,6 +58,17 @@ SQL_TIMEOUTS = {SqlProfile.DEFAULT: SqlTimeouts(5000, 1000, 5000),
                 SqlProfile.LEASE: SqlTimeouts(1000, 250, 2000),
                 SqlProfile.RETRIEVAL: SqlTimeouts(15000, 1000, 5000)}
 SqlPhase = Literal["acquire", "setup", "body", "commit"]
+
+
+def observe_sql_failure(error: BaseException, phase: SqlPhase) -> None:
+    if not enabled():
+        return
+    state = sqlstate(error)
+    with span("sql.failure", phase=phase, error_code="sql_failure", outcome="error",
+              exception_type=type(error).__name__):
+        if state is not None:
+            annotate(sqlstate_class=state[:2])
+        count("errors", error_code="sql_failure")
 
 
 def sqlstate(error: BaseException) -> str | None:
@@ -125,6 +138,7 @@ def connect_runtime(engine: Engine) -> Connection:
     try:
         return engine.connect()
     except Exception as error:
+        observe_sql_failure(error, "acquire")
         classified = classify_sql_failure(error, "acquire")
         if classified is not None:
             raise classified from error
@@ -190,6 +204,7 @@ def connection_transaction(connection: Connection, workspace_id: UUID | None = N
         phase = "commit"
         tx.commit()
     except BaseException as error:
+        observe_sql_failure(error, phase)
         try:
             connection.rollback()
         except BaseException as cleanup:

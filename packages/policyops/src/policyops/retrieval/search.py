@@ -122,6 +122,7 @@ from policyops.retrieval.rerank import (
     slug_or_none,
 )
 from policyops.runtime.clock import UnsafeTestHook, require_test_environment
+from policyops.telemetry import annotate, observed
 from policyops_contracts.embedding import EmbeddingJob
 from policyops_contracts.retrieval import (
     MAX_RERANK_DOCUMENTS,
@@ -312,7 +313,14 @@ class Retriever:
 
     # -- entry point -----------------------------------------------------------------------------------------------
 
+    @observed("retrieval.step")
     async def retrieve(self, query: RetrievalQuery, *, deadline: float) -> RetrievalResult | RetrievalRefused:
+        annotate(run_id=query.run_id, mode=query.config.mode)
+        result = await self._observed_retrieve(query, deadline=deadline)
+        annotate(outcome="refused" if isinstance(result, RetrievalRefused) else "completed")
+        return result
+
+    async def _observed_retrieve(self, query: RetrievalQuery, *, deadline: float) -> RetrievalResult | RetrievalRefused:
         work = _Work()
         outcome = await self._outcome(query, deadline, work)
         if isinstance(outcome, RetrievalRefused) and query.config.rerank is not None:

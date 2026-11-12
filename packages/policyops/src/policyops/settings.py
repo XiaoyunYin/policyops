@@ -29,6 +29,15 @@ CALLBACK_PATH = "/api/v1/auth/callback"
 ClientId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9._-]{1,128}$")]
 
 
+class TelemetrySettings(BaseSettings):
+    """Core manual telemetry. No remote endpoint, environment detectors or automatic instrumentation."""
+
+    model_config = SettingsConfigDict(env_prefix="POLICYOPS_TELEMETRY_", env_file=None, extra="forbid", frozen=True,
+                                      hide_input_in_errors=True)
+    enabled: bool = False
+    exporter: Literal["console", "memory"] = "memory"
+
+
 class SettingsError(ValueError):
     """Configuration is unsafe or inconsistent for the selected environment."""
 

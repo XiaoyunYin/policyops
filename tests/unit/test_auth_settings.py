@@ -106,14 +106,21 @@ def test_the_access_log_configuration_loads_and_redacts(capsys: pytest.CaptureFi
 
     from policyops.api.logging import LOG_CONFIG
 
+    root = logging.getLogger()
+    saved = root.handlers[:], root.level
     logging.config.dictConfig(LOG_CONFIG)
     access = logging.getLogger("uvicorn.access")
     try:
         access.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", "/api/v1/auth/callback?code=c0de-1&state=s",
                     "1.1", 303)
         output = capsys.readouterr().out
-        assert "/api/v1/auth/callback?[REDACTED]" in output and "c0de-1" not in output
+        assert '"event":"http_access"' in output
+        assert "/api/v1/auth/callback" not in output and "c0de-1" not in output
     finally:
+        for handler in root.handlers:
+            if handler not in saved[0]:
+                handler.close()
+        root.handlers[:], root.level = saved
         for handler in list(access.handlers):
             access.removeHandler(handler)
         access.propagate = True

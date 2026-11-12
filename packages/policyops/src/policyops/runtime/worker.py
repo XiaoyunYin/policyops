@@ -69,6 +69,7 @@ from policyops.runtime.spec import (
     stop_message_id,
     unconfirmed_stop,
 )
+from policyops.telemetry import annotate, claim, count, enabled, observed, span
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.events import ErrorRaised, EventPayload, MessagePosted, RunStateChanged, RunStopped
 from policyops_contracts.scalars import CaseScope
@@ -165,6 +166,16 @@ class Worker:
 
     def discover(self) -> list[tuple[UUID, UUID]]:
         kinds = (store.EXECUTE_KIND,) if self.review is None else (store.EXECUTE_KIND, review_jobs.REVIEW_KIND)
+        if enabled():
+            try:
+                with transaction(self.discovery_engine, profile=SqlProfile.LEASE) as connection:
+                    snapshot = store.queue_snapshot(connection, self.clock.now(connection), kinds=kinds)
+                for kind in kinds:
+                    depth, age = snapshot.get(kind, (0, 0.0))
+                    count("queue.depth", depth, kind=kind)
+                    count("queue.oldest_due_age", age, kind=kind)
+            except Exception:
+                count("errors", error_code="sql_failure")
         with transaction(self.discovery_engine, profile=SqlProfile.LEASE) as connection:
             return store.discover_jobs(connection, self.clock.now(connection), self.batch, kinds=kinds)
 
@@ -177,8 +188,7 @@ class Worker:
                 if self.process(job_id, workspace_id):
                     claimed += 1
             except Exception as exc:  # contained per job; only the type name is logged
-                log.warning("worker_job_error job=%s workspace=%s type=%s", job_id, workspace_id,
-                            type(exc).__name__)
+                log.warning("worker_job_error", extra={"job_id": job_id, "exception_type": type(exc).__name__})
         return claimed
 
     def serve(self, stop: threading.Event, *, idle: float = 1.0) -> None:
@@ -186,7 +196,9 @@ class Worker:
             if self.run_once() == 0:
                 stop.wait(idle)
 
+    @observed("worker.job")
     def process(self, job_id: UUID, workspace_id: UUID) -> bool:
+        annotate(job_id=job_id)
         with workspace_transaction(self.app_engine, workspace_id) as connection:
             observed = store.get_job(connection, job_id)
         if observed is not None and observed.kind == review_jobs.REVIEW_KIND:
@@ -196,25 +208,34 @@ class Worker:
         if claimed is None:
             return False
         token, case_id, spec = claimed
+        claim(run_id=token.run_id, job_id=token.job_id, attempt=token.attempt, generation=token.generation)
+        annotate(kind=store.EXECUTE_KIND)
         if self.on_claimed is not None:
             self.on_claimed(token)
         context = Context(self, token, case_id, spec)
         try:
-            outcome: Outcome = spec.executor.execute(context)
-        except store.Fenced as fenced:
-            log.info("claim_lost claim=%s reason=%s", token.claim_id, fenced.reason)
+            with span("worker.execute"):
+                outcome: Outcome = spec.executor.execute(context)
+        except store.Fenced:
+            log.info("claim_lost", extra={"job_id": token.job_id, "run_id": token.run_id})
             return True
         except Exception as exc:  # an executor bug is a transient failure
             # Only a fixed code, safe IDs and the exception type: never its message or traceback, which may carry
             # upstream secrets or customer text.
-            log.warning("executor_error run=%s claim=%s type=%s", token.run_id, token.claim_id, type(exc).__name__)
+            log.warning("executor_error", extra={"run_id": token.run_id, "job_id": token.job_id,
+                                                  "exception_type": type(exc).__name__})
             outcome = Retry("executor_error")
         self.finish(token, outcome)
+        result = "retry" if isinstance(outcome, Retry) else "failed" if isinstance(outcome, Failed) else "completed"
+        annotate(outcome=result)
+        count("jobs", kind=store.EXECUTE_KIND, outcome=result)
         return True
 
     # -- claim ----------------------------------------------------------------------------------------------------
 
+    @observed("worker.claim")
     def claim(self, job_id: UUID, workspace_id: UUID) -> tuple[store.ClaimToken, UUID, RuntimeSpec] | None:
+        annotate(job_id=job_id)
         with workspace_transaction(self.app_engine, workspace_id, profile=SqlProfile.LEASE) as connection:
             job_row = store.get_job(connection, job_id)
             if job_row is None:
@@ -251,6 +272,7 @@ class Worker:
             if spec is None:  # unreachable: `_refusal` dead-letters a missing spec
                 return None
             token = store.claim(connection, run, job, owner=self.owner, lease=spec.lease, now=now)
+            annotate(run_id=token.run_id, attempt=token.attempt, generation=token.generation)
             if run.state == "queued":
                 run = store.get_run(connection, run.id, lock=True) or run
                 running = store.set_state(connection, run, "running", now)
@@ -302,6 +324,7 @@ class Worker:
         store.append_event(connection, done, RunStateChanged(previous=run.state, current=target), now)
         store.end_job(connection, job, state="done", now=now, error_code=details.reason.value)
 
+    @observed("worker.finish")
     def finish(self, token: store.ClaimToken, outcome: Outcome) -> None:
         if isinstance(outcome, UsageUnconfirmed):
             outcome = unconfirmed_stop(outcome.report)

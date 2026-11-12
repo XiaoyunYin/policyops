@@ -1,5 +1,15 @@
 # Third-party notices
 
+## OpenTelemetry
+
+The application installs `opentelemetry-sdk` 1.45.1, `opentelemetry-api` 1.45.1 and
+`opentelemetry-semantic-conventions` 0.66b1 from the locked registry artifacts. Their installed distribution
+metadata declares `License-Expression: Apache-2.0`; each distribution includes `licenses/LICENSE` containing
+the Apache License, Version 2.0. No OpenTelemetry source is vendored here. Preserve these distribution license
+files when redistributing an installed environment or image. The SDK is a direct dependency; the matching API
+and semantic-conventions packages are dependencies of the SDK. No OTLP exporter or automatic instrumentation
+package is added for Core telemetry.
+
 ## tiktoken and the cl100k_base vocabulary
 
 The application counts embedding inputs locally with `tiktoken` 0.14.0 and its dependency `regex` 2026.9.29

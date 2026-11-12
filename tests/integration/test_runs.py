@@ -20,8 +20,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from policyops.persistence import runs as store
-from policyops.persistence.database import workspace_transaction
-from policyops.persistence.roles import APP_RUNTIME
+from policyops.persistence.database import SqlProfile, transaction, workspace_transaction
+from policyops.persistence.roles import APP_RUNTIME, WORKER_DISCOVERY
 from policyops.runtime.spec import RuntimeCatalog
 from policyops_testing import case_api
 from policyops_testing.app_database import AppDatabase, NewDatabase
@@ -146,6 +146,18 @@ def test_start_creates_run_job_event_outbox_and_audit_atomically(api: CaseApi) -
     assert replay.headers["idempotent-replayed"] == "true" and replay.headers["location"] == started.headers["location"]
     assert_error(api.start_run(browser, case, '"2"', key="run-start-00001"), 409, "api.idempotency_mismatch")
     assert counts(api, workspace)["runs"] == 1
+
+
+def test_queue_snapshot_uses_actual_discovery_grants_and_only_due_jobs(api: CaseApi) -> None:
+    """The aggregate must work under the narrow login, across workspaces, without payload privileges."""
+    for _ in range(2):
+        _, browser, _ = team(api)
+        case = new_case(api, browser)
+        assert api.start_run(browser, case, '"1"').status_code == 202
+    with transaction(api.db.engine(WORKER_DISCOVERY), profile=SqlProfile.LEASE) as connection:
+        snapshot = store.queue_snapshot(connection, api.clock.now(), kinds=(store.EXECUTE_KIND,))
+    assert snapshot[store.EXECUTE_KIND][0] == 2
+    assert snapshot[store.EXECUTE_KIND][1] >= 0
 
 
 def test_start_preconditions_and_one_active_run(api: CaseApi) -> None:

@@ -29,6 +29,7 @@ from policyops.services.execution import (
     ScopeResolver,
     Step,
 )
+from policyops.telemetry import observed
 
 
 def build_execution_dispatcher(*, env: str, app_engine: Engine, discovery_engine: Engine, scopes: ScopeResolver,
@@ -55,6 +56,7 @@ class ExecutionDispatcher:
     clock: LeaseClock
     batch: int = 10
 
+    @observed("execution.batch")
     def dispatch_once(self) -> list[Step]:
         """One bounded pass: at most `batch` executions, each advanced by at most one step. The steps are returned,
         not retained: a long-running loop holds no history."""

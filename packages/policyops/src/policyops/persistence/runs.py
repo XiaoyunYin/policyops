@@ -398,6 +398,22 @@ def discover_jobs(connection: Connection, now: datetime, limit: int, *, kinds: t
     return [(row[0], row[1]) for row in rows]
 
 
+def queue_snapshot(connection: Connection, now: datetime, *, kinds: tuple[str, ...]
+                   ) -> dict[str, tuple[int, float]]:
+    """Due runnable queue only, including expired leases; existing discovery scheduling grants suffice.
+
+    No tenant/resource IDs, payloads or customer columns are read. Missing kinds represent zero.
+    The caller uses the LEASE SQL profile and isolates this optional read from the claim transaction.
+    """
+    rows = connection.execute(text(
+        "SELECT kind, count(*), greatest(0, extract(epoch FROM (:now - "
+        "min(CASE WHEN state = 'leased' THEN lease_expires_at ELSE available_at END)))) "
+        "FROM app.jobs WHERE kind = ANY(:kinds) AND ((state = 'queued' AND available_at <= :now) "
+        "OR (state = 'leased' AND lease_expires_at <= :now)) GROUP BY kind"),
+        {"now": now, "kinds": list(kinds)}).all()
+    return {row[0]: (int(row[1]), float(row[2])) for row in rows}
+
+
 def discover_outbox(connection: Connection, limit: int) -> list[UUID]:
     """Workspaces with undelivered run-event intents, oldest first. Only the topic this dispatcher publishes is
     considered, so rows of other topics (left undelivered for their own consumers) cannot starve it."""

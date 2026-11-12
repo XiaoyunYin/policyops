@@ -68,6 +68,7 @@ from policyops.runtime.spec import (
     unconfirmed_stop,
 )
 from policyops.services.proposals import ProposalService
+from policyops.telemetry import annotate, enabled, observed
 from policyops_contracts.clock import Clock, SystemClock
 from policyops_contracts.conversation import AgentLimits, PolicyContext, UserMessage
 from policyops_contracts.errors import ErrorCode
@@ -115,7 +116,11 @@ class InvestigationExecutor:
     config_sha256: str
     test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None
 
+    @observed("investigation")
     def execute(self, context: StepContext) -> Outcome:
+        if enabled():
+            annotate(run_id=context.run_id, job_id=context.claim_token.job_id, attempt=context.attempt,
+                     generation=context.claim_token.generation)
         try:
             return asyncio.run(self._execute(context))
         except (codec.CheckpointCompatibilityError, codec.CheckpointStateVersionError,

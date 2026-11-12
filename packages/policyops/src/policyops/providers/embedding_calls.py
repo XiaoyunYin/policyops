@@ -90,6 +90,7 @@ from policyops.budget.ledger import (
     RunBinding,
     Settlement,
 )
+from policyops.budget.pricing import cost
 from policyops.persistence.budget import AppLedgerStore
 from policyops.persistence.embeddings import (
     TERMINAL,
@@ -124,6 +125,7 @@ from policyops.providers.embeddings import (
     usage_of,
 )
 from policyops.providers.tokenizer import COUNT_SOURCE, InputRefused, Tokenizer
+from policyops.telemetry import annotate, enabled, observed, provider_usage
 from policyops_contracts.embedding import EmbeddedInput, EmbeddingJob
 
 
@@ -467,9 +469,13 @@ class _Run:
             raise self.stop(lease, _refusal_status(decision.reason), decision.reason)
         await self.send(lease, plan, prepared, credential)
 
+    @observed("provider.call")
     async def send(self, lease: Lease, plan: BatchPlan, prepared: PreparedEmbedding, credential: SecretStr) -> None:
         """After `DispatchGranted`: the attempt is never released. Every way out settles it or keeps its hold, and
         a body that has arrived is always accounted, even if its cleanup was interrupted."""
+        annotate(provider="openai", model=prepared.model, operation="embedding", cost_class="unconfirmed")
+        if isinstance(self.binding, RunBinding):
+            annotate(run_id=self.binding.run_id)
         arrived: list[Fetched] = []
         try:
             cap = min(self.deadline, time.monotonic() + self.limits.attempt_seconds)
@@ -480,6 +486,7 @@ class _Run:
             if arrived:
                 self.complete(lease, plan, prepared, arrived[0], cleanup=False, note="timeout_after_body")
             else:  # possibly sent and billed: the hold stays; the close was never observed
+                provider_usage(provider="openai", model=prepared.model, outcome="unknown")
                 self.hold_unconfirmed(plan.attempt_id, cleanup=False)
                 self.finish(lease, plan, "sent", "unresolved", "timeout", physical=True, cleanup=False)
             if time.monotonic() >= self.deadline:
@@ -491,6 +498,7 @@ class _Run:
                 if arrived:
                     self.complete(lease, plan, prepared, arrived[0], cleanup=False, note=f"{note}_after_body")
                 else:
+                    provider_usage(provider="openai", model=prepared.model, outcome="error")
                     self.hold_unconfirmed(plan.attempt_id, cleanup=False)
                     self.finish(lease, plan, "sent", "unresolved", note, physical=True, cleanup=False)
             except Exception as cleanup:
@@ -502,11 +510,19 @@ class _Run:
                  cleanup: bool, note: str | None = None) -> None:
         """Synchronous accounting of one response: classify, publish, settle or hold, advance."""
         if fetched.raw is None:
+            provider_usage(provider="openai", model=prepared.model, outcome="unknown")
             self.hold_unconfirmed(plan.attempt_id, cleanup=cleanup)
             self.finish(lease, plan, "sent", "unresolved", note or fetched.error, physical=fetched.sent,
                         cleanup=cleanup)
             return
         classified = classify(fetched.raw, prepared, plan.local_tokens)
+        if enabled():
+            usage = usage_of(classified.billing) if classified.settles and classified.billing is not None else None
+            provider_usage(provider="openai", model=prepared.model,
+                           outcome="completed" if classified.outcome == "published" else "failed",
+                           input_tokens=usage.input_total if usage is not None else None,
+                           output_tokens=0 if usage is not None else None,
+                           usd=cost(self.configuration.price("embedding"), usage).usd if usage is not None else None)
         evidence = _evidence(plan, self.job.id, prepared, classified, fetched.provider_request_id)
         self.report.pending_evidence, self.report.pending_billing = evidence, classified.billing
         self.report.pending_request_id, self.report.pending_cleanup_confirmed = fetched.provider_request_id, cleanup

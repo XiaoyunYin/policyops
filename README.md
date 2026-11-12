@@ -329,6 +329,43 @@ Pre-T22 pending proposals are not migrated, and dead-lettered summaries have no 
 [docs/policy-coverage.json](docs/policy-coverage.json) maps every policy rule to its executed cases. See
 [docs/architecture.md](docs/architecture.md#policy-and-tool-gateway).
 
+## Observability
+
+Core telemetry is off by default. For the served API, set `POLICYOPS_TELEMETRY_ENABLED=true` and
+`POLICYOPS_TELEMETRY_EXPORTER=console` (JSON to stdout) or `memory` (bounded, process-local inspection).
+Library/worker hosts explicitly call `policyops.telemetry.configure(TelemetrySettings())` once before composing
+the worker and own the returned backend's `close()` at shutdown. Install `policyops.api.logging.LOG_CONFIG`
+with `logging.config.dictConfig` for the same safe JSON logs in a worker host. The supported API command installs
+it automatically. Default instrumentation does not construct SDK providers or exporters.
+
+Manual spans cover route templates, job claim/execute/finish, graph nodes, provider attempts, retrieval, tool
+steps, review, execution reservation/dispatch/reconciliation and SQL failure phases. Only allowlisted enums,
+UUID correlation IDs, bounded counts, SQLSTATE classes and exception type names are recorded. Structured logs
+discard free-form messages, arguments and tracebacks. Customer text, prompts, responses, tool arguments,
+evidence, names, email addresses, credentials, cookies, DSNs and raw request paths are never recorded.
+Incoming trace headers and baggage are ignored. Instrumentation uses the versioned `policyops.telemetry/v1`
+schema rather than adopting changing GenAI semantic fields; provider mappings remain local to the adapters.
+
+The direct `opentelemetry-sdk` 1.45.1 dependency provides standard context, batching, metrics and test exporters
+instead of a custom tracing runtime. It pins API 1.45.1 and semantic-conventions 0.66b1; all three distributions
+declare Apache-2.0 and ship their license files. See [third-party notices](THIRD_PARTY_NOTICES.md#opentelemetry).
+HTTP templates come from FastAPI's resolved OpenAPI paths and selected inclusion context, preserving router
+prefixes and parameter placeholders; unmatched paths have no route attribute.
+
+Counters record provider dispatch attempts, known input/output usage and priced USD, fixed error codes and observed
+job/review/execution outcomes. Unknown bills remain unconfirmed. These lossy counters are diagnostic observations;
+the durable usage/execution ledgers remain authoritative. Due queue depth and oldest due age (including expired
+leases) use a separate best-effort read with the discovery role's existing scheduling grants. Metric labels are
+closed provider/model/outcome/kind/code sets, with no UUIDs. A bounded 256-job cache links previous attempts within
+one worker process; after restart/eviction, use run and operation UUIDs to correlate separate traces.
+
+The SDK batches at most 256 queued spans, 32 per batch, and reads metrics periodically. Exporters run on one
+daemon lane with 32 pending batches; overflow is dropped. A blocked exporter may retain one active batch until it
+returns or the process exits. Shutdown detaches immediately, drains in the background and never waits on exporter
+code. Memory mode retains the last 256 spans and 16 metric batches (`backend.spans.get_finished_spans()` and
+`backend.metrics.items`); it is intended for local inspection/tests, and is erased on process exit. Collector,
+OTLP, Prometheus, dashboards and automatic instrumentation are deferred to X02.
+
 ## Application database
 
 `packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; an eleven-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication; `0009` adds the embedding job/batch/evidence tables and the per-workspace vector cache; `0010` adds corpora, generation membership and provenance, and publication/citation guards; `0011` adds the append-only per-step retrieval request intent. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; review continuation and outcome projection are described above.

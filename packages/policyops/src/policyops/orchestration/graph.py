@@ -35,6 +35,7 @@ from policyops.persistence.database import PersistenceError
 from policyops.persistence.runs import Fenced
 from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.runtime.spec import Stopped, investigation_message_id, unconfirmed_stop
+from policyops.telemetry import annotate, count, observed
 from policyops_contracts.base import WireModel
 from policyops_contracts.conversation import (
     AgentLimits,
@@ -113,7 +114,9 @@ class InvestigationGraph:
     def fitted(self, state: InvestigationState, entries: tuple[Entry, ...] = ()) -> InvestigationState:
         return fit(state, self.policy, self.limits, append=entries)
 
+    @observed("graph.node")
     async def node(self, name: str, data: GraphEnvelope) -> dict[str, Any]:
+        annotate(node=name, run_id=data.state.run_id)
         self.fence()
         state = self.fitted(data.state)
         if state.terminal is not None:
@@ -145,12 +148,18 @@ class InvestigationGraph:
             except asyncio.CancelledError:
                 # Executor-owned cancellation must propagate so lease loss cannot become a success.
                 raise
-            except Exception:
+            except Exception as error:
+                annotate(exception_type=type(error).__name__, error_code="boundary_error")
+                count("errors", error_code="boundary_error")
                 state = failed(state, InvestigationFailed(kind="provider_error" if name == "investigate"
                                                           else "tool_error"))
         self.fence()
         if time.monotonic() >= self.deadline and state.terminal is None:
             state = stopped(state, StopReason.ACTIVE_TIME)
+        if isinstance(state.terminal, InvestigationFailed):
+            annotate(outcome="failed")
+        elif isinstance(state.terminal, InvestigationStopped):
+            annotate(outcome="refused")
         return {"state": self.fitted(state).model_dump(mode="json")}
 
     async def investigate(self, state: InvestigationState) -> InvestigationState:

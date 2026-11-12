@@ -3,6 +3,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, FastAPI
+from fastapi.openapi.utils import get_openapi
 import httpx
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Engine
@@ -19,6 +20,8 @@ from policyops.auth.service import AuthService
 from policyops.persistence.database import verify_runtime_role
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops.settings import AuthSettings
+from policyops.telemetry.attributes import ROUTES
+from policyops.telemetry.http import HttpTelemetry
 from policyops_contracts.clock import Clock
 
 
@@ -91,4 +94,8 @@ def create_app(auth: auth_api.AuthRuntime | None = None, runs: runs_api.RunsRunt
         app.state.runs = runs or runs_api.build_runs_runtime(env=auth.settings.env, app_engine=auth.app_engine,
                                                              ledger_clock=auth.service.clock)
         include_api_routes(app)
+    # Included routers are lazy wrappers in the pinned FastAPI, not flattened APIRoutes.
+    # OpenAPI resolves their prefixes and yields only registered path templates.
+    ROUTES.update(get_openapi(title=app.title, version=app.version, routes=app.routes).get("paths", {}))
+    app.add_middleware(HttpTelemetry)
     return app

@@ -427,6 +427,40 @@ Teardown removes the container by ID after checking its labels and fails if it i
 
 Not implemented yet: `policyops eval`, `docker compose up` and any provider or paid evaluation command. Public-data acquisition is the evaluator-owned `policyops-evals data` command (next section), not part of the application. `.env.example` lists implemented authentication variables alongside proposed provider/deployment settings. Authentication does not automatically load `.env`; export its configured values explicitly or supply them through a deployment secret store. The CI workflow defines checks; hosted CI has not been exercised.
 
+### Investigation graph and checkpoints
+
+`runtime.investigation.build_investigation_spec` composes an injected model/provider factory, run-bound retail
+gateway, policy retriever and citation recorder into a `RuntimeSpec`. Install it in the same `RuntimeCatalog`
+passed to the API runtime and worker. Deployment wiring remains unconfigured by default.
+
+The graph investigates one action at a time through `investigate`, `retrieve`, `read`, `propose` and `finalize`.
+Writes prepare an immutable proposal and presentation, then leave the run in `waiting_approval`; they do not
+execute commerce changes. Answers require every assertion cited and every quote verified and recorded, or return
+a fixed abstention. Citation checks establish retrieved identity and exact quotes; `claim_support_validated`
+stays `False`. Approval/consent decisions and new-input resume belong to the subsequent workflow.
+
+An async, tenant-bound saver stores versioned JSON-only checkpoints in three migration-owned FORCE-RLS tables.
+Every mutation checks the worker generation in the same transaction. Checkpoints use a server-derived thread ID
+and synchronous durability. A reclaimed invocation resumes with `ainvoke(None, ...)`, preserving scheduler state,
+input snapshot, counters and pending actions. Proposal preparation reconciles the same run/step before collecting
+facts again; final messages, message events and run status commit atomically in worker finish. Terminal checkpoints
+short-circuit model/tool work. A lost billed model response becomes `provider_result_unavailable` under the original
+invocation key, without paying for a replacement response.
+
+The custom saver trades stock `PostgresSaver` features for explicit tenant RLS, restricted runtime grants and a
+closed serializer that cannot reconstruct arbitrary Python objects. Runtime DDL, forks, subgraphs, arbitrary object
+payloads and checkpoint pruning are unsupported. Framework checkpoint v4, codec v1 and application state v1 are
+checked separately; incompatible state fails closed. Persisted step counts and an independent graph recursion
+limit bound loops. Unit tests exercise the graph with fake ports and the closed codec; PostgreSQL integration
+cases cover worker completion, restart/reclaim, fences, tenant denial and cancellation.
+Graph identity uses an explicit semantic version plus topology, state schema and checkpoint versions, preserving
+in-flight runs through unrelated source edits while requiring a deliberate version bump for behavioral changes.
+
+SQL and gateway calls are synchronous and can block the event loop, heartbeat and cancellation: there is no hard
+deadline guarantee. Node-entry fences cannot eliminate the race in which a fenced worker reserves a model call
+before dispatch; a budget-admission claim fence is deferred to T23. Checkpoints do not supply provider-result
+replay, remote exactly-once execution, customer consent or staff approval.
+
 ## Data and licensing
 
 No upstream dataset or implementation has been copied into this repository. The evaluator environment installs tau2-bench at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062` as a pinned dependency, and `policyops-evals data fetch` acquires that commit's public data into a directory outside the checkout:

@@ -66,10 +66,36 @@ import threading
 import time
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from policyops.budget.config import ChatActor, Configuration
-from policyops.domain.protocol import step_violation
+from policyops.orchestration.mechanics import (
+    NOTICE_TEXT as NOTICE_TEXT,
+)
+from policyops.orchestration.mechanics import (
+    Notice as _Notice,
+)
+from policyops.orchestration.mechanics import (
+    Say as _Say,
+)
+from policyops.orchestration.mechanics import (
+    TranscriptInvariant as TranscriptInvariant,
+)
+from policyops.orchestration.mechanics import (
+    Use as _Use,
+)
+from policyops.orchestration.mechanics import (
+    entry_bytes as entry_bytes,
+)
+from policyops.orchestration.mechanics import (
+    parse,
+)
+from policyops.orchestration.mechanics import (
+    provider_messages as provider_messages,
+)
+from policyops.orchestration.mechanics import (
+    report_terminal as _report_terminal,
+)
 from policyops.orchestration.ports import (
     KnowledgePort,
     ModelPort,
@@ -80,19 +106,16 @@ from policyops.orchestration.ports import (
 from policyops.providers.calls import CallReport
 from policyops.providers.contract import ContractGap
 from policyops.providers.serialize import prepare
-from policyops.providers.tools import StepRefused, retail_tool_spec, to_agent_step
-from policyops_contracts.agent import AgentStep, MessageStep, ToolCallStep
+from policyops.providers.tools import retail_tool_spec
+from policyops_contracts.agent import AgentStep
 from policyops_contracts.conversation import (
-    KNOWLEDGE_TOOL,
     PROMPT_VERSION,
     AgentConfig,
     AgentLimits,
     AgentMessage,
-    AgentToolCall,
     ConversationSnapshot,
     Entry,
     KnowledgeResult,
-    NoticeCode,
     PendingToolOutcome,
     PolicyContext,
     RuntimeNotice,
@@ -105,14 +128,9 @@ from policyops_contracts.conversation import (
 )
 from policyops_contracts.digest import sha256_hex
 from policyops_contracts.model import (
-    Message,
     ModelRequest,
     ModelResult,
-    Part,
-    TextPart,
-    ToolResultPart,
     ToolSpec,
-    ToolUsePart,
 )
 from policyops_contracts.retail import (
     HANDOFF_MESSAGE,
@@ -136,7 +154,6 @@ from policyops_contracts.retail import (
     ToolName,
     TransferToHumanAgents,
 )
-from policyops_contracts.retrieval import QueryText
 
 
 AGENT_NAMESPACE = uuid5(NAMESPACE_URL, "policyops:agent/v1")
@@ -157,12 +174,6 @@ action."""
 KNOWLEDGE_PROMPT = """- Use the search_policy tool to look up the policy knowledge base when you need it. Base \
 answers on the evidence it returns and cite the evidence numbers."""
 POLICY_HEADING = "\n\n# Policy\n\n"
-NOTICE_TEXT: dict[NoticeCode, str] = {
-    code: f"[runtime notice] Your previous reply was not a valid single action ({code}). Reply with exactly one "
-          "tool call or one message."
-    for code in ("several_tool_calls", "text_with_tool_call", "empty_reply", "unknown_tool", "invalid_arguments",
-                 "invalid_output", "protocol_violation")
-}
 
 _RETAIL_TOOLS: tuple[tuple[type, str], ...] = (
     (FindUserIdByEmail, "Find a customer's user ID by email address."),
@@ -182,20 +193,6 @@ _RETAIL_TOOLS: tuple[tuple[type, str], ...] = (
     (ExchangeDeliveredOrderItems, "Exchange items of a delivered order for other variants of the same products."),
     (ModifyUserAddress, "Change a customer's default address."),
 )
-_INVALID_OUTPUT: dict[str, NoticeCode] = {
-    "unknown_tool": "unknown_tool", "too_many_tool_calls": "several_tool_calls",
-    "duplicate_tool_call": "several_tool_calls", "tool_arguments_schema": "invalid_arguments",
-    "tool_arguments_not_json": "invalid_arguments", "tool_arguments_too_large": "invalid_arguments",
-    "tool_call_malformed": "invalid_arguments", "tool_call_invalid": "invalid_arguments",
-}
-_STEP_REFUSED: dict[str, NoticeCode] = {
-    "several_tool_calls": "several_tool_calls", "text_with_tool_call": "text_with_tool_call",
-    "arguments_not_json": "invalid_arguments", "arguments_not_an_object": "invalid_arguments",
-    "arguments_invalid": "invalid_arguments", "empty_message": "empty_reply",
-}
-_COUNT_REASON = re.compile(r"^count[._]")
-_SLUG = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
-_QUERY: TypeAdapter[str] = TypeAdapter(QueryText)
 _OPENING_TEXT = 4000  # MessageText's bound, in characters
 _OPENING_TRANSCRIPT_MESSAGES = 255  # the marker adds one provider message, and a T11 request holds at most 256
 
@@ -214,10 +211,6 @@ class ConversationBusy(RuntimeError):
 
 class DeadlineInvalid(ValueError):
     """The deadline is not a finite, future `time.monotonic()` instant."""
-
-
-class TranscriptInvariant(RuntimeError):
-    """The transcript cannot be serialized faithfully (a defect): it is refused, never re-sorted."""
 
 
 # -- pure construction helpers -------------------------------------------------------------------------------------
@@ -264,64 +257,6 @@ def agent_config(policy: PolicyContext, catalog: ToolCatalog, configuration: Con
                        actor_config_sha256=configuration.reservation("agent").config_sha256)
 
 
-def provider_messages(transcript: Sequence[Entry], *, opening: bool = False) -> tuple[Message, ...]:
-    """Chronological provider history. Raises `TranscriptInvariant` instead of reordering anything. In opening mode
-    the transcript starts with the visible opener, presented behind the synthetic marker; otherwise an agent entry
-    cannot come first."""
-    if type(opening) is not bool:
-        raise TypeError("opening is a bool")
-    messages: list[Message] = []
-    user: list[Part] = []
-    open_call: str | None = None  # an assistant tool call whose result must be the very next entry
-
-    def flush() -> None:
-        if user:
-            messages.append(Message(role="user", parts=tuple(user)))
-            user.clear()
-
-    try:
-        entries = transcript
-        if opening:
-            first = entries[0] if entries else None
-            if not isinstance(first, AgentMessage):
-                raise TranscriptInvariant("an opening-mode transcript starts with the visible opener")
-            messages.append(Message(role="user", parts=(TextPart(text=OPENING_MARKER),)))
-            messages.append(Message(role="assistant", parts=(TextPart(text=first.text),)))
-            entries = entries[1:]
-        for entry in entries:
-            if open_call is not None:
-                if not (isinstance(entry, ToolResult) and entry.call_id == open_call):
-                    raise TranscriptInvariant("a tool call is not directly followed by its result")
-                user.append(ToolResultPart(call_id=entry.call_id, content=entry.content, is_error=entry.is_error))
-                open_call = None
-            elif isinstance(entry, ToolResult):
-                raise TranscriptInvariant("a tool result does not directly follow its call")
-            elif isinstance(entry, UserMessage):
-                user.append(TextPart(text=entry.text))
-            elif isinstance(entry, RuntimeNotice):
-                user.append(TextPart(text=NOTICE_TEXT[entry.code]))
-            elif isinstance(entry, AgentMessage | AgentToolCall):
-                if not user:
-                    raise TranscriptInvariant("an agent action follows a user-side entry")
-                flush()
-                if isinstance(entry, AgentMessage):
-                    messages.append(Message(role="assistant", parts=(TextPart(text=entry.text),)))
-                else:
-                    messages.append(Message(role="assistant", parts=(ToolUsePart(
-                        call_id=entry.call_id, name=entry.name, arguments_json=entry.arguments_json),)))
-                    open_call = entry.call_id
-            else:
-                raise TranscriptInvariant("an unknown transcript entry")
-        if open_call is not None:
-            raise TranscriptInvariant("the last tool call has no result")
-        if not user:
-            raise TranscriptInvariant("a request ends with a user-side entry")
-        flush()
-    except ValidationError as error:
-        raise TranscriptInvariant("the transcript does not fit the provider message bounds") from error
-    return tuple(messages)
-
-
 def build_request(policy: PolicyContext, catalog: ToolCatalog, limits: AgentLimits,
                   transcript: Sequence[Entry], *, opening: bool = False) -> ModelRequest:
     """The exact request for this configuration, transcript and opening mode (pure)."""
@@ -333,37 +268,7 @@ def build_request(policy: PolicyContext, catalog: ToolCatalog, limits: AgentLimi
         tool_choice="auto", max_output_tokens=limits.max_output_tokens, stream=False)
 
 
-def entry_bytes(entry: Entry) -> int:
-    if isinstance(entry, UserMessage | AgentMessage):
-        text = entry.text
-    elif isinstance(entry, AgentToolCall):
-        text = entry.name + entry.arguments_json
-    elif isinstance(entry, ToolResult):
-        text = entry.content
-    else:
-        text = NOTICE_TEXT[entry.code]
-    return len(text.encode("utf-8"))
-
-
 # -- the loop ------------------------------------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class _Notice:
-    code: NoticeCode
-
-
-@dataclass(frozen=True)
-class _Say:
-    message: AgentMessage
-    step: AgentStep | None
-
-
-@dataclass(frozen=True)
-class _Use:
-    call: AgentToolCall
-    step: AgentStep | None
-    query: str | None  # set for the knowledge tool
-
 
 @dataclass
 class _Work:
@@ -378,37 +283,6 @@ class _Work:
         self.counts_claimed += sum(record.count_granted for record in report.attempts)
         self.inferences_dispatched += sum(record.dispatch_granted for record in report.attempts)
         self.cleanup_unconfirmed |= any(record.cleanup_confirmed is False for record in report.attempts)
-
-
-def _slug(value: str | None) -> str | None:
-    return value if value is not None and _SLUG.match(value) else None
-
-
-def _report_terminal(report: CallReport) -> tuple[TerminalReason, str | None] | None:
-    """A T11 report → its terminal reason, or None when the result is a model reply to parse. Exhaustive."""
-    reason = _slug(report.reason)
-    if report.status == "budget":
-        return "budget", reason
-    if report.status == "deadline":
-        return "deadline", reason
-    if report.status == "contract_gap":
-        return "contract_gap", reason
-    if report.status == "failed":
-        if reason is not None and (reason == "count_not_admitted" or _COUNT_REASON.match(reason)):
-            return "count_not_admitted", reason
-        return "provider_failed", reason
-    if report.status != "result" or not isinstance(report.result, ModelResult):
-        return "provider_failed", "report_invalid"
-    outcome = report.result.outcome
-    if outcome == "refused":
-        return "model_refused", _slug(report.result.reason_code)
-    if outcome == "truncated":
-        return "model_truncated", _slug(report.result.stop_reason)
-    if outcome == "failed":
-        return "provider_failed", _slug(report.result.reason_code)
-    if outcome == "contract_gap":
-        return "contract_gap", _slug(report.result.reason_code)
-    return None
 
 
 def _port_detail(error: Exception) -> str:
@@ -694,53 +568,4 @@ class MinimalAgent:
         return produced if produced.call_id == call_id else None
 
     def _parse(self, result: ModelResult) -> _Notice | _Say | _Use:
-        if result.outcome == "invalid_output":
-            return _Notice(_INVALID_OUTPUT.get(result.reason_code or "", "invalid_output"))
-        if result.outcome != "completed":  # a structured answer was never requested
-            return _Notice("invalid_output")
-        calls, text = result.tool_calls, result.text
-        if len(calls) > 1:
-            return _Notice("several_tool_calls")
-        if calls and text:
-            return _Notice("text_with_tool_call")
-        if not calls and not text:
-            return _Notice("empty_reply")
-        if calls:
-            (call,) = calls
-            if call.name not in self._names:
-                return _Notice("unknown_tool")
-            accepted = AgentToolCall(call_id=call.call_id, name=call.name, arguments_json=call.arguments_json)
-            if call.name == KNOWLEDGE_TOOL:
-                try:
-                    arguments = json.loads(call.arguments_json)
-                    if not isinstance(arguments, dict) or set(arguments) != {"query"}:
-                        return _Notice("invalid_arguments")
-                    query = _QUERY.validate_python(arguments["query"])
-                except (ValueError, ValidationError):
-                    return _Notice("invalid_arguments")
-                if self._retail and self._after_transfer():
-                    return _Notice("protocol_violation")
-                return _Use(accepted, None, query)
-            if not self._retail:
-                return _Use(accepted, None, None)
-            try:
-                step = to_agent_step(result)
-            except StepRefused as refused:
-                return _Notice(_STEP_REFUSED.get(refused.code, "invalid_output"))
-            if step_violation(self._previous, step) is not None:
-                return _Notice("protocol_violation")
-            return _Use(accepted, step, None)
-        try:
-            said = AgentMessage(text=text or "")
-        except ValidationError:
-            return _Notice("invalid_output")
-        if not self._retail:
-            return _Say(said, None)
-        step = MessageStep(text=said.text)
-        if step_violation(self._previous, step) is not None:
-            return _Notice("protocol_violation")
-        return _Say(said, step)
-
-    def _after_transfer(self) -> bool:
-        return isinstance(self._previous, ToolCallStep) and isinstance(self._previous.call, TransferToHumanAgents)
-
+        return parse(result, names=self._names, retail=self._retail, previous=self._previous)

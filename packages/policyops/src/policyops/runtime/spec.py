@@ -21,14 +21,21 @@ from datetime import timedelta
 import re
 from types import MappingProxyType
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid5
 
+from policyops.persistence.runs import ClaimToken
+from policyops_contracts.conversation import AgentMessage
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.events import EventPayload
 
 
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SLUG = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+MESSAGE_NAMESPACE = UUID("f0391011-238c-5143-b655-a6d2fbb6f7e2")
+
+
+def investigation_message_id(workspace_id: UUID, run_id: UUID) -> UUID:
+    return uuid5(MESSAGE_NAMESPACE, f"{workspace_id}:{run_id}:final")
 
 
 @dataclass(frozen=True)
@@ -56,7 +63,27 @@ class Retry:
             raise ValueError("a retry reason must be a slug")
 
 
-Outcome = Succeeded | Failed | Retry
+@dataclass(frozen=True)
+class AwaitingApproval:
+    proposal_id: UUID
+    proposal_version: int
+
+
+@dataclass(frozen=True)
+class InvestigationCompleted:
+    message_id: UUID
+    text: str
+
+    def __post_init__(self) -> None:
+        AgentMessage(text=self.text)
+
+
+@dataclass(frozen=True)
+class BudgetExceeded:
+    pass
+
+
+Outcome = Succeeded | Failed | Retry | AwaitingApproval | InvestigationCompleted | BudgetExceeded
 
 
 class StepContext(Protocol):
@@ -68,6 +95,8 @@ class StepContext(Protocol):
     def run_id(self) -> UUID: ...
     @property
     def attempt(self) -> int: ...
+    @property
+    def claim_token(self) -> ClaimToken: ...
 
     def emit(self, payload: EventPayload) -> int:
         """Append one event under the claim's fence; returns its sequence (raises `Fenced` when the claim is lost)."""

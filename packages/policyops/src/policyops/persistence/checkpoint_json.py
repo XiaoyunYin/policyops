@@ -131,7 +131,7 @@ class Envelope(WireModel):
 
 
 class Metadata(WireModel):
-    source: Literal["input", "loop"]
+    source: Literal["input", "loop", "update"]
     step: Annotated[int, Field(ge=-1, le=66)]
     parents: dict[str, Identifier]
 

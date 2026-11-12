@@ -166,7 +166,7 @@ class InvestigationSaver(BaseCheckpointSaver[int]):
         selected = {} if filter is None else filter
         codec.json_bytes(selected, limit=codec.MAX_METADATA_BYTES)
         if set(selected) - {"source", "step"} or any(
-                (key == "source" and value not in ("input", "loop")) or
+                (key == "source" and value not in ("input", "loop", "update")) or
                 (key == "step" and (type(value) is not int or not -1 <= value <= 66))
                 for key, value in selected.items()):
             raise ValueError("unsupported checkpoint history filter")

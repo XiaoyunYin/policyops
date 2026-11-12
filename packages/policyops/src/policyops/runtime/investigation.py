@@ -1,0 +1,326 @@
+"""Explicit library composition for a run-bound investigation; no server/provider defaults."""
+
+import asyncio
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from datetime import timedelta
+import time
+from typing import Any
+
+from langgraph.errors import GraphRecursionError, NodeCancelledError
+from langgraph.graph import START
+from sqlalchemy import Engine
+from sqlalchemy.exc import DBAPIError
+
+from policyops.budget.config import Configuration
+from policyops.budget.ledger import Ledger, RunBinding
+from policyops.gateway.ports import GatewayScope, PgSessionStore, RetailPort, ScopeMismatch, load_scope
+from policyops.gateway.steps import Gateway
+from policyops.orchestration import investigation_prompt as prompt
+from policyops.orchestration.adapters import InvestigationAdapters
+from policyops.orchestration.graph import GRAPH_ENTRY, GRAPH_NODES, GRAPH_TARGETS, InvestigationGraph, failed
+from policyops.orchestration.ports import ModelPort, agent_model_port
+from policyops.orchestration.state import (
+    AwaitingApproval as ApprovalTerminal,
+)
+from policyops.orchestration.state import (
+    InvestigationCompleted as CompletedTerminal,
+)
+from policyops.orchestration.state import (
+    InvestigationFailed,
+    InvestigationState,
+    state_from_json,
+)
+from policyops.persistence import checkpoint_json as codec
+from policyops.persistence import repositories as repo
+from policyops.persistence import runs
+from policyops.persistence.budget import build_app_ledger
+from policyops.persistence.checkpoints import InvestigationSaver
+from policyops.persistence.citations import CitationRecorder
+from policyops.persistence.database import NotFound, workspace_transaction
+from policyops.persistence.embeddings import EmbeddingStore
+from policyops.providers.calls import Providers
+from policyops.providers.serialize import prepare
+from policyops.providers.tokenizer import Tokenizer
+from policyops.retrieval.grounding import EvidenceValidator
+from policyops.retrieval.search import Retriever
+from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, require_test_environment
+from policyops.runtime.spec import (
+    AwaitingApproval,
+    BudgetExceeded,
+    Failed,
+    InvestigationCompleted,
+    Outcome,
+    Retry,
+    RuntimeSpec,
+    StepContext,
+)
+from policyops.services.proposals import ProposalService
+from policyops_contracts.clock import Clock, SystemClock
+from policyops_contracts.consent import CaseMessage
+from policyops_contracts.conversation import AgentLimits, PolicyContext, UserMessage
+from policyops_contracts.errors import ErrorCode
+from policyops_contracts.retrieval import RetrievalConfig, RetrievalScope, canonical_sha256
+from policyops_contracts.seeds import CaseCustomerBinding
+
+
+# Bump deliberately for incompatible behavior changes not represented by the schemas/topology below.
+GRAPH_VERSION = "policyops.investigation-graph/v1"
+
+
+def graph_digest() -> str:
+    versions = codec.Envelope.model_json_schema()["properties"]
+    return canonical_sha256({
+        "version": GRAPH_VERSION,
+        "nodes": GRAPH_NODES,
+        "edges": [(START, GRAPH_ENTRY), *((source, target) for source in GRAPH_NODES for target in GRAPH_TARGETS)],
+        "state_schema": InvestigationState.model_json_schema(),
+        "codec_version": versions["codec_version"]["const"],
+        "framework_checkpoint_version": versions["framework_version"]["const"],
+    })
+
+
+@dataclass(frozen=True)
+class InvestigationExecutor:
+    engine: Engine
+    env: str
+    configuration: Configuration
+    policy: PolicyContext
+    limits: AgentLimits
+    retrieval_scope: RetrievalScope
+    retrieval_config: RetrievalConfig
+    bindings: tuple[CaseCustomerBinding, ...]
+    fixture_sha256: str
+    retail: Callable[[GatewayScope], RetailPort]
+    providers: Callable[[], Providers]
+    tokenizer: Tokenizer
+    clock: LeaseClock
+    wall_clock: Clock
+    max_steps: int
+    lease: timedelta
+    graph_sha256: str
+    prompt_sha256: str
+    config_sha256: str
+    test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None
+
+    def execute(self, context: StepContext) -> Outcome:
+        try:
+            return asyncio.run(self._execute(context))
+        except (codec.CheckpointCompatibilityError, codec.CheckpointStateVersionError,
+                codec.CheckpointUnsafeTypeError, NotFound):
+            return Failed(ErrorCode.UNAVAILABLE, "investigation.checkpoint_incompatible")
+        except DBAPIError:
+            return Retry("investigation_database_unavailable")
+        except NodeCancelledError:
+            # LangGraph wraps cancellation raised by a node body; resume its durable checkpoint.
+            return Retry("investigation_node_cancelled")
+        except ScopeMismatch:
+            return Failed(ErrorCode.UNAVAILABLE, "investigation.case_binding")
+
+    def fence(self, context: StepContext) -> None:
+        if (context.claim_token.workspace_id, context.claim_token.run_id) != (context.workspace_id, context.run_id):
+            raise runs.Fenced("context_binding_changed")
+        with workspace_transaction(self.engine, context.workspace_id) as connection:
+            run, _, _ = runs.check_fence(connection, context.claim_token, self.clock)
+            if run.case_id != context.case_id or (run.graph_sha256, run.prompt_sha256, run.config_sha256) != (
+                    self.graph_sha256, self.prompt_sha256, self.config_sha256):
+                raise runs.Fenced("runtime_binding_changed")
+
+    async def _execute(self, context: StepContext) -> Outcome:
+        self.fence(context)
+        with workspace_transaction(self.engine, context.workspace_id) as connection:
+            run, _, now = runs.check_fence(connection, context.claim_token, self.clock)
+            observed_monotonic = time.monotonic()
+            case = repo.get_case(connection, context.case_id)
+        if case is None or case.customer_user_id is None:
+            return Failed(ErrorCode.UNAVAILABLE, "investigation.case_binding")
+        seed = next((b for b in self.bindings if b.scope.workspace_id == context.workspace_id
+                     and b.scope.case_id == context.case_id), None)
+        if seed is None:
+            return Failed(ErrorCode.UNAVAILABLE, "investigation.case_binding")
+        scope = load_scope(self.engine, workspace_id=context.workspace_id, run_id=context.run_id, binding=seed,
+                           fixture_sha256=self.fixture_sha256)
+        saver = InvestigationSaver(engine=self.engine, scope=scope.run, token=context.claim_token, clock=self.clock,
+                                   graph_sha256=self.graph_sha256, prompt_sha256=self.prompt_sha256,
+                                   config_sha256=self.config_sha256)
+        config = saver.config()
+        config["recursion_limit"] = self.max_steps + 2
+        saved = await saver.aget_tuple(config)
+        initial: dict[str, Any] | None = None
+        if saved is None:
+            # A changed case before the first snapshot needs a new authorized run, never silent new input.
+            if case.version != run.case_version:
+                return Failed(ErrorCode.STALE_VERSION, "investigation.input_changed")
+            messages: list[CaseMessage] = []
+            with workspace_transaction(self.engine, context.workspace_id) as connection:
+                locked = repo.lock_case(connection, context.case_id)
+                if locked is None or locked.version != run.case_version:
+                    return Failed(ErrorCode.STALE_VERSION, "investigation.input_changed")
+                after = 0
+                while len(messages) <= 256:
+                    page = repo.list_messages(connection, seed.scope, after_sequence=after, limit=200)
+                    messages.extend(page)
+                    if len(page) < 200:
+                        break
+                    after = page[-1].sequence
+            if len(messages) > 256:
+                return Failed(ErrorCode.UNAVAILABLE, "investigation.input_limit")
+            # Preserve chronology and source labels as untrusted user-side data, including the visible greeting.
+            try:
+                transcript = tuple(UserMessage(text=f"[{m.source}] {m.text}") for m in messages)
+            except ValueError:
+                return Failed(ErrorCode.UNAVAILABLE, "investigation.input_limit")
+            if not transcript:
+                return Failed(ErrorCode.UNAVAILABLE, "investigation.input_missing")
+            state = InvestigationState(state_version=1, workspace_id=context.workspace_id, case_id=context.case_id,
+                                       run_id=context.run_id, graph_sha256=self.graph_sha256,
+                                       prompt_sha256=self.prompt_sha256, config_sha256=self.config_sha256,
+                                       input_message_ids=tuple(m.message_id for m in messages), transcript=transcript,
+                                       max_steps=self.max_steps, policy_sha256=self.policy.sha256,
+                                       retrieval_sha256=self.retrieval_digest,
+                                       actor_sha256=self.configuration.reservation("agent").config_sha256)
+            initial = {"state": state.model_dump(mode="json")}
+        else:
+            channels = saved.checkpoint["channel_values"]
+            raw = channels.get("state")
+            if raw is None:
+                start = channels.get("__start__")
+                if start is None:
+                    return Failed(ErrorCode.UNAVAILABLE, "investigation.checkpoint_incompatible")
+                raw = start["state"]
+            state = state_from_json(raw)
+        if (state.policy_sha256, state.retrieval_sha256, state.actor_sha256, state.max_steps) != (
+                self.policy.sha256, self.retrieval_digest, self.configuration.reservation("agent").config_sha256,
+                self.max_steps):
+            return Failed(ErrorCode.UNAVAILABLE, "investigation.checkpoint_incompatible")
+        # Re-read only the saved input identities. Later customer turns are T22's responsibility.
+        with workspace_transaction(self.engine, context.workspace_id) as connection:
+            if any(repo.message_by_id(connection, seed.scope, identity) is None
+                   for identity in state.input_message_ids):
+                return Failed(ErrorCode.UNAVAILABLE, "investigation.input_changed")
+        if state.terminal is not None:
+            self.fence(context)
+            return outcome(state)
+        deadline = observed_monotonic + max(0.0, (run.deadline_at - now).total_seconds())
+        ledger = build_app_ledger(env=self.env, engine=self.engine, workspace_id=context.workspace_id,
+                                  configuration=self.configuration, clock=self.clock)
+        model = (self.test_model(ledger, RunBinding(context.run_id)) if self.test_model is not None else
+                 agent_model_port(ledger, RunBinding(context.run_id), self.providers))
+        retriever = Retriever(self.engine, context.workspace_id,
+                              embeddings=EmbeddingStore(self.engine, context.workspace_id, env=self.env),
+                              ledger=ledger, providers=self.providers, tokenizer=self.tokenizer, env=self.env,
+                              rerank=self.retrieval_config.rerank is not None)
+        adapters = InvestigationAdapters(retriever, self.retrieval_scope, self.retrieval_config,
+                                         Gateway(scope, retail=self.retail(scope), sessions=PgSessionStore(self.engine),
+                                                 clock=self.wall_clock),
+                                         ProposalService(self.engine, self.clock), context.claim_token,
+                                         EvidenceValidator(self.engine, context.workspace_id),
+                                         CitationRecorder(self.engine, context.workspace_id),
+                                         references={r.evidence_id: r for r in state.recorded_evidence})
+        graph = InvestigationGraph(model, adapters, adapters, self.policy, self.limits, deadline,
+                                   lambda: self.fence(context)).compile(saver)
+        stop = asyncio.Event()
+        heartbeat_error: list[BaseException] = []
+
+        async def invoke() -> dict[str, Any]:
+            try:
+                return await graph.ainvoke(initial, config, durability="sync")  # None resumes scheduler state
+            except GraphRecursionError:
+                latest = await saver.aget_tuple(config)
+                raw_state = state if latest is None else state_from_json(latest.checkpoint["channel_values"]["state"])
+                terminal = failed(raw_state, InvestigationFailed(kind="loop_ceiling"))
+                await graph.aupdate_state(config, {"state": terminal.model_dump(mode="json")}, as_node="finalize")
+                return {"state": terminal.model_dump(mode="json")}
+
+        task = asyncio.create_task(invoke())
+
+        async def heartbeat() -> None:
+            try:
+                while not stop.is_set():
+                    try:
+                        await asyncio.wait_for(stop.wait(), self.lease.total_seconds() / 3)
+                    except TimeoutError:
+                        if not context.heartbeat():
+                            raise runs.Fenced("heartbeat_lost") from None
+            except Exception as error:
+                heartbeat_error.append(error)
+                task.cancel()
+
+        monitor = asyncio.create_task(heartbeat())
+        primary: BaseException | None = None
+        try:
+            result = await task
+            self.fence(context)
+            return outcome(state_from_json(result["state"]))
+        except asyncio.CancelledError as error:
+            primary = heartbeat_error[0] if heartbeat_error else error
+            raise primary from None
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            stop.set()
+            try:
+                await asyncio.wait_for(monitor, 1)
+            except BaseException:
+                if primary is None:
+                    raise
+
+    @property
+    def retrieval_digest(self) -> str:
+        return canonical_sha256({"scope": self.retrieval_scope.model_dump(mode="json"),
+                                 "config": self.retrieval_config.model_dump(mode="json")})
+
+
+def outcome(state: InvestigationState) -> Outcome:
+    terminal = state.terminal
+    if isinstance(terminal, ApprovalTerminal):
+        return AwaitingApproval(terminal.proposal_id, terminal.proposal_version)
+    if isinstance(terminal, CompletedTerminal) and state.final_text is not None:
+        return InvestigationCompleted(terminal.message_id, state.final_text)
+    if isinstance(terminal, InvestigationFailed):
+        if terminal.kind == "budget_exceeded":
+            return BudgetExceeded()
+        return Failed(ErrorCode.UNAVAILABLE, f"investigation.{terminal.kind}")
+    return Failed(ErrorCode.UNAVAILABLE, "investigation.checkpoint_incompatible")
+
+
+def build_investigation_spec(*, env: str, engine: Engine, configuration: Configuration, policy: PolicyContext,
+                             retrieval_scope: RetrievalScope, retrieval_config: RetrievalConfig,
+                             bindings: tuple[CaseCustomerBinding, ...], fixture_sha256: str,
+                             retail: Callable[[GatewayScope], RetailPort], providers: Callable[[], Providers],
+                             tokenizer: Tokenizer, limits: AgentLimits | None = None, max_steps: int = 32,
+                             clock: LeaseClock | None = None, wall_clock: Clock | None = None,
+                             lease: timedelta = timedelta(seconds=30),
+                             test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None) -> RuntimeSpec:
+    """Install the returned spec in the SAME catalog passed to the API runtime and worker."""
+    if test_model is not None and env != "test":
+        raise ValueError("test model factories require env=test")
+    if policy.source == "fictional" and env != "test":
+        raise ValueError("fictional policy requires env=test")
+    if type(max_steps) is not int or not 1 <= max_steps <= 64:
+        raise ValueError("max_steps must be 1..64")
+    lease_clock = clock or DatabaseLeaseClock()
+    require_test_environment(lease_clock, env)
+    selected = limits or AgentLimits(knowledge_steps=16)
+    if not 1 <= selected.knowledge_steps <= 16:
+        raise ValueError("investigation knowledge_steps must be 1..16")
+    # Both provider capability checks are pure and run before any ledger/network work.
+    prepare(prompt.request(policy, selected, (UserMessage(text="x"),)), configuration, "agent")
+    config_sha = canonical_sha256({"v": "policyops.investigation-config/v1", "policy": policy.model_dump(mode="json"),
+                                   "limits": selected.model_dump(mode="json"), "max_steps": max_steps,
+                                   "lease_seconds": str(lease.total_seconds()),
+                                   "retrieval_scope": retrieval_scope.model_dump(mode="json"),
+                                   "retrieval_config": retrieval_config.model_dump(mode="json"),
+                                   "actors": {k: configuration.reservation(k).config_sha256
+                                              for k in configuration.actors},
+                                   "caps": {k: str(v) for k, v in asdict(configuration.caps).items()},
+                                   "fixture": fixture_sha256,
+                                   "bindings": [b.model_dump(mode="json") for b in bindings]})
+    executor = InvestigationExecutor(engine, env, configuration, policy, selected, retrieval_scope, retrieval_config,
+                                     bindings, fixture_sha256, retail, providers, tokenizer, lease_clock,
+                                     wall_clock or SystemClock(), max_steps, lease, graph_digest(), prompt.digest(),
+                                     config_sha, test_model)
+    return RuntimeSpec("investigation.v1", executor.graph_sha256, executor.prompt_sha256, config_sha, executor,
+                       lease=lease, run_timeout=timedelta(seconds=configuration.caps.active_seconds),
+                       test_only=env == "test")

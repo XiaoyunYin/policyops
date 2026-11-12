@@ -40,12 +40,25 @@ from sqlalchemy import Connection, Engine
 from policyops.domain.roles import Action, Role, is_allowed
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs as store
-from policyops.persistence.database import transaction, verify_runtime_role, workspace_transaction
+from policyops.persistence.database import ImmutableRecord, transaction, verify_runtime_role, workspace_transaction
 from policyops.persistence.roles import APP_RUNTIME, WORKER_DISCOVERY
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
-from policyops.runtime.spec import UNCONFIGURED, Failed, Outcome, Retry, RuntimeCatalog, RuntimeSpec, Succeeded
+from policyops.runtime.spec import (
+    UNCONFIGURED,
+    AwaitingApproval,
+    BudgetExceeded,
+    Failed,
+    InvestigationCompleted,
+    Outcome,
+    Retry,
+    RuntimeCatalog,
+    RuntimeSpec,
+    Succeeded,
+    investigation_message_id,
+)
 from policyops_contracts.errors import ErrorCode
-from policyops_contracts.events import ErrorRaised, EventPayload, RunStateChanged
+from policyops_contracts.events import ErrorRaised, EventPayload, MessagePosted, RunStateChanged
+from policyops_contracts.scalars import CaseScope
 
 
 log = logging.getLogger("policyops.worker")
@@ -80,6 +93,10 @@ class Context:
     @property
     def attempt(self) -> int:
         return self.token.attempt
+
+    @property
+    def claim_token(self) -> store.ClaimToken:
+        return self.token
 
     def emit(self, payload: EventPayload) -> int:
         if isinstance(payload, RunStateChanged):
@@ -239,10 +256,43 @@ class Worker:
     def finish(self, token: store.ClaimToken, outcome: Outcome) -> None:
         try:
             with workspace_transaction(self.app_engine, token.workspace_id) as connection:
+                # Message/proposal finalization shares the case -> run -> job lock order.
+                if isinstance(outcome, InvestigationCompleted | AwaitingApproval):
+                    observed = store.get_run(connection, token.run_id)
+                    if observed is None or repo.lock_case(connection, observed.case_id) is None:
+                        raise store.Fenced("run_missing")
                 run, job, now = store.check_fence(connection, token, self.clock)
-                if isinstance(outcome, Succeeded):
-                    done = store.set_state(connection, run, "succeeded", now, bump_generation=True)
-                    store.append_event(connection, done, RunStateChanged(previous=run.state, current="succeeded"),
+                if isinstance(outcome, Succeeded | InvestigationCompleted | AwaitingApproval | BudgetExceeded):
+                    target: store.RunState = "succeeded"
+                    if isinstance(outcome, InvestigationCompleted):
+                        expected = investigation_message_id(run.workspace_id, run.id)
+                        if outcome.message_id != expected:
+                            raise ImmutableRecord("final message identity changed")
+                        message = repo.append_message(connection, message_id=outcome.message_id,
+                                                      scope=CaseScope(workspace_id=run.workspace_id,
+                                                                      case_id=run.case_id),
+                                                      source="agent", entered_by=None, text_value=outcome.text,
+                                                      created_at=now)
+                        repo.bump_case_version(connection, run.case_id, now)
+                        store.append_event(connection, run, MessagePosted(message_id=message.message_id,
+                                                                         message_sequence=message.sequence,
+                                                                         source="agent"), now)
+                    elif isinstance(outcome, AwaitingApproval):
+                        proposal = repo.get_proposal(connection, outcome.proposal_id, outcome.proposal_version)
+                        row = repo.proposal_row(connection, outcome.proposal_id, outcome.proposal_version)
+                        presentation = repo.get_presentation(connection, outcome.proposal_id, outcome.proposal_version)
+                        if (proposal is None or row is None or row.status != "presented"
+                                or row.creation_step is None or proposal.scope != run.scope or presentation is None):
+                            raise ImmutableRecord("prepared proposal binding changed")
+                        presented_message = repo.message_by_id(connection, CaseScope(workspace_id=run.workspace_id,
+                                                                          case_id=run.case_id), presentation.message_id)
+                        if presented_message is None or presented_message.text != proposal.presentation.text:
+                            raise ImmutableRecord("prepared presentation changed")
+                        target = "waiting_approval"
+                    elif isinstance(outcome, BudgetExceeded):
+                        target = "budget_exceeded"
+                    done = store.set_state(connection, run, target, now, bump_generation=True)
+                    store.append_event(connection, done, RunStateChanged(previous=run.state, current=target),
                                        now)
                     store.end_job(connection, job, state="done", now=now)
                 elif isinstance(outcome, Failed):

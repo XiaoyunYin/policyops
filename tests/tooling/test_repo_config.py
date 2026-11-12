@@ -135,7 +135,7 @@ class RepositoryConfigTests(unittest.TestCase):
         for name in ("tau2", "litellm"):
             self.assertNotIn(name, app)
         for name in ("policyops", "langgraph", "pydantic-settings"):
-            self.assertNotIn(name, evals)
+            self.assertIn(name, evals)
         for name in ("pydantic", "pydantic-core"):
             self.assertEqual(app[name], evals[name], name)
 

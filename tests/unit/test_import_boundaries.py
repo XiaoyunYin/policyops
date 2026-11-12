@@ -83,22 +83,44 @@ def test_contracts_declare_only_pydantic() -> None:
     assert [dep.split(">")[0].split("=")[0].strip() for dep in project["dependencies"]] == ["pydantic"]
 
 
+EVAL_COMPOSITION_IMPORTS = {
+    "policyops.orchestration.minimal", "policyops.orchestration.ports", "policyops.budget",
+    "policyops.providers", "policyops.persistence.budget", "policyops.persistence.evaluation",
+    "policyops.runtime.clock",
+}
+EVAL_COMPOSITION_FILES = {
+    "harness/inprocess.py", "harness/actors.py", "studies/config.py", "studies/runner.py",
+}
+
+
 @pytest.mark.parametrize("subdir", ["src", "tests"])
-def test_evaluator_never_imports_application_package(subdir: str) -> None:
+def test_evaluator_application_imports_are_limited_to_composition(subdir: str) -> None:
     violations = [
         (str(path.relative_to(REPO)), module)
         for path, module in imported_modules(EVALS / subdir)
         if module.split(".")[0] == "policyops"
+        and (not matches(module, EVAL_COMPOSITION_IMPORTS) or
+             (subdir == "src" and path.relative_to(EVALS / "src" / "policyops_evals").as_posix()
+              not in EVAL_COMPOSITION_FILES))
     ]
     assert violations == []
 
 
-def test_evaluator_project_does_not_depend_on_application() -> None:
+def test_evaluator_declares_local_application_composition_dependency() -> None:
     project = tomllib.loads((EVALS / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     names = {dep.split("[")[0].split(">")[0].split("=")[0].split("@")[0].strip()
              for dep in project["dependencies"]}
-    assert "policyops" not in names
+    assert "policyops" in names
     assert "policyops-contracts" in names
+    config = tomllib.loads((EVALS / "pyproject.toml").read_text(encoding="utf-8"))
+    assert config["tool"]["uv"]["sources"]["policyops"] == {
+        "path": "../packages/policyops", "editable": True,
+    }
+
+
+def test_application_never_imports_upstream_or_evaluator() -> None:
+    assert [(str(path), module) for path, module in imported_modules(APP)
+            if matches(module, {"tau2", "litellm", "policyops_evals"})] == []
 
 
 def test_import_scan_detects_violations(tmp_path: Path) -> None:

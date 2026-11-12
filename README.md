@@ -412,9 +412,9 @@ Two separate uv projects with separate locks:
 | Project | Lock | Contents |
 |---|---|---|
 | Application (repository root workspace) | `uv.lock` | `packages/policyops` (FastAPI, SQLAlchemy/Alembic, psycopg, LangGraph) and `packages/policyops_contracts` |
-| Evaluator / retail-simulator wrapper | `evals/uv.lock` | `tau2[knowledge]` at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062`, transport/persistence/migration libraries and `policyops_contracts` |
+| Evaluator / retail-simulator wrapper | `evals/uv.lock` | `tau2[knowledge]` at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062`, transport/persistence/migration libraries, `policyops_contracts` and local `policyops` for narrow evaluator composition |
 
-`policyops_contracts` depends only on Pydantic, so the evaluator never installs or imports the application package. Both locks only admit distributions published before the `exclude-newer` cutoff in their `pyproject.toml`.
+`policyops_contracts` depends only on Pydantic. The evaluator also installs the local `policyops` package for composition of its minimal agent/ports, bounded providers, budgets and evaluation persistence; application code never imports tau2. Both locks only admit distributions published before the `exclude-newer` cutoff in their `pyproject.toml`.
 
 ```powershell
 python -B scripts/devenv.py uv sync --frozen

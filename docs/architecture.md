@@ -15,7 +15,7 @@ their own dependencies.
 |---|---|---|
 | `packages/policyops_contracts` | Wire contracts (Pydantic, strict, frozen, unknown fields rejected), the pinned retail policy rule table, server-rendered confirmation text, canonical digests, JSON Schema export | Pydantic, standard library |
 | `packages/policyops/.../domain` | Deterministic rules: write preconditions and exact effects, proposal sealing, consent and approval decisions, customer session, agent step protocol, role matrix, synthetic examples | `policyops_contracts` only (no HTTP, database, orchestration or provider SDK) |
-| `evals` | Evaluator: pinned upstream data, splits, the retail calibration allowlist, metadata-only demo seeds, policy-trace and server-only seed bindings | `policyops_contracts`, pinned tau2; never the application package |
+| `evals` | Evaluator: pinned upstream data, splits, the retail calibration allowlist, metadata-only demo seeds, policy-trace and server-only seed bindings | `policyops_contracts`, pinned tau2, local `policyops` for composition of minimal agent/ports, bounded providers, budgets and evaluation persistence only; application code never imports tau2 |
 
 Contract wire version: `CONTRACTS_SCHEMA_VERSION = "0.2.0"` (the 0.1.0 `WireModel` base is unchanged).
 Generated JSON Schemas are in `packages/policyops_contracts/schemas/`; fictional examples are in

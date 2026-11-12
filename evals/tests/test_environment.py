@@ -45,9 +45,11 @@ def test_knowledge_extra_only() -> None:
         assert util.find_spec(module) is None, module
 
 
-def test_application_stack_not_installed() -> None:
+def test_local_application_is_installed_for_narrow_composition() -> None:
     for module in ("policyops", "langgraph", "pydantic_settings"):
-        assert util.find_spec(module) is None, module
+        assert util.find_spec(module) is not None, module
+    direct = json.loads(metadata.distribution("policyops").read_text("direct_url.json") or "{}")
+    assert direct["dir_info"]["editable"] is True
 
 
 def test_litellm_below_upstream_cap() -> None:

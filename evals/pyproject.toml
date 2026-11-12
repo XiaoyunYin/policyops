@@ -1,11 +1,12 @@
 # Evaluator and retail-simulator wrapper: a separate uv project and lock.
-# It may import policyops-contracts, never the policyops application package.
+# Composition modules may import the minimal agent, bounded providers and budgets.
 [project]
 name = "policyops-evals"
 version = "0.1.0"
 description = "PolicyOps evaluator and retail-simulator wrapper around pinned tau2-bench."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "policyops",
     "policyops-contracts",
     # Exact upstream commit; knowledge extra only (no voice/live/shell extras).
     "tau2[knowledge] @ git+https://github.com/sierra-research/tau2-bench@19f13ea3f5fba8b4c4d272d1353590f29dc53062",
@@ -37,6 +38,7 @@ required-version = ">=0.13.6,<0.14"
 exclude-newer = "2026-10-28T00:00:00Z"
 
 [tool.uv.sources]
+policyops = { path = "../packages/policyops", editable = true }
 policyops-contracts = { path = "../packages/policyops_contracts", editable = true }
 
 [build-system]

@@ -1,0 +1,30 @@
+{
+  "version": "policyops.t29-fictional/v1",
+  "policy": "Fictional shop: change a customer's default address when explicitly requested.",
+  "simulator_guidelines": "You are a fictional customer in an offline scripted test. Follow your scenario and end with ###STOP### after confirmation.",
+  "db": {
+    "users": {
+      "fictional_user_001": {
+        "user_id": "fictional_user_001",
+        "name": {"first_name": "Fictional", "last_name": "Customer"},
+        "address": {"address1": "1 Example St", "address2": "", "city": "Example", "country": "USA", "state": "CA", "zip": "90001"},
+        "email": "fictional@example.invalid",
+        "payment_methods": {},
+        "orders": []
+      }
+    },
+    "products": {},
+    "orders": {}
+  },
+  "task": {
+    "id": "fictional-t29-address-v1",
+    "description": {"purpose": "FICTIONAL-HIDDEN-T29-724d"},
+    "user_scenario": {"instructions": "FICTIONAL-HIDDEN-T29-724d: ask to update your default address, then stop when confirmed."},
+    "evaluation_criteria": {
+      "reward_basis": ["DB", "NL_ASSERTION"],
+      "actions": [{"action_id": "fictional-update", "name": "modify_user_address", "arguments": {"user_id": "fictional_user_001", "address1": "2 Example St", "address2": "", "city": "Example", "country": "USA", "state": "CA", "zip": "90002"}}],
+      "nl_assertions": ["The agent confirmed the address change."]
+    }
+  },
+  "visible_request": "Please change fictional_user_001's default address to 2 Example St, Example, CA 90002, USA. I confirm."
+}

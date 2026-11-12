@@ -20,13 +20,18 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 import re
 from types import MappingProxyType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid5
 
 from policyops.persistence.runs import ClaimToken
 from policyops_contracts.conversation import AgentMessage
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.events import EventPayload
+
+
+if TYPE_CHECKING:
+    from policyops.providers.calls import CallReport
+    from policyops.providers.embedding_calls import JobReport
 
 
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -83,7 +88,14 @@ class BudgetExceeded:
     pass
 
 
-Outcome = Succeeded | Failed | Retry | AwaitingApproval | InvestigationCompleted | BudgetExceeded
+@dataclass(frozen=True)
+class UsageUnconfirmed:
+    """Accounting failed after dispatch. Reserved cost stays held; the run must admit no further work."""
+
+    report: CallReport | JobReport | None = None
+
+
+Outcome = Succeeded | Failed | Retry | AwaitingApproval | InvestigationCompleted | BudgetExceeded | UsageUnconfirmed
 
 
 class StepContext(Protocol):

@@ -30,7 +30,7 @@ from policyops.persistence.database import (
     transaction,
     workspace_transaction,
 )
-from policyops.persistence.importer import PROPOSAL_ROW, import_synthetic_world
+from policyops.persistence.importer import PROPOSAL_ROW
 from policyops.persistence.records import NewCase, NewJob, NewRun, UsageEvent
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops_contracts.consent import (
@@ -42,6 +42,7 @@ from policyops_contracts.consent import (
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail_service import MutationRequest
 from policyops_testing.app_database import AppDatabase, NewDatabase
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -53,7 +54,7 @@ NOW = WORLD.now
 def world_db(app_cluster: Any) -> Iterator[AppDatabase]:
     database: AppDatabase = app_cluster.create_database("invariants")
     database.upgrade()
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     yield database
     database.dispose()
 
@@ -189,7 +190,7 @@ def test_execution_reservation_race_same_payload_and_conflicting_payload(world_d
 
 def test_concurrent_decisions_have_one_terminal_winner(new_app_database: NewDatabase) -> None:
     database = new_app_database("decision_race")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     decision = ApprovalDecision.model_validate_json(build_examples()["approval-decision.json"])
     with database.superuser() as conn:  # leave the proposal consented but undecided
         conn.execute("DELETE FROM app.approval_decisions")
@@ -305,7 +306,8 @@ CONSTRAINT_CASES = [
      "text, text_sha256, created_at) VALUES (gen_random_uuid(), :w, :c, 1, 'seeded', 'x', repeat('a', 64), now())"),
     ("cases_status_values", "UPDATE app.cases SET status = 'deleted' WHERE id = :c"),
     ("cases_version_positive", "UPDATE app.cases SET version = 0 WHERE id = :c"),
-    ("runs_state_values", "UPDATE app.runs SET state = 'paused' WHERE id = :r"),
+    ("runs_state_values", "UPDATE app.runs SET state = 'paused', active_started_at = NULL, deadline_at = NULL, "
+     "active_remaining_us = 0 WHERE id = :r"),
     ("runs_model_calls_bounds", "UPDATE app.runs SET model_calls = -1 WHERE id = :r"),
     # A leased job with a claim (0005) but no lease owner/expiry: only the lease rule is violated.
     ("jobs_lease_state", "INSERT INTO app.jobs (id, workspace_id, run_id, dedupe_key, request_sha256, kind, "
@@ -372,7 +374,7 @@ def _fk(db: AppDatabase, constraint: str, fn: Callable[[Any], Any]) -> None:
 
 def test_binding_records_round_trip_and_reject_wrong_case_run_or_evidence(new_app_database: NewDatabase) -> None:
     db = new_app_database("bindings")
-    import_synthetic_world(auth=db.engine(AUTH_RUNTIME), app=db.engine(APP_RUNTIME))
+    seed_world(db)
     examples = build_examples()
     proposal = ActionProposal.model_validate_json(examples["action-proposal.exchange.json"])
     presentation = ProposalPresentationRecord.model_validate_json(examples["proposal-presentation.json"])

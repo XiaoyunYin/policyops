@@ -134,8 +134,9 @@ def test_optional_links_are_null_or_checked(shared_db: AppDatabase, two_tenants:
     run_b = uuid4()
     with workspace_transaction(app, b) as conn:
         conn.execute(text("INSERT INTO app.runs (id, workspace_id, case_id, case_version, mode, graph_sha256, "
-                          "prompt_sha256, config_sha256, state, deadline_at, created_at, updated_at) VALUES (:id, :w, "
-                          ":c, 1, 'workbench', :h, :h, :h, 'queued', :d, :t, :t)"),
+                          "prompt_sha256, config_sha256, state, deadline_at, active_remaining_us, active_started_at, "
+                          "created_at, updated_at) VALUES (:id, :w, "
+                          ":c, 1, 'workbench', :h, :h, :h, 'queued', :d, 3600000000, :t, :t, :t)"),
                      {"id": run_b, "w": b, "c": case_b, "h": "0" * 64, "d": NOW + timedelta(hours=1), "t": NOW})
     with pytest.raises(DBAPIError) as raised, workspace_transaction(app, a) as conn:
         conn.execute(insert, {"id": uuid4(), "w": a, "r": run_b, "k": f"k-{uuid4()}", "t": NOW})

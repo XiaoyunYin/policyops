@@ -4,7 +4,7 @@ import { FakeApi, WORKSPACE_A, WORKSPACE_B, casePage, envelope, json, me, member
          setCsrfCookie } from "../test/fakeApi";
 import { ApiError, CSRF_HEADER, EXPECTED_PRINCIPAL_HEADER, EXPECTED_WORKSPACE_HEADER, MAX_RESPONSE_CHARS,
          expectedContextOf, getMe, listCases, listMembers, loginHref, logout, readCsrfToken, sameContext,
-         selectWorkspace, type BoundRequestOptions, type ExpectedContext } from "./client";
+         selectWorkspace, startRun, type BoundRequestOptions, type ExpectedContext } from "./client";
 
 const live = (): { signal: AbortSignal } => ({ signal: new AbortController().signal });
 function contextOf(workspace = WORKSPACE_A): ExpectedContext {
@@ -31,6 +31,20 @@ async function failure(promise: Promise<unknown>): Promise<ApiError> {
 afterEach(() => {
   setCsrfCookie(null);
   vi.useRealTimers();
+});
+
+test("a run can carry a null active deadline without a fabricated timestamp", async () => {
+  const caseId = "e0000000-0000-4000-8000-000000000001";
+  const reply = json(202, {
+    run_id: "e0000000-0000-4000-8000-000000000002", case_id: caseId, case_version: 1, version: 2,
+    mode: "workbench", state: "waiting_approval", initiated_by: null, event_highwater: 2,
+    config_sha256: "a".repeat(64), graph_sha256: "b".repeat(64), prompt_sha256: "c".repeat(64),
+    created_at: "2026-11-11T12:00:00Z", updated_at: "2026-11-11T12:01:00Z", deadline_at: null,
+  });
+  reply.headers.set("ETag", '"2"');
+  new FakeApi().on("POST", `/api/v1/cases/${caseId}/runs`, reply);
+  const written = await startRun(caseId, "nullable-deadline-1", 1, bound());
+  expect(written.value.deadline_at).toBeNull();
 });
 
 describe("CSRF and request headers", () => {

@@ -2731,9 +2731,16 @@
             "type": "string"
           },
           "deadline_at": {
-            "format": "date-time",
-            "title": "Deadline At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline At"
           },
           "event_highwater": {
             "title": "Event Highwater",

@@ -30,7 +30,7 @@ from sqlalchemy import Engine, text
 
 from policyops.budget.config import Configuration
 from policyops.persistence import repositories as repo
-from policyops.persistence.budget import build_app_ledger
+from policyops.persistence import runs
 from policyops.persistence.database import transaction, workspace_transaction
 from policyops.persistence.embeddings import EmbeddingStore
 from policyops.persistence.records import NewCase, NewRun, Workspace
@@ -43,6 +43,7 @@ from policyops.retrieval.search import Retriever, RetrieverLimits
 from policyops_contracts.digest import text_sha256
 from policyops_contracts.retrieval import RerankAttempt
 from policyops_testing.app_database import AppDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
 from policyops_testing.corpus_fixtures import FixtureCorpus, banking, write
 
 
@@ -230,8 +231,9 @@ class World:
 
     def end(self, run_id: UUID, state: str = "cancelled") -> None:
         with workspace_transaction(self.engine, self.ws) as conn:
-            conn.execute(text("UPDATE app.runs SET state = :s, updated_at = now(), version = version + 1 "
-                              "WHERE id = :id"), {"s": state, "id": run_id})
+            run = runs.get_run(conn, run_id, lock=True)
+            assert run is not None
+            runs.set_state(conn, run, state, datetime.now(UTC))  # type: ignore[arg-type]
 
     def publish(self, documents: Mapping[str, bytes], *, key: str = "test-banking", domain: str = "banking_knowledge",
                 render: str = "tau2-banking/v1", embeddings: Embeddings | None = None) -> UUID:

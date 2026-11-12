@@ -53,7 +53,7 @@ class RunView(WireModel):
     event_highwater: int
     created_at: UtcDatetime
     updated_at: UtcDatetime
-    deadline_at: UtcDatetime
+    deadline_at: UtcDatetime | None
     version: PositiveVersion
 
 

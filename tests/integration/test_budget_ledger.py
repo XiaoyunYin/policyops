@@ -35,17 +35,15 @@ from policyops.budget.ledger import (
     OperationBinding,
     Reserved,
     RunBinding,
-    ScopeInactive,
     Settled,
     Settlement,
 )
 from policyops.budget.pricing import Usage
 from policyops.domain.examples import World
-from policyops.persistence import migrate
+from policyops.persistence import migrate, runs
 from policyops.persistence import repositories as repo
-from policyops.persistence.budget import AppLedgerStore, EvalLedgerStore, build_app_ledger, build_eval_ledger
+from policyops.persistence.budget import AppLedgerStore, EvalLedgerStore, build_eval_ledger
 from policyops.persistence.database import IdempotencyConflict, RuntimeRoleError, transaction, workspace_transaction
-from policyops.persistence.importer import import_synthetic_world
 from policyops.persistence.migration_guard import DataLossRefused
 from policyops.persistence.records import NewCase, NewRun, UsageEvent, Workspace
 from policyops.persistence.roles import APP_MIGRATOR, APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME
@@ -53,6 +51,8 @@ from policyops.runtime.clock import FixedLeaseClock, UnsafeTestHook
 from policyops_contracts.clock import FixedClock
 from policyops_contracts.digest import text_sha256
 from policyops_testing.app_database import AppDatabase, NewDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -94,7 +94,9 @@ def workspace(db: AppDatabase) -> UUID:
 
 def new_run(db: AppDatabase, ws: UUID) -> UUID:
     case, run, now = uuid4(), uuid4(), datetime.now(UTC)
-    with workspace_transaction(db.engine(APP_RUNTIME), ws) as conn:
+    from policyops_testing.migration_fixtures import seed_at_head
+
+    with seed_at_head(db), workspace_transaction(db.engine(APP_RUNTIME), ws) as conn:
         record = repo.create_case(conn, NewCase(id=case, workspace_id=ws, scenario="retail", customer_user_id=None,
                                                 created_by=None, created_at=now))
         repo.create_run(conn, NewRun(id=run, workspace_id=ws, case_id=case, case_version=record.version,
@@ -213,7 +215,7 @@ def test_reserve_replay_is_idempotent_and_a_changed_intent_conflicts(db: AppData
         books.reserve(RunBinding(other_run), attempt, "agent", "turn-1")
     scope = scope_row(db, run)
     assert (scope["held"], scope["calls_held"]) == (HOLD, 1)  # nothing was charged twice
-    with pytest.raises(NotFound):
+    with pytest.raises(runs.Fenced):
         books.reserve(RunBinding(uuid4()), uuid4(), "agent", "turn-1")
 
 
@@ -355,13 +357,15 @@ def test_settlement_after_cancellation_records_the_bill_but_authorizes_nothing(d
     waiting = uuid4()
     books.reserve(RunBinding(run), waiting, "simulator", "turn-2")
     books.begin_dispatch(attempt)
-    with db.superuser() as conn:
-        conn.execute("UPDATE app.runs SET state = 'cancelled' WHERE id = %s", (run,))
+    with workspace_transaction(db.engine(APP_RUNTIME), _ws) as conn:
+        row = runs.get_run(conn, run, lock=True)
+        assert row is not None
+        runs.set_state(conn, row, "cancelled", datetime.now(UTC))
     assert books.settle(attempt, Settlement(Usage(1000, output=10))).attempt.actual_usd == Decimal("0.000105")
-    with pytest.raises(ScopeInactive):
+    with pytest.raises(runs.Fenced):
         books.reserve(RunBinding(run), uuid4(), "agent", "turn-3")
-    refused = books.begin_dispatch(waiting)
-    assert isinstance(refused, DispatchRefused) and refused.reason == "run_not_active"
+    with pytest.raises(runs.Fenced):
+        books.begin_dispatch(waiting)
     books.release(waiting)
     scope = scope_row(db, run)
     assert (scope["spent"], scope["held"], scope["consumed"], scope["calls_held"]) == (Decimal("0.000105"), 0, 1, 0)
@@ -392,7 +396,7 @@ def test_another_workspace_cannot_see_or_charge_this_ledger(db: AppDatabase) -> 
     _ws, run, books, attempt = first_hold(db)
     intruder_ws = workspace(db)
     intruder = ledger(db, intruder_ws)
-    with pytest.raises(NotFound):
+    with pytest.raises(runs.Fenced):
         intruder.reserve(RunBinding(run), uuid4(), "agent", "turn-1")
     for call in (lambda: intruder.begin_dispatch(attempt), lambda: intruder.release(attempt),
                  lambda: intruder.mark_unresolved(attempt),
@@ -593,7 +597,7 @@ def legacy_settled(conn: Any, ws: UUID, run: UUID, request_id: str | None) -> UU
 
 def test_0006_upgrades_populated_data_and_guards_its_downgrade(new_app_database: NewDatabase) -> None:
     database = new_app_database("budget_upgrade", revision="0005")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     world = World()
     event = legacy_event(world.workspace, "legacy-1")
     with workspace_transaction(database.engine(APP_RUNTIME), world.workspace) as conn:

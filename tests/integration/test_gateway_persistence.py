@@ -56,7 +56,9 @@ def workspace(db: AppDatabase) -> UUID:
 
 def case_and_run(db: AppDatabase, ws: UUID, customer: str | None = CUSTOMER) -> RunScope:
     case, run = uuid4(), uuid4()
-    with workspace_transaction(db.engine(APP_RUNTIME), ws) as conn:
+    from policyops_testing.migration_fixtures import seed_at_head
+
+    with seed_at_head(db), workspace_transaction(db.engine(APP_RUNTIME), ws) as conn:
         record = repo.create_case(conn, NewCase(id=case, workspace_id=ws, scenario="retail",
                                                 customer_user_id=customer, created_by=None, created_at=NOW))
         repo.create_run(conn, NewRun(id=run, workspace_id=ws, case_id=case, case_version=record.version,

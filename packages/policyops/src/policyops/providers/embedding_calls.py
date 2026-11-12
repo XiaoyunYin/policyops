@@ -105,6 +105,7 @@ from policyops.persistence.embeddings import (
     PlannedInput,
     norm_decimal,
 )
+from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.providers.calls import Providers
 from policyops.providers.contract import ContractGap, require_clean_environment
 from policyops.providers.embedding_contract import request_config_sha256
@@ -269,6 +270,10 @@ class JobReport:
     reason: str | None = None
     batches: list[BatchReport] = field(default_factory=list)
     vectors: tuple[EmbeddedInput, ...] = ()
+    pending_evidence: Evidence | None = None
+    pending_billing: Billing | None = None
+    pending_request_id: str | None = None
+    pending_cleanup_confirmed: bool | None = None
 
     @property
     def physical_requests(self) -> int:
@@ -475,18 +480,21 @@ class _Run:
             if arrived:
                 self.complete(lease, plan, prepared, arrived[0], cleanup=False, note="timeout_after_body")
             else:  # possibly sent and billed: the hold stays; the close was never observed
-                self.ledger.mark_unresolved(plan.attempt_id)
+                self.hold_unconfirmed(plan.attempt_id, cleanup=False)
                 self.finish(lease, plan, "sent", "unresolved", "timeout", physical=True, cleanup=False)
             if time.monotonic() >= self.deadline:
                 raise _Stop("deadline", "deadline") from None
             return
         except BaseException as error:  # a cancellation, an ambient-setting refusal or anything unexpected
             note = "cancelled" if isinstance(error, asyncio.CancelledError) else "local_error"
-            if arrived:
-                self.complete(lease, plan, prepared, arrived[0], cleanup=False, note=f"{note}_after_body")
-            else:
-                self.ledger.mark_unresolved(plan.attempt_id)
-                self.finish(lease, plan, "sent", "unresolved", note, physical=True, cleanup=False)
+            try:
+                if arrived:
+                    self.complete(lease, plan, prepared, arrived[0], cleanup=False, note=f"{note}_after_body")
+                else:
+                    self.hold_unconfirmed(plan.attempt_id, cleanup=False)
+                    self.finish(lease, plan, "sent", "unresolved", note, physical=True, cleanup=False)
+            except Exception as cleanup:
+                error.add_note(f"accounting unconfirmed: {type(cleanup).__name__}; reserved cost remains held")
             raise
         self.complete(lease, plan, prepared, fetched, cleanup=fetched.cleanup_confirmed)
 
@@ -494,17 +502,32 @@ class _Run:
                  cleanup: bool, note: str | None = None) -> None:
         """Synchronous accounting of one response: classify, publish, settle or hold, advance."""
         if fetched.raw is None:
-            self.ledger.mark_unresolved(plan.attempt_id)
+            self.hold_unconfirmed(plan.attempt_id, cleanup=cleanup)
             self.finish(lease, plan, "sent", "unresolved", note or fetched.error, physical=fetched.sent,
                         cleanup=cleanup)
             return
         classified = classify(fetched.raw, prepared, plan.local_tokens)
         evidence = _evidence(plan, self.job.id, prepared, classified, fetched.provider_request_id)
-        published = evidence is None or self._publish(evidence, classified)
-        _account(self.ledger, plan.attempt_id, classified.outcome, classified.billing, fetched.provider_request_id)
+        self.report.pending_evidence, self.report.pending_billing = evidence, classified.billing
+        self.report.pending_request_id, self.report.pending_cleanup_confirmed = fetched.provider_request_id, cleanup
+        try:
+            published = evidence is None or self._publish(evidence, classified)
+            _account(self.ledger, plan.attempt_id, classified.outcome, classified.billing, fetched.provider_request_id)
+        except Exception as error:
+            raise AccountingUnconfirmed(self.report) from error
+        self.report.pending_evidence, self.report.pending_billing = None, None
+        self.report.pending_request_id, self.report.pending_cleanup_confirmed = None, None
         state = STATE_OF[classified.outcome] if published else "orphaned"
         reason = note if published else ("publication_failed" if note is None else f"{note}.publication_failed")
         self.finish(lease, plan, "sent", state, reason, physical=True, cleanup=cleanup)
+
+    def hold_unconfirmed(self, attempt_id: UUID, *, cleanup: bool) -> None:
+        self.report.pending_cleanup_confirmed = cleanup
+        try:
+            self.ledger.mark_unresolved(attempt_id)
+        except Exception as error:
+            raise AccountingUnconfirmed(self.report) from error
+        self.report.pending_cleanup_confirmed = None
 
     def _publish(self, evidence: Evidence, classified: Classified) -> bool:
         for attempt in range(self.limits.publish_attempts):

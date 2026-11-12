@@ -17,10 +17,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from psycopg import errors as pg_errors
+from pydantic import Field
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import DBAPIError
 
@@ -37,23 +38,29 @@ RunState = Literal["queued", "running", "waiting_input", "waiting_approval", "re
                    "cancelled", "budget_exceeded"]
 ACTIVE_STATES: frozenset[str] = frozenset({"queued", "running", "waiting_input", "waiting_approval", "reconciling"})
 TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled", "budget_exceeded"})
+WAITING_STATES = frozenset({"waiting_input", "waiting_approval"})
+EXECUTE_DELIVERY_TIMEOUT = timedelta(hours=24)
 EXECUTE_KIND = "run.execute"
 EVENT_TOPIC = "run.event"
 NOTIFY_CHANNEL = "policyops_run_events"
 MAX_EVENT_PAGE = 500
 
 RUN_COLUMNS = ("id, workspace_id, case_id, case_version, mode, graph_sha256, prompt_sha256, config_sha256, state, "
-               "initiated_by, generation, event_highwater, event_retention_floor, deadline_at, created_at, "
+               "initiated_by, generation, event_highwater, event_retention_floor, deadline_at, "
+               "active_remaining_us, active_started_at, created_at, "
                "updated_at, version")
 JOB_COLUMNS = ("id, workspace_id, run_id, kind, state, claim_id, lease_owner, lease_expires_at, attempts, "
                "max_attempts, available_at, deadline_at, last_error_code, version, review_trigger, proposal_id, "
                "proposal_version, decision_id, execution_id, execution_version")
 # Fixed column lists only (no input): S608 does not apply.
 INSERT_RUN = ("INSERT INTO app.runs (id, workspace_id, case_id, case_version, mode, graph_sha256, prompt_sha256, "  # noqa: S608
-              "config_sha256, state, initiated_by, deadline_at, created_at, updated_at) VALUES (:id, :w, :c, :cv, "
-              "'workbench', :g, :p, :cfg, 'queued', :by, :deadline, :now, :now) RETURNING " + RUN_COLUMNS)
+              "config_sha256, state, initiated_by, deadline_at, active_remaining_us, active_started_at, "
+              "created_at, updated_at) VALUES (:id, :w, :c, :cv, "
+              "'workbench', :g, :p, :cfg, 'queued', :by, :deadline, :remaining, :now, :now, :now) RETURNING "
+              + RUN_COLUMNS)
 UPDATE_STATE = ("UPDATE app.runs SET state = :state, updated_at = greatest(updated_at, :now), "  # noqa: S608
-                "version = version + 1, "
+                "version = version + 1, active_remaining_us = :remaining, active_started_at = :started, "
+                "deadline_at = :deadline, "
                 "generation = generation + :bump WHERE id = :id RETURNING " + RUN_COLUMNS)
 
 
@@ -83,7 +90,9 @@ class Run(WireModel):
     generation: int
     event_highwater: int
     event_retention_floor: int
-    deadline_at: UtcDatetime
+    deadline_at: UtcDatetime | None
+    active_remaining_us: Annotated[int, Field(ge=0)]
+    active_started_at: UtcDatetime | None
     created_at: UtcDatetime
     updated_at: UtcDatetime
     version: int
@@ -181,7 +190,7 @@ def create_run(connection: Connection, *, run_id: UUID, workspace_id: UUID, case
             row = connection.execute(text(INSERT_RUN), {
                 "id": run_id, "w": workspace_id, "c": case_id, "cv": case_version, "g": graph_sha256,
                 "p": prompt_sha256, "cfg": config_sha256, "by": initiated_by, "deadline": deadline_at,
-                "now": now}).mappings().one()
+                "remaining": elapsed_us(deadline_at, now), "now": now}).mappings().one()
     except DBAPIError as exc:
         if isinstance(exc.orig, pg_errors.UniqueViolation) and "runs_one_active_workbench" in str(exc.orig):
             raise ActiveRunExists(f"case {case_id} already has an active workbench run") from exc
@@ -193,7 +202,7 @@ def create_execute_job(connection: Connection, run: Run, *, max_attempts: int, n
     job_id, _created = repo.enqueue_job(connection, NewJob(
         id=uuid4(), workspace_id=run.workspace_id, run_id=run.id, dedupe_key=f"run:{run.id}:execute",
         kind=EXECUTE_KIND, run_generation=run.generation, max_attempts=max_attempts, available_at=now,
-        deadline_at=run.deadline_at, created_at=now))
+        deadline_at=now + EXECUTE_DELIVERY_TIMEOUT, created_at=now))
     return job_id
 
 
@@ -263,10 +272,40 @@ def _decode(run: Run, row: Any) -> StoredEvent:
 
 def set_state(connection: Connection, run: Run, state: RunState, now: datetime, *,
               bump_generation: bool = False) -> Run:
-    """Change a locked run's state (and optionally fence out every current claim)."""
+    """Change a locked run's state, suspending only human waits. Same-state writes never restart a segment."""
+    remaining, started, deadline = run.active_remaining_us, run.active_started_at, run.deadline_at
+    if state != run.state:
+        now = max(now, run.updated_at)
+        if run.terminal:
+            raise ValueError("a terminal run cannot resume")
+        if state in WAITING_STATES or state in TERMINAL_STATES:
+            remaining, started, deadline = remaining_us(run, now), None, None
+        elif run.state in WAITING_STATES:
+            started = now
+            deadline = now + timedelta(microseconds=remaining)
     row = connection.execute(text(UPDATE_STATE), {"state": state, "now": now, "bump": 1 if bump_generation else 0,
+                                                  "remaining": remaining, "started": started, "deadline": deadline,
                                                   "id": run.id}).mappings().one()
     return _run(row)
+
+
+def elapsed_us(later: datetime, earlier: datetime) -> int:
+    """Exact integer microseconds, clamped on backwards clock movement."""
+    delta = later - earlier
+    return max(0, (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds)
+
+
+def remaining_us(run: Run, now: datetime) -> int:
+    return max(0, run.active_remaining_us - (
+        0 if run.active_started_at is None else elapsed_us(now, run.active_started_at)))
+
+
+def require_active(run: Run, now: datetime) -> None:
+    """Work admission only; accounting and completion must use the identity/delivery fence instead."""
+    if run.terminal or run.state in WAITING_STATES or run.active_started_at is None:
+        raise Fenced("run_not_active")
+    if remaining_us(run, now) == 0:
+        raise Fenced("active_time_exceeded")
 
 
 # -- claims and fencing -----------------------------------------------------------------------------------------
@@ -293,7 +332,8 @@ def claimable(job: Job, now: datetime) -> bool:
     return job.state == "leased" and job.lease_expires_at is not None and job.lease_expires_at <= now
 
 
-def check_fence(connection: Connection, token: ClaimToken, clock: LeaseClock) -> tuple[Run, Job, datetime]:
+def check_fence(connection: Connection, token: ClaimToken, clock: LeaseClock, *, active: bool = False
+                ) -> tuple[Run, Job, datetime]:
     """Lock run, then job, read the clock (after any wait for those locks) and verify the claim is still current;
     raises `Fenced` with a typed reason. Returns the time the decision was made at."""
     run = get_run(connection, token.run_id, lock=True)
@@ -305,14 +345,16 @@ def check_fence(connection: Connection, token: ClaimToken, clock: LeaseClock) ->
         raise Fenced("binding_changed")
     if job.state != "leased" or job.claim_id != token.claim_id or job.lease_owner != token.owner:
         raise Fenced("claim_lost")
-    if run.generation != token.generation:
+    if run.generation != token.generation or job.attempts != token.attempt:
         raise Fenced("generation_changed")
     if job.lease_expires_at is None or job.lease_expires_at <= now:
         raise Fenced("lease_expired")
-    if job.deadline_at <= now or run.deadline_at <= now:
+    if job.deadline_at <= now:
         raise Fenced("deadline_exceeded")
     if run.terminal:
         raise Fenced("run_terminal")
+    if active:
+        require_active(run, now)
     return run, job, now
 
 

@@ -256,6 +256,25 @@ and restores the exact FORCE flags. For `0009`, rows in any of its five tables t
 
 `policyops.persistence.importer.import_synthetic_world` loads the fictional example world and the committed contract examples (proposal, presentation, consent, approval). It goes through the same repositories and roles as the application: identity rows via the auth role, everything else via the app role in the example workspace's scope. A repeated import is refused (`AlreadyImported`).
 
+## Runtime clocks and SQL bounds
+
+Revision `0015` adds `runs.active_remaining_us` and `active_started_at`, and makes `deadline_at` nullable.
+Queued/running/reconciling segments consume allowance; human wait and terminal states clear the active segment.
+The transition guard prevents replenishment and segment restarts. The conservative backfill preserves active
+projections, freezes the unexpired remainder of historical waits, and assigns terminal rows zero allowance.
+It cannot refund past waiting time. Nonempty downgrade requires the explicit lossy override. FORCE RLS and
+existing composite keys remain; only the app runtime receives the three clock-column UPDATE grants.
+
+Runtime transactions apply transaction-local `set_config` profiles after BEGIN: statement / lock / idle limits
+are DEFAULT 5000/1000/5000 ms, LEASE 1000/250/2000 ms, and RETRIEVAL snapshot 15000/1000/5000 ms.
+Pool checkout is two seconds. Migration/bootstrap/dump/restore are separate from these runtime profiles.
+55P03 and 57014 are local retryable failures; idle termination/disconnect requires durable-state checks.
+Permission, authentication and schema errors retain their original permanent/configuration meaning.
+`TransactionOutcomeUnknown` means COMMIT was attempted without acknowledgement; rollback/close cannot prove
+non-commit. Reservation/dispatch grant uncertainty permits no provider send. Reconcile using the same attempt,
+message, proposal or operation ID; citation recording retains its existing `record_ambiguous` result.
+These settings do not establish a total DNS/network/workflow wall-clock guarantee.
+
 ## Limits
 
 - **Administrators.** The owner, migrator or a superuser can still alter or drop data, policies or triggers. Append-only and audit guarantees hold against the runtime roles, not against database administrators.

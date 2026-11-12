@@ -163,6 +163,30 @@ def test_worker_graph_terminal_paths(db: AppDatabase, tmp_path: Path, mode: str,
         assert test.world.count("app.customer_consents") == 0
 
 
+def test_final_message_lost_commit_acknowledgement_reconciles_without_reexecution(
+        db: AppDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sqlalchemy.engine import RootTransaction
+
+    from policyops.persistence.database import TransactionOutcomeUnknown
+
+    test = scenario(db, tmp_path, "abstain")
+    context = test.claim()
+    outcome = test.executor.execute(context)
+    commit = RootTransaction.commit
+
+    def lose_ack(tx: RootTransaction) -> None:
+        commit(tx)
+        raise OSError("synthetic lost acknowledgement")
+
+    with monkeypatch.context() as faults:
+        faults.setattr(RootTransaction, "commit", lose_ack)
+        with pytest.raises(TransactionOutcomeUnknown):
+            test.worker.finish(context.claim_token, outcome)
+    before = len(test.model.requests)
+    assert not test.worker.process(context.claim_token.job_id, context.workspace_id)
+    assert len(test.model.requests) == before and test.agent_messages() == 1 and test.state() == "succeeded"
+
+
 @pytest.mark.parametrize("boundary", ["checkpoint", "proposal_commit", "terminal"])
 def test_crash_reclaim_resumes_without_duplicate_proposal_or_message(
         db: AppDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str) -> None:
@@ -313,28 +337,27 @@ def test_lost_billed_provider_result_keeps_key_and_never_redispatches(
         db: AppDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from policyops.budget.ledger import RunBinding
     from policyops.orchestration.ports import agent_model_port
-    from policyops.persistence.budget import build_app_ledger
     from policyops.providers.calls import CallReport
     from policyops_testing.retrieval_fixtures import Scripted, count_reply, luna_reply
 
     test = scenario(db, tmp_path, "abstain")
     context = test.claim()
     transport = Scripted(counts=[count_reply(900)], creates=[luna_reply("Lost model response.")])
-    ledger = build_app_ledger(env="test", engine=test.world.engine, workspace_id=test.world.ws,
-                              configuration=Configuration(), clock=test.executor.clock)
-    port = agent_model_port(ledger, RunBinding(test.run_id), transport.providers())
     keys: list[UUID] = []
 
     class LoseResult:
+        def __init__(self, ledger: Any) -> None:
+            self.port = agent_model_port(ledger, RunBinding(test.run_id), transport.providers())
+
         async def complete(self, request: Any, *, key: UUID, operation: str, deadline: float) -> CallReport:
             keys.append(key)
-            returned = await port.complete(request, key=key, operation=operation, deadline=deadline)
+            returned = await self.port.complete(request, key=key, operation=operation, deadline=deadline)
             if len(keys) == 1:
                 assert returned.status == "result"
                 raise SimulatedCrash
             return returned
 
-    executor = replace(test.executor, test_model=lambda ledger, run: LoseResult())
+    executor = replace(test.executor, test_model=lambda ledger, run: LoseResult(ledger))
     with pytest.raises(SimulatedCrash):
         executor.execute(context)
     test.api.clock.advance(timedelta(minutes=1))

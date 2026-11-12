@@ -14,7 +14,6 @@ import pytest
 from sqlalchemy import text
 
 from policyops.budget.config import Caps, Configuration
-from policyops.persistence.budget import build_app_ledger
 from policyops.persistence.database import workspace_transaction
 from policyops.persistence.embeddings import EmbeddingStore
 from policyops.providers.embedding_calls import (
@@ -27,6 +26,7 @@ from policyops.providers.embedding_calls import (
 )
 from policyops_contracts.embedding import EmbeddingJob
 from policyops_testing.app_database import AppDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
 from policyops_testing.retrieval_fixtures import TOKENIZER, Embeddings, World
 
 

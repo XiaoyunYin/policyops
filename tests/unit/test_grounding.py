@@ -11,14 +11,18 @@ import hashlib
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from psycopg import Error, errors
 from pydantic import ValidationError
 import pytest
+from sqlalchemy.exc import DBAPIError
 
 from policyops.persistence import citations as citations_module
 from policyops.persistence.citations import CITATION_NAMESPACE, CitationRecorder, FaultPlan, citation_id, recheck
+from policyops.persistence.database import DatabaseUnavailable
 from policyops.persistence.retrieval import IntentRecord, Span, StepRecord, StoredTrace
 from policyops.providers.schema import check_schema
 from policyops.retrieval.grounding import (
@@ -545,6 +549,44 @@ def bundle_for(claim: CitationClaim, *, run: UUID = RUN) -> CitationBundle:
     return CitationBundle(run_id=run, corpus_key=CORPUS, claims=(claim,))
 
 
+@pytest.mark.parametrize("original", [errors.LockNotAvailable(), errors.QueryCanceled(),
+                                      errors.ConnectionFailure(), errors.IdleInTransactionSessionTimeout(),
+                                      errors.CheckViolation()])
+def test_citation_insert_preserves_transient_failure_instead_of_integrity_refusal(
+        reader: Reader, monkeypatch: pytest.MonkeyPatch, original: Error) -> None:
+    claim = verified_claim(reader)
+    entry = reader.steps[trace_id_for(WS, RUN, 1)]
+    checked = check_step(entry.record, workspace_id=WS, run_id=RUN, step=1, corpus_key=CORPUS)
+    assert not isinstance(checked, StepFailure)
+    evidence = check_step_evidence(checked, entry.spans)
+    assert not isinstance(evidence, StepFailure)
+    error = DBAPIError("private SQL", {"private": "values"}, original)
+
+    class InsertFailure(FakeConnection):
+        def execute(self, statement: Any, params: Any = None) -> Any:
+            sql = str(statement)
+            if "FOR SHARE" in sql:
+                return SimpleNamespace(mappings=lambda: SimpleNamespace(first=lambda: {
+                    "corpus_key": CORPUS, "active_generation_id": claim.generation_id}))
+            if "INSERT INTO app.citations" in sql:
+                raise error
+            return super().execute(statement, params)
+
+    log: list[str] = []
+    service = recorder(monkeypatch, InsertFailure(log))
+    monkeypatch.setattr(citations_module, "_rows", lambda *args: {})
+    monkeypatch.setattr(service, "_evidence", lambda *args: {1: evidence})
+    if isinstance(original, errors.CheckViolation):
+        result = service.record(bundle_for(claim), run_id=RUN, authorized_steps=(1,),
+                                corpus_key=CORPUS, deadline=10.0)
+        assert (result.status, result.code) == ("refused", "citation_integrity")
+    else:
+        with pytest.raises(DatabaseUnavailable) as caught:
+            service.record(bundle_for(claim), run_id=RUN, authorized_steps=(1,), corpus_key=CORPUS, deadline=10.0)
+        assert caught.value.sqlstate == original.sqlstate and caught.value.__cause__ is error
+    assert log[-2:] == ["rollback", "close"]
+
+
 @pytest.mark.parametrize("context", [{"run_id": uuid4()}, {"corpus_key": "other"}, {"authorized_steps": (2,)},
                                      {"authorized_steps": (1, 1)}])
 def test_a_context_mismatch_refuses_before_any_sql(reader: Reader, monkeypatch: pytest.MonkeyPatch,
@@ -566,7 +608,8 @@ def test_the_transaction_starts_with_the_corpus_share_lock_and_a_cleanup_failure
     with pytest.raises(RuntimeError, match="synthetic failure") as raised:
         recorder(monkeypatch, connection).record(bundle_for(claim), run_id=RUN, authorized_steps=(1,),
                                                  corpus_key=CORPUS, deadline=10.0)
-    assert log == ["connect", "options:{'isolation_level': 'READ COMMITTED'}", "begin", "SELECT", "SELECT FOR SHARE",
+    assert log == ["connect", "options:{'isolation_level': 'READ COMMITTED'}", "begin",
+                   "SELECT", "SELECT", "SELECT", "SELECT", "SELECT FOR SHARE",
                    "rollback", "close"]
     assert any("close also failed: OSError" in note for note in raised.value.__notes__)
 

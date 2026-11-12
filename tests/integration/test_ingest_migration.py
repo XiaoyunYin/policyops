@@ -17,14 +17,14 @@ from sqlalchemy.exc import DBAPIError
 
 from policyops.domain.examples import World
 from policyops.persistence.database import workspace_transaction
-from policyops.persistence.importer import import_synthetic_world
 from policyops.persistence.migration_guard import DataLossRefused
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
+from policyops.persistence.roles import APP_RUNTIME
 from policyops.providers import tokenizer as tk
 from policyops.retrieval.ingest import PaidCaps, Request, ingest
 from policyops_contracts.digest import text_sha256
 from policyops_testing.app_database import AppCluster, AppDatabase, NewDatabase
 from policyops_testing.corpus_fixtures import CredentialReads, FixtureCorpus, ScriptedEmbeddings, banking, write
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -89,19 +89,22 @@ def legacy_rows(database: AppDatabase, *, version_mismatch: bool = False, genera
 
 def populated_0009(new_app_database: NewDatabase, label: str, **legacy: bool) -> AppDatabase:
     database = new_app_database(label, revision="0009")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     legacy_rows(database, **legacy)
     return database
 
 
 def ingest_once(database: AppDatabase, root: Path, content: str = "Policy text one.") -> dict[str, Any]:
-    raw, digest = write(root, [FixtureCorpus("mig-corpus", "banking_knowledge", "tau2-banking/v1",
-                                             {"a": banking("a", "Policy", content)})])
-    outcome = ingest(Request(WS, "mig-corpus", raw, digest, root, "execute", CAPS),
-                     engine=database.engine(APP_RUNTIME, pool_size=6), tokenizer=tk.load(),
-                     providers=CredentialReads(ScriptedEmbeddings()), env="test")
-    assert outcome.outcome == "activated", outcome.to_json()
-    return outcome.details
+    from policyops_testing.migration_fixtures import seed_at_head
+
+    with seed_at_head(database):
+        raw, digest = write(root, [FixtureCorpus("mig-corpus", "banking_knowledge", "tau2-banking/v1",
+                                                 {"a": banking("a", "Policy", content)})])
+        outcome = ingest(Request(WS, "mig-corpus", raw, digest, root, "execute", CAPS),
+                         engine=database.engine(APP_RUNTIME, pool_size=6), tokenizer=tk.load(),
+                         providers=CredentialReads(ScriptedEmbeddings()), env="test")
+        assert outcome.outcome == "activated", outcome.to_json()
+        return outcome.details
 
 
 def test_a_populated_0009_database_upgrades_with_old_rows_intact(new_app_database: NewDatabase,
@@ -151,7 +154,7 @@ def test_incompatible_existing_rows_refuse_the_upgrade_and_change_nothing(new_ap
 def test_a_populated_0010_downgrade_is_refused_unless_explicitly_destructive(new_app_database: NewDatabase,
                                                                             tmp_path: Path) -> None:
     database = new_app_database("ing_down", revision="0010")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     details = ingest_once(database, tmp_path)
     with pytest.raises(DataLossRefused, match=r"app\.corpora|app\.generation_documents"):
         database.downgrade("0009")
@@ -191,7 +194,7 @@ def test_a_populated_0010_database_dumps_and_restores_with_working_guards(app_cl
                                                                          new_app_database: NewDatabase,
                                                                          tmp_path: Path) -> None:
     source = new_app_database("ing_dump_src", revision="0010")
-    import_synthetic_world(auth=source.engine(AUTH_RUNTIME), app=source.engine(APP_RUNTIME))
+    seed_world(source)
     details = ingest_once(source, tmp_path)
     target = new_app_database("ing_dump_dst", extensions=False, revision=None)
     dump = app_cluster.server.dump_and_restore(source.name, target.name)

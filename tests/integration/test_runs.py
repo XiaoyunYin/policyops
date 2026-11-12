@@ -21,6 +21,7 @@ import pytest
 
 from policyops.persistence import runs as store
 from policyops.persistence.database import workspace_transaction
+from policyops.persistence.roles import APP_RUNTIME
 from policyops.runtime.spec import RuntimeCatalog
 from policyops_testing import case_api
 from policyops_testing.app_database import AppDatabase, NewDatabase
@@ -500,18 +501,18 @@ def held(api: CaseApi, sql: str, *params: Any) -> Iterator[None]:
         yield
 
 
-def test_the_database_clock_is_read_after_waiting_for_locks(fresh: AppDatabase) -> None:
-    """A write that starts before the lease expires and waits on the run lock past the expiry is fenced: the clock
-    is `clock_timestamp()` read after the lock (`now()`, the transaction start, would still accept the lease)."""
+def test_the_claim_clock_is_read_after_waiting_for_locks(fresh: AppDatabase) -> None:
+    """Observe the SQL lock waiter, advance the controlled lease clock, then unlock. The claim clock must be
+    sampled after the wait. This avoids contention sleeps exceeding the configured SQL lock timeout."""
     from policyops.runtime.worker import Context
     from policyops_contracts.events import EscalationRequested
 
     executor = ScriptedExecutor()
     catalog = catalog_of(executor, lease=timedelta(seconds=1), run_timeout=timedelta(minutes=5))
-    api = case_api.build(fresh, catalog=catalog, database_clock=True)
+    api = case_api.build(fresh, catalog=catalog)
     _, browser, _ = team(api)
     run = api.start_run(browser, new_case(api, browser), '"1"').json()["run_id"]
-    worker = api.worker(catalog, database_clock=True)
+    worker = api.worker(catalog)
     token, case_id, spec = worker.claim(*worker.discover()[0]) or (None, None, None)
     assert token is not None and case_id is not None and spec is not None
     context = Context(worker, token, case_id, spec)
@@ -526,7 +527,13 @@ def test_the_database_clock_is_read_after_waiting_for_locks(fresh: AppDatabase) 
     with held(api, "SELECT 1 FROM app.runs WHERE id = %s FOR UPDATE", UUID(run)):
         thread = threading.Thread(target=late_emit)
         thread.start()  # its transaction starts now, before the lease expires, then waits for the run lock
-        time.sleep(1.6)
+        end = time.monotonic() + 5
+        with api.db.superuser() as watcher:
+            while not watcher.execute("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() "
+                                      "AND wait_event_type = 'Lock'").fetchone():
+                assert time.monotonic() < end
+                time.sleep(0.005)
+        api.clock.advance(timedelta(seconds=2))
     thread.join(20)
     assert isinstance(outcome[0], store.Fenced) and outcome[0].reason == "lease_expired"
     assert [t for _, t in event_types(api, run)].count("escalation.requested") == 0
@@ -620,10 +627,12 @@ def test_a_retry_without_a_valid_slot_before_the_deadline_dead_letters(fresh: Ap
 
 @pytest.mark.parametrize("paused", ["waiting_input", "waiting_approval", "reconciling"])
 def test_paused_runs_are_not_executed(api: CaseApi, scripted: ScriptedExecutor, paused: str) -> None:
-    _, browser, _ = team(api)
+    workspace, browser, _ = team(api)
     run = api.start_run(browser, new_case(api, browser), '"1"').json()["run_id"]
-    with api.db.superuser() as conn:  # a state only a later, authorized resume path may continue from
-        conn.execute("UPDATE app.runs SET state = %s WHERE id = %s", (paused, UUID(run)))
+    with workspace_transaction(api.db.engine(APP_RUNTIME), workspace) as conn:
+        row = store.get_run(conn, UUID(run), lock=True)
+        assert row is not None
+        store.set_state(conn, row, paused, api.clock.now())  # type: ignore[arg-type]
     assert api.worker(catalog_of(scripted)).run_once() == 0
     assert scripted.calls == 0 and run_state(api, run) == paused
     assert job_of(api, run)["state"] == "dead" and job_of(api, run)["error"] == "run_not_runnable"

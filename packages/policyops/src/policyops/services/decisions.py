@@ -41,7 +41,12 @@ from policyops.domain.roles import Action, Role, is_allowed
 from policyops.persistence import repositories as repo
 from policyops.persistence import review_jobs
 from policyops.persistence import runs as run_store
-from policyops.persistence.database import DecisionConflict, ImmutableRecord, workspace_transaction
+from policyops.persistence.database import (
+    DecisionConflict,
+    ImmutableRecord,
+    TransactionOutcomeUnknown,
+    workspace_transaction,
+)
 from policyops.persistence.records import AuditEvent
 from policyops.runtime.clock import LeaseClock
 from policyops.services.proposal_views import DecisionRequest
@@ -200,6 +205,8 @@ class DecisionService:
                     reason=decision.reason, correlation_id=uuid4(), occurred_at=checked))
                 review_jobs.enqueue_decision(connection, decision)
                 body_completed = True
+        except TransactionOutcomeUnknown as error:
+            raise DecisionCommitUnknown("the decision commit outcome is unknown") from error
         except DBAPIError as error:
             if body_completed:  # raised by COMMIT: the outcome is unknown
                 raise DecisionCommitUnknown("the decision commit outcome is unknown") from error

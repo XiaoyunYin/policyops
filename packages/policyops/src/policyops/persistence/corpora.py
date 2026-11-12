@@ -5,8 +5,8 @@ The store runs as the app runtime inside `workspace_transaction`, so forced RLS 
 workspace, and it verifies at construction that its engine really authenticates as that restricted role.
 
 **Publication** (`publish`) is one bounded transaction. It does no provider or file I/O; its size is bounded by the
-corpus limits, not its duration, and its SQL waits are not interrupted by any deadline (the accepted SQL-wait
-exception). It:
+corpus limits. Runtime SQL profiles configure per-statement/lock/idle bounds; synchronous SQL can delay cancellation,
+and network/COMMIT acknowledgement ambiguity prevents a total wall-clock bound. It:
 
 1. creates the corpus row if absent and locks it `FOR UPDATE`, then compares it with the snapshot taken at the start
    of the import (compare-and-swap, including the no-existing-corpus case); a difference is `StaleActivation`;

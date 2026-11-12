@@ -16,10 +16,11 @@ import pytest
 
 from policyops.budget.config import Configuration
 from policyops.budget.ledger import Ledger, RunBinding
-from policyops.persistence.budget import build_app_ledger
+from policyops.persistence.runs import Fenced
 from policyops.providers.calls import CallLimits, CallReport, call
 from policyops_contracts.model import Message, ModelRequest, OutputSpec, TextPart
 from policyops_testing.app_database import AppDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
 from policyops_testing.retrieval_fixtures import Handler, Scripted, World, count_reply, luna_reply, openai_json, slow
 
 
@@ -94,9 +95,10 @@ def test_a_run_ended_during_the_count_refuses_dispatch_after_the_count_grant(wor
         return answer
 
     transport = Scripted(counts=[end_then_count])
-    report = go(ledger(world), transport, run, uuid4())
-    assert (report.status, report.reason) == ("failed", "run_not_active")
-    assert flags(report) == (True, False) and attempt_rows(world, run) == [("rerank.r0.a0", "released", "admitted")]
+    with pytest.raises(Fenced, match="run_terminal"):
+        go(ledger(world), transport, run, uuid4())
+    assert transport.seen == ["count"]
+    assert attempt_rows(world, run) == [("rerank.r0.a0", "released", "admitted")]
 
 
 def test_a_count_cap_refusal_has_no_grant(world: World) -> None:

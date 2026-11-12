@@ -75,7 +75,7 @@ def wait_until_claimed(process: subprocess.Popen[str], *, timeout: float) -> Non
 def main() -> int:
     import psycopg
 
-    from policyops.persistence.database import make_engine
+    from policyops.persistence.database import RUNTIME_CONNECT_OPTIONS, make_engine
     from policyops.persistence.roles import APP_RUNTIME, WORKER_DISCOVERY
     from policyops.runtime.clock import DatabaseLeaseClock
     from policyops.runtime.spec import RuntimeCatalog
@@ -89,7 +89,7 @@ def main() -> int:
         return lambda: psycopg.connect(
             host="127.0.0.1", hostaddr="127.0.0.1", port=config["port"], user=role, dbname=config["database"],
             password=config["passwords"][role], sslmode="disable", gssencmode="disable", passfile=config["passfile"],
-            connect_timeout=5, options=SESSION_OPTIONS, client_encoding="UTF8",
+            connect_timeout=5, options=SESSION_OPTIONS + " " + RUNTIME_CONNECT_OPTIONS, client_encoding="UTF8",
             application_name="policyops-worker-process-test")
 
     app = make_engine(connect(APP_RUNTIME), pool_size=2)

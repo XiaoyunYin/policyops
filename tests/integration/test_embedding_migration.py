@@ -25,14 +25,14 @@ from policyops.domain.examples import World
 from policyops.persistence.budget import build_app_ledger
 from policyops.persistence.database import workspace_transaction
 from policyops.persistence.embeddings import EmbeddingStore
-from policyops.persistence.importer import import_synthetic_world
 from policyops.persistence.migration_guard import DataLossRefused
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
+from policyops.persistence.roles import APP_RUNTIME
 from policyops.providers import tokenizer as tk
 from policyops.providers.calls import Providers
 from policyops.providers.embedding_calls import EmbedLimits, prepare_job, run_job
 from policyops_contracts.embedding import EmbeddingJob
 from policyops_testing.app_database import AppCluster, AppDatabase, NewDatabase
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -78,16 +78,19 @@ def counts(database: AppDatabase) -> dict[str, int]:
 
 def populate_0008(database: AppDatabase) -> None:
     """The synthetic world plus one settled operation-scope ledger attempt (0006/0007 rows)."""
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
-    world = World()
-    books = build_app_ledger(env="test", engine=database.engine(APP_RUNTIME), workspace_id=world.workspace,
-                             configuration=Configuration())
-    attempt = uuid4()
-    books.reserve(OperationBinding("legacy", "before-0009"), attempt, "agent", "op.r0.a0", "c" * 64)
-    books.claim_count(attempt, "c" * 64)
-    books.record_count(attempt, tokens=100, source="openai.count")
-    books.begin_dispatch(attempt, "c" * 64)
-    books.settle(attempt, Settlement(Usage(input_total=100, output=10), "req_legacy_1"))
+    from policyops_testing.migration_fixtures import seed_at_head
+
+    with seed_at_head(database):
+        seed_world(database)
+        world = World()
+        books = build_app_ledger(env="test", engine=database.engine(APP_RUNTIME), workspace_id=world.workspace,
+                                 configuration=Configuration())
+        attempt = uuid4()
+        books.reserve(OperationBinding("legacy", "before-0009"), attempt, "agent", "op.r0.a0", "c" * 64)
+        books.claim_count(attempt, "c" * 64)
+        books.record_count(attempt, tokens=100, source="openai.count")
+        books.begin_dispatch(attempt, "c" * 64)
+        books.settle(attempt, Settlement(Usage(input_total=100, output=10), "req_legacy_1"))
 
 
 def test_a_populated_0008_dump_upgrades_to_0009_intact_and_runs_a_job(app_cluster: AppCluster,
@@ -107,9 +110,11 @@ def test_a_populated_0008_dump_upgrades_to_0009_intact_and_runs_a_job(app_cluste
     assert target.current() == "0009"
     assert {table: after[table] for table in before} == before  # nothing changed in pre-existing tables
     assert {table: after[table] for table in NEW_TABLES} == dict.fromkeys(NEW_TABLES, 0)
+    target.upgrade()
     world = World()
     engine = target.engine(APP_RUNTIME, pool_size=6)
-    ledger = build_app_ledger(env="test", engine=engine, workspace_id=world.workspace, configuration=Configuration())
+    ledger = build_app_ledger(env="test", engine=engine, workspace_id=world.workspace,
+                                  configuration=Configuration())
     store = EmbeddingStore(engine, world.workspace, env="test")
     prepared = prepare_job(EmbeddingJob(purpose="ingest", subject_key="after-upgrade", inputs=("One rule.",)),
                            Configuration(), TOKENIZER, deadline=time.monotonic() + 60)
@@ -124,19 +129,23 @@ def test_a_populated_0008_dump_upgrades_to_0009_intact_and_runs_a_job(app_cluste
 
 
 def run_one(database: AppDatabase) -> None:
-    world = World()
-    engine = database.engine(APP_RUNTIME, pool_size=6)
-    ledger = build_app_ledger(env="test", engine=engine, workspace_id=world.workspace, configuration=Configuration())
-    prepared = prepare_job(EmbeddingJob(purpose="ingest", subject_key=f"s-{uuid4().hex[:8]}", inputs=("A rule.",)),
-                           Configuration(), TOKENIZER, deadline=time.monotonic() + 60)
-    report = asyncio.run(run_job(ledger, EmbeddingStore(engine, world.workspace, env="test"), providers(Provider()),
-                                 prepared, deadline=time.monotonic() + 60, limits=FAST))
-    assert report.status == "complete"
+    from policyops_testing.migration_fixtures import seed_at_head
+
+    with seed_at_head(database):
+        world = World()
+        engine = database.engine(APP_RUNTIME, pool_size=6)
+        ledger = build_app_ledger(env="test", engine=engine, workspace_id=world.workspace,
+                                  configuration=Configuration())
+        prepared = prepare_job(EmbeddingJob(purpose="ingest", subject_key=f"s-{uuid4().hex[:8]}", inputs=("A rule.",)),
+                               Configuration(), TOKENIZER, deadline=time.monotonic() + 60)
+        report = asyncio.run(run_job(ledger, EmbeddingStore(engine, world.workspace, env="test"), providers(Provider()),
+                                     prepared, deadline=time.monotonic() + 60, limits=FAST))
+        assert report.status == "complete"
 
 
 def test_a_populated_0009_downgrade_is_refused_unless_explicitly_destructive(new_app_database: NewDatabase) -> None:
     database = new_app_database("emb_downgrade", revision="0009")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     run_one(database)
     with pytest.raises(DataLossRefused, match=r"app\.embedding"):
         database.downgrade("0008")
@@ -171,7 +180,7 @@ def test_an_empty_0009_downgrades_and_upgrades_again_cleanly(new_app_database: N
 def test_named_constraints_hold_for_the_runtime_role(new_app_database: NewDatabase, statement: str,
                                                      constraint: str) -> None:
     database = new_app_database("emb_constraints")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     run_one(database)
     with pytest.raises(IntegrityError, match=constraint), \
             workspace_transaction(database.engine(APP_RUNTIME), World().workspace) as conn:
@@ -181,7 +190,7 @@ def test_named_constraints_hold_for_the_runtime_role(new_app_database: NewDataba
 def test_evidence_usage_must_be_consistent_unless_recorded_as_a_contradiction(
         new_app_database: NewDatabase) -> None:
     database = new_app_database("emb_evidence_check")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     run_one(database)
     with pytest.raises(pg_errors.CheckViolation, match="embedding_evidence_consistent_usage"), \
             database.superuser() as conn:

@@ -18,7 +18,8 @@ spans for replay (with the body digest checked) and, for T14 query-less verifica
 intent row (`step_record`). The span and step-record reads are also available on a caller's own connection
 (`read_spans`, `read_step_record`) for the citation recorder's single transaction.
 
-SQL waits are not interrupted by any deadline (the documented synchronous SQL-wait exception).
+Runtime SQL profiles bound individual statements/locks/idle transactions. Synchronous waits can delay cancellation;
+network and COMMIT ambiguity prevent a total wall-clock guarantee.
 """
 
 from __future__ import annotations
@@ -32,9 +33,17 @@ from uuid import UUID
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError
 
-from policyops.persistence.database import SCOPE_SETTING, verify_runtime_role, workspace_transaction
+from policyops.persistence.database import (
+    DatabaseUnavailable,
+    SqlProfile,
+    classify_sql_failure,
+    connect_runtime,
+    connection_transaction,
+    verify_runtime_role,
+    workspace_transaction,
+)
 from policyops.persistence.roles import APP_RUNTIME
-from policyops.persistence.runs import ACTIVE_STATES
+from policyops.persistence.runs import ACTIVE_STATES, WAITING_STATES
 from policyops.retrieval.rank import ChunkRow, Hit
 
 
@@ -354,7 +363,7 @@ class RetrievalStore:
         Raises `StepRefused` (nothing written) on any failed check or a conflicting stored request."""
         with self._tx() as connection:
             run = _one(connection, "SELECT state FROM app.runs WHERE id = :id FOR SHARE", {"id": run_id})
-            if run is None or run["state"] not in ACTIVE_STATES:
+            if run is None or run["state"] not in ACTIVE_STATES - WAITING_STATES:
                 raise StepRefused("run_not_active")
             existing = _one(connection, "SELECT trace_id, request_sha256 FROM app.retrieval_steps "
                             "WHERE run_id = :run AND step = :step", {"run": run_id, "step": step})
@@ -407,7 +416,7 @@ class RetrievalStore:
         The connection is owned from acquisition: option setup, the transaction and every read run inside the
         protected region, and it is always closed. A close failure after a primary failure is attached to the primary
         as a note (never replacing it); after success it propagates."""
-        connection = self.engine.connect()
+        connection = connect_runtime(self.engine)
         try:
             result = self._snapshot_in(connection, corpus_key=corpus_key, mode=mode, query=query,
                                        query_vector=query_vector, document_ids=document_ids,
@@ -427,9 +436,7 @@ class RetrievalStore:
                      chunks_per_document: int, full_policy_max_chunks: int) -> Snapshot:
         docs = list(document_ids) or None
         connection.execution_options(isolation_level="REPEATABLE READ", postgresql_readonly=True)
-        with connection.begin():
-            connection.execute(text("SELECT set_config(:n, :v, true)"),
-                               {"n": SCOPE_SETTING, "v": str(self.workspace_id)})
+        with connection_transaction(connection, self.workspace_id, profile=SqlProfile.RETRIEVAL):
             head = _one(connection, (
                 "SELECT c.domain, g.id, g.status, g.embedding_model, g.dimension, g.request_config_sha256 "
                 "FROM app.corpora c JOIN app.index_generations g ON g.workspace_id = c.workspace_id "
@@ -500,5 +507,7 @@ class RetrievalStore:
                     {"id": trace_id, "run": run_id, "generation": generation_id, "query": query_sha256,
                      "scope": authorized_scope, "candidates": candidates, "chunks": list(final_chunk_ids)}
                 ).first() is not None
-        except DBAPIError:
+        except DBAPIError as error:
+            if isinstance(classify_sql_failure(error, "body"), DatabaseUnavailable):
+                raise
             raise StepRefused("trace_unavailable", "the trace insert failed") from None

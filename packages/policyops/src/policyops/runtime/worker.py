@@ -42,7 +42,13 @@ from policyops.domain.roles import Action, Role, is_allowed
 from policyops.persistence import repositories as repo
 from policyops.persistence import review_jobs
 from policyops.persistence import runs as store
-from policyops.persistence.database import ImmutableRecord, transaction, verify_runtime_role, workspace_transaction
+from policyops.persistence.database import (
+    ImmutableRecord,
+    SqlProfile,
+    transaction,
+    verify_runtime_role,
+    workspace_transaction,
+)
 from policyops.persistence.roles import APP_RUNTIME, WORKER_DISCOVERY
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
 from policyops.runtime.review import ReviewRuntime
@@ -57,6 +63,7 @@ from policyops.runtime.spec import (
     RuntimeCatalog,
     RuntimeSpec,
     Succeeded,
+    UsageUnconfirmed,
     investigation_message_id,
 )
 from policyops_contracts.errors import ErrorCode
@@ -108,7 +115,7 @@ class Context:
             return store.append_event(connection, run, payload, now).sequence
 
     def heartbeat(self) -> bool:
-        with workspace_transaction(self.worker.app_engine, self.workspace_id) as connection:
+        with workspace_transaction(self.worker.app_engine, self.workspace_id, profile=SqlProfile.LEASE) as connection:
             return store.heartbeat(connection, self.token, lease=self.spec.lease, clock=self.worker.clock)
 
 
@@ -154,7 +161,7 @@ class Worker:
 
     def discover(self) -> list[tuple[UUID, UUID]]:
         kinds = (store.EXECUTE_KIND,) if self.review is None else (store.EXECUTE_KIND, review_jobs.REVIEW_KIND)
-        with transaction(self.discovery_engine) as connection:
+        with transaction(self.discovery_engine, profile=SqlProfile.LEASE) as connection:
             return store.discover_jobs(connection, self.clock.now(connection), self.batch, kinds=kinds)
 
     def run_once(self) -> int:
@@ -204,7 +211,7 @@ class Worker:
     # -- claim ----------------------------------------------------------------------------------------------------
 
     def claim(self, job_id: UUID, workspace_id: UUID) -> tuple[store.ClaimToken, UUID, RuntimeSpec] | None:
-        with workspace_transaction(self.app_engine, workspace_id) as connection:
+        with workspace_transaction(self.app_engine, workspace_id, profile=SqlProfile.LEASE) as connection:
             job_row = store.get_job(connection, job_id)
             if job_row is None:
                 return None
@@ -242,7 +249,7 @@ class Worker:
 
     def _refusal(self, connection: Connection, run: store.Run, job: store.Job, spec: RuntimeSpec | None,
                  now: datetime) -> tuple[str, ErrorCode, str] | None:
-        if job.deadline_at <= now or run.deadline_at <= now:
+        if job.deadline_at <= now or store.remaining_us(run, now) == 0:
             return "deadline_exceeded", ErrorCode.UNAVAILABLE, "runtime.deadline_exceeded"
         if job.attempts >= job.max_attempts:
             return "max_attempts", ErrorCode.UNAVAILABLE, "runtime.max_attempts"
@@ -274,11 +281,24 @@ class Worker:
         try:
             with workspace_transaction(self.app_engine, token.workspace_id) as connection:
                 # Message/proposal finalization shares the case -> run -> job lock order.
-                if isinstance(outcome, InvestigationCompleted | AwaitingApproval):
+                if isinstance(outcome, InvestigationCompleted | AwaitingApproval | UsageUnconfirmed):
                     observed = store.get_run(connection, token.run_id)
                     if observed is None or repo.lock_case(connection, observed.case_id) is None:
                         raise store.Fenced("run_missing")
                 run, job, now = store.check_fence(connection, token, self.clock)
+                if isinstance(outcome, UsageUnconfirmed):
+                    message = repo.append_message(connection,
+                        message_id=investigation_message_id(run.workspace_id, run.id), scope=CaseScope(
+                            workspace_id=run.workspace_id, case_id=run.case_id), source="agent", entered_by=None,
+                        text_value="Investigation stopped: usage is unconfirmed; reserved cost remains held.",
+                        created_at=now)
+                    repo.bump_case_version(connection, run.case_id, now)
+                    store.append_event(connection, run, MessagePosted(message_id=message.message_id,
+                        message_sequence=message.sequence, source="agent"), now)
+                    self._fail_run(connection, run, now, code=ErrorCode.UNAVAILABLE,
+                                   rule_id="investigation.usage_unconfirmed")
+                    store.end_job(connection, job, state="done", now=now, error_code="usage_unconfirmed")
+                    return
                 if isinstance(outcome, Succeeded | InvestigationCompleted | AwaitingApproval | BudgetExceeded):
                     target: store.RunState = "succeeded"
                     if isinstance(outcome, InvestigationCompleted):
@@ -318,7 +338,8 @@ class Worker:
                 elif job.attempts >= job.max_attempts:
                     self._fail_run(connection, run, now, code=ErrorCode.UNAVAILABLE, rule_id="runtime.max_attempts")
                     store.end_job(connection, job, state="dead", now=now, error_code="max_attempts")
-                elif now + backoff(job.attempts) >= job.deadline_at:  # no valid retry slot before the deadline
+                elif (now + backoff(job.attempts) >= job.deadline_at
+                      or store.remaining_us(run, now) <= int(backoff(job.attempts).total_seconds() * 1_000_000)):
                     self._fail_run(connection, run, now, code=ErrorCode.UNAVAILABLE,
                                    rule_id="runtime.deadline_exceeded")
                     store.end_job(connection, job, state="dead", now=now, error_code="deadline_exceeded")

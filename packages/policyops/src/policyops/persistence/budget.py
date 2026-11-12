@@ -14,8 +14,9 @@ the migrator, a superuser or a `SET ROLE` impostor) and refuse a test clock outs
   invocations and scenarios are ensured explicitly (`ensure_*`, with the same replay-or-conflict rule) and an
   attempt binds all three. Usage stays on the attempt row.
 
-Lock order and clock rules are those of `policyops.budget.ledger`: the run row (`FOR SHARE`), then the scopes one by
-one in (kind rank, ID) order, then the attempt. Times are read after the locks.
+Lock order and clock rules are those of `policyops.budget.ledger`: the run and claim job rows, then scopes one by
+one in (kind rank, ID) order, then the attempt. Admission rechecks the claim after every scope/attempt wait;
+settlement and legal release do not require dispatch authority. Times are read after the locks.
 """
 
 from __future__ import annotations
@@ -47,16 +48,16 @@ from policyops.budget.ledger import (
     OperationBinding,
     RunBinding,
     Scope,
-    ScopeInactive,
     ScopeKind,
     ScopeRef,
     Settlement,
 )
 from policyops.budget.prices import PriceSnapshot
+from policyops.persistence import runs
 from policyops.persistence.database import transaction, verify_runtime_role, workspace_transaction
 from policyops.persistence.records import exact_usd
 from policyops.persistence.roles import APP_RUNTIME, EVAL_RUNTIME
-from policyops.persistence.runs import ACTIVE_STATES
+from policyops.persistence.runs import ClaimToken
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, require_test_environment
 
 
@@ -194,17 +195,24 @@ def _same_caps(row: Mapping[str, Any], cap_usd: Decimal, cap_calls: int, what: s
 class _AppTransaction:
     connection: Connection
     clock: LeaseClock
+    claim_token: ClaimToken | None
+
+    def _admit_run(self, run_id: UUID) -> None:
+        token = self.claim_token
+        if token is None:
+            raise runs.Fenced("claim_required")
+        if token.run_id != run_id:
+            raise runs.Fenced("binding_changed")
+        run, job, _ = runs.check_fence(self.connection, token, self.clock, active=True)
+        if run.state != "running" or job.kind != runs.EXECUTE_KIND:
+            raise runs.Fenced("not_investigation_claim")
 
     def now(self) -> datetime:
         return self.clock.now(self.connection)
 
     def bind(self, binding: Binding, caps: Caps) -> tuple[ScopeRef, ...]:
         if isinstance(binding, RunBinding):
-            run = _one(self.connection, "SELECT state FROM app.runs WHERE id = :id FOR SHARE", {"id": binding.run_id})
-            if run is None:
-                raise NotFound(f"no run {binding.run_id}")
-            if run["state"] not in ACTIVE_STATES:
-                raise ScopeInactive(f"run {binding.run_id} is {run['state']}")
+            self._admit_run(binding.run_id)
             params: dict[str, Any] = {"run_id": binding.run_id, "operation_kind": None, "operation_key": None}
             kind: ScopeKind = "run"
             insert, find, cap_usd, cap_calls = INSERT_RUN_SCOPE, FIND_RUN_SCOPE, caps.run_usd, caps.run_calls
@@ -228,14 +236,17 @@ class _AppTransaction:
         return None if row is None else (ScopeRef.of(_kind(row["kind"]), row["scope_id"]),)
 
     def run_active(self, refs: Sequence[ScopeRef]) -> bool:
+        self.check_admission(refs)
+        return True
+
+    def check_admission(self, refs: Sequence[ScopeRef]) -> None:
         for ref in refs:
             if ref.kind == "run":
-                row = _one(self.connection, "SELECT r.state FROM app.runs r JOIN app.budget_scopes s "
-                           "ON s.workspace_id = r.workspace_id AND s.run_id = r.id WHERE s.id = :id FOR SHARE OF r",
+                row = _one(self.connection, "SELECT run_id FROM app.budget_scopes WHERE id = :id",
                            {"id": ref.id})
-                if row is None or row["state"] not in ACTIVE_STATES:
-                    return False
-        return True
+                if row is None:
+                    raise NotFound("no run budget scope")
+                self._admit_run(row["run_id"])
 
     def lock_scopes(self, refs: Sequence[ScopeRef]) -> list[Scope]:
         scopes = []
@@ -291,18 +302,22 @@ def _checked_clock(env: str, clock: LeaseClock | None) -> LeaseClock:
 
 
 class AppLedgerStore:
-    def __init__(self, engine: Engine, workspace_id: UUID, *, env: str, clock: LeaseClock | None = None) -> None:
+    def __init__(self, engine: Engine, workspace_id: UUID, *, env: str, clock: LeaseClock | None = None,
+                 claim_token: ClaimToken | None = None) -> None:
         self.clock = _checked_clock(env, clock)
         if not isinstance(workspace_id, UUID):
             raise TypeError("workspace_id must be a UUID")
         verify_runtime_role(engine, APP_RUNTIME)
         self.engine = engine
         self.workspace_id = workspace_id
+        if claim_token is not None and claim_token.workspace_id != workspace_id:
+            raise runs.Fenced("binding_changed")
+        self.claim_token = claim_token
 
     @contextmanager
     def transaction(self) -> Iterator[_AppTransaction]:
         with workspace_transaction(self.engine, self.workspace_id) as connection:
-            yield _AppTransaction(connection, self.clock)
+            yield _AppTransaction(connection, self.clock, self.claim_token)
 
     def run_scope(self, run_id: UUID) -> Scope | None:
         with workspace_transaction(self.engine, self.workspace_id) as connection:
@@ -317,6 +332,9 @@ class AppLedgerStore:
 class _EvalTransaction:
     connection: Connection
     clock: LeaseClock
+
+    def check_admission(self, refs: Sequence[ScopeRef]) -> None:
+        pass  # evaluation scopes have no application job/claim
 
     def now(self) -> datetime:
         return self.clock.now(self.connection)
@@ -493,8 +511,10 @@ def _check_caps(cap_usd: Decimal, cap_calls: int) -> None:
 # -- composition -------------------------------------------------------------------------------------------------
 
 def build_app_ledger(*, env: str, engine: Engine, workspace_id: UUID, configuration: Configuration,
-                     clock: LeaseClock | None = None, earlier_snapshots: Sequence[PriceSnapshot] = ()) -> Ledger:
-    return Ledger(AppLedgerStore(engine, workspace_id, env=env, clock=clock), configuration, earlier_snapshots)
+                     clock: LeaseClock | None = None, earlier_snapshots: Sequence[PriceSnapshot] = (),
+                     claim_token: ClaimToken | None = None) -> Ledger:
+    return Ledger(AppLedgerStore(engine, workspace_id, env=env, clock=clock, claim_token=claim_token),
+                  configuration, earlier_snapshots)
 
 
 def build_eval_ledger(*, env: str, engine: Engine, configuration: Configuration, clock: LeaseClock | None = None,

@@ -14,10 +14,10 @@ import pytest
 from policyops.domain.examples import World
 from policyops.persistence import migrate
 from policyops.persistence.database import make_engine
-from policyops.persistence.importer import import_synthetic_world
 from policyops.persistence.migration_guard import DataLossRefused, check_tables_empty
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, WORKER_DISCOVERY
+from policyops.persistence.roles import WORKER_DISCOVERY
 from policyops_testing.app_database import AppDatabase, NewDatabase
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -35,7 +35,7 @@ def counts(database: AppDatabase) -> dict[str, int]:
 
 def populated(new_app_database: NewDatabase, label: str) -> tuple[AppDatabase, World]:
     database = new_app_database(label, revision="0004")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     return database, World()
 
 
@@ -203,7 +203,7 @@ def test_a_lossy_0005_downgrade_with_run_ledger_rows(new_app_database: NewDataba
     database = new_app_database("runs_ledger_downgrade")
     _api, run = served_start_and_cancel(database)
     # Current API code requires head. Only the migration under test runs against the historical schema.
-    database.downgrade("0005")
+    database.downgrade("0005", allow_data_loss=True)
     assert ledger(database) == {"case.create": 1, "run.start": 1, "run.cancel": 1}
     before = counts(database)
     with pytest.raises(DataLossRefused, match=r"app\.runs"):  # the default refuses, atomically

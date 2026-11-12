@@ -52,7 +52,7 @@ from policyops.auth.service import (
 )
 from policyops.domain.roles import Action, Role
 from policyops.persistence import repositories as repo
-from policyops.persistence.database import workspace_transaction
+from policyops.persistence.database import DatabaseUnavailable, TransactionOutcomeUnknown, workspace_transaction
 from policyops.settings import AuthSettings
 from policyops_contracts.errors import ErrorCode, ErrorEnvelope
 
@@ -314,6 +314,19 @@ def install_error_boundary(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     def _invalid(_request: Request, _exc: RequestValidationError) -> JSONResponse:
         return error_response(AuthError(422, ErrorCode.INVALID_INPUT, "The request is not valid.", "api.invalid_input"))
+
+    @app.exception_handler(DatabaseUnavailable)
+    def _database_unavailable(_request: Request, _exc: DatabaseUnavailable) -> JSONResponse:
+        envelope = ErrorEnvelope(code=ErrorCode.UNAVAILABLE, detail="The database is temporarily unavailable.",
+                                 rule_id="api.database_unavailable", correlation_id=uuid4(), retryable=True)
+        return JSONResponse(envelope.model_dump(mode="json"), status_code=503, headers=NO_STORE)
+
+    @app.exception_handler(TransactionOutcomeUnknown)
+    def _transaction_unknown(_request: Request, _exc: TransactionOutcomeUnknown) -> JSONResponse:
+        envelope = ErrorEnvelope(code=ErrorCode.UNAVAILABLE,
+                                 detail="The transaction outcome is unknown; retry only the identical request.",
+                                 rule_id="api.transaction_outcome_unknown", correlation_id=uuid4(), retryable=True)
+        return JSONResponse(envelope.model_dump(mode="json"), status_code=503, headers=NO_STORE)
 
     @app.exception_handler(Exception)
     def _unexpected(_request: Request, _exc: Exception) -> JSONResponse:

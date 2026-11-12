@@ -59,7 +59,7 @@ from policyops.api.app import build_auth_runtime, create_app
 from policyops.api.auth import error_response
 from policyops.api.logging import LOG_CONFIG
 from policyops.auth.service import AuthError
-from policyops.persistence.database import RuntimeRoleError, make_engine, verify_runtime_role
+from policyops.persistence.database import DatabaseUnavailable, RuntimeRoleError, make_engine, verify_runtime_role
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops.settings import AuthSettings, DatabaseSettings
 from policyops_contracts.clock import SystemClock
@@ -70,7 +70,8 @@ from policyops_contracts.errors import ErrorCode
 # files and more. These two could silently redirect the configured endpoint, so the server refuses to start with
 # them; every other connection parameter that matters is passed explicitly (see `RuntimeConnector`).
 REFUSED_LIBPQ_ENV = ("PGSERVICE", "PGHOSTADDR")
-SESSION_OPTIONS = "-c timezone=UTC"  # pinned so an ambient PGOPTIONS cannot reach the server
+SESSION_OPTIONS = ("-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=1000 "
+                   "-c idle_in_transaction_session_timeout=5000")  # no ambient PGOPTIONS
 APPLICATION_NAMES = {AUTH_RUNTIME: "policyops-api-auth", APP_RUNTIME: "policyops-api-app"}
 GRACEFUL_SHUTDOWN_SECONDS = 10
 MAX_PROBLEMS, MAX_TEXT = 20, 240
@@ -235,6 +236,11 @@ def _gated_release(connector: RuntimeConnector, engine: Any) -> Callable[[], Non
 
 def _category(error: BaseException) -> str:
     """A fixed description: exception type, SQLSTATE and the (value-free) runtime-role refusal text only."""
+    if isinstance(error, DatabaseUnavailable):
+        if isinstance(error.__cause__, (DBAPIError, psycopg.Error)):
+            return _category(error.__cause__)  # retain the safe driver category through transaction wrapping
+        if error.sqlstate:
+            return f"DatabaseUnavailable (SQLSTATE {error.sqlstate})"
     if isinstance(error, DBAPIError) and error.orig is not None:
         error = error.orig
     if isinstance(error, RuntimeRoleError):

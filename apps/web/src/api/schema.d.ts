@@ -1478,11 +1478,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /**
-             * Deadline At
-             * Format: date-time
-             */
-            deadline_at: string;
+            /** Deadline At */
+            deadline_at: string | null;
             /** Event Highwater */
             event_highwater: number;
             /** Graph Sha256 */

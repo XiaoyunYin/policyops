@@ -63,10 +63,13 @@ def inventory(database: AppDatabase) -> dict[str, str]:
 
 
 def one_step(world: World) -> None:
-    query = RetrievalQuery(text="refunds", run_id=world.run(), step=1, scope=RetrievalScope(corpus_key=KEY),
-                           config=RetrievalConfig(mode="lexical"))
-    result = asyncio.run(world.retriever(Embeddings()).retrieve(query, deadline=time.monotonic() + 60))
-    assert type(result).__name__ == "RetrievalResult", result
+    from policyops_testing.migration_fixtures import seed_at_head
+
+    with seed_at_head(world.db):
+        query = RetrievalQuery(text="refunds", run_id=world.run(), step=1, scope=RetrievalScope(corpus_key=KEY),
+                               config=RetrievalConfig(mode="lexical"))
+        result = asyncio.run(world.retriever(Embeddings()).retrieve(query, deadline=time.monotonic() + 60))
+        assert type(result).__name__ == "RetrievalResult", result
 
 
 def test_a_populated_0010_database_upgrades_to_0011_intact(new_app_database: NewDatabase, tmp_path: Path) -> None:
@@ -87,6 +90,7 @@ def test_a_populated_0010_database_upgrades_to_0011_intact(new_app_database: New
         flags = conn.execute("SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
                              "WHERE oid = 'app.retrieval_steps'::regclass").fetchone()
     assert flags == (True, True)
+    database.upgrade()
     one_step(world)
     # Control: a value rewrite that keeps every count changes the inventory (counts alone would miss it).
     stepped, stepped_rows = counts(database), inventory(database)

@@ -33,13 +33,14 @@ from policyops.budget.ledger import (
 )
 from policyops.budget.pricing import Usage
 from policyops.persistence import repositories as repo
-from policyops.persistence.budget import build_app_ledger, build_eval_ledger
+from policyops.persistence.budget import build_eval_ledger
 from policyops.persistence.database import transaction, workspace_transaction
 from policyops.persistence.migration_guard import DataLossRefused
 from policyops.persistence.records import NewCase, NewRun, Workspace
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME
 from policyops_contracts.digest import text_sha256
 from policyops_testing.app_database import AppDatabase, NewDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
 
 
 pytestmark = pytest.mark.postgres
@@ -57,7 +58,9 @@ def workspace(db: AppDatabase) -> UUID:
 
 def new_run(db: AppDatabase, ws: UUID) -> UUID:
     case, run, now = uuid4(), uuid4(), datetime.now(UTC)
-    with workspace_transaction(db.engine(APP_RUNTIME), ws) as conn:
+    from policyops_testing.migration_fixtures import seed_at_head
+
+    with seed_at_head(db), workspace_transaction(db.engine(APP_RUNTIME), ws) as conn:
         record = repo.create_case(conn, NewCase(id=case, workspace_id=ws, scenario="retail", customer_user_id=None,
                                                 created_by=None, created_at=now))
         repo.create_run(conn, NewRun(id=run, workspace_id=ws, case_id=case, case_version=record.version,
@@ -304,6 +307,7 @@ def test_0007_upgrades_legacy_rows_which_settle_but_never_dispatch(new_app_datab
         row = attempt_row(database, attempt)
         assert (row["version"], row["request"], row["count_state"]) == (1, None, "none")
     assert scope(database, run)["cap_counts"] == 12
+    database.upgrade()
     books = ledger(database, ws)
     books.settle(ids["dispatching"], Settlement(Usage(100, output=1)))  # legal for a v1 attempt
     for refusal in (books.begin_dispatch(ids["reserved"], REQUEST), ):
@@ -338,6 +342,7 @@ def force_flags(database: AppDatabase) -> tuple[bool, ...]:
 
 def test_a_populated_0007_downgrade_is_refused_even_with_allow_data_loss(db: AppDatabase) -> None:
     _ws, _run, _books, _attempt = reserved(db)  # one v2 attempt exists
+    db.downgrade("0007", allow_data_loss=True)
     before = force_flags(db)
     for allow in (False, True):
         with pytest.raises(DataLossRefused, match="0007 downgrade is not supported"):

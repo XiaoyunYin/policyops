@@ -7,11 +7,10 @@ from uuid import uuid4
 import pytest
 
 from policyops.domain.examples import build_examples
-from policyops.persistence.importer import import_synthetic_world
 from policyops.persistence.migrate import MigrationPreconditionError, head
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops_contracts.consent import ApprovalDecision
 from policyops_testing.app_database import NewDatabase
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -19,7 +18,7 @@ pytestmark = pytest.mark.postgres
 
 def test_a_populated_legacy_execution_ledger_refuses_the_upgrade(new_app_database: NewDatabase) -> None:
     database = new_app_database("t19_legacy", revision="0011")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     decision = ApprovalDecision.model_validate_json(build_examples()["approval-decision.json"])
     legacy = uuid4()
     with database.superuser() as conn:  # a row of the 0001 shape: no case, run, request or fingerprint binding

@@ -239,9 +239,11 @@ def list_messages(connection: Connection, scope: CaseScope, *, after_sequence: i
 def create_run(connection: Connection, run: NewRun) -> None:
     connection.execute(text(
         "INSERT INTO app.runs (id, workspace_id, case_id, case_version, mode, graph_sha256, prompt_sha256, "
-        "config_sha256, state, deadline_at, created_at, updated_at) VALUES (:id, :workspace_id, :case_id, "
-        ":case_version, :mode, :graph_sha256, :prompt_sha256, :config_sha256, 'queued', :deadline_at, :created_at, "
-        ":created_at)"), run.model_dump())
+        "config_sha256, state, deadline_at, active_remaining_us, active_started_at, created_at, updated_at) "
+        "VALUES (:id, :workspace_id, :case_id, "
+        ":case_version, :mode, :graph_sha256, :prompt_sha256, :config_sha256, 'queued', :deadline_at, "
+        "(extract(epoch FROM (:deadline_at - CAST(:created_at AS timestamptz))) * 1000000)::bigint, "
+        ":created_at, :created_at, :created_at)"), run.model_dump())
 
 
 def append_run_event(connection: Connection, *, event_id: UUID, workspace_id: UUID, run_id: UUID, event_type: str,

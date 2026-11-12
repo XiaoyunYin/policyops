@@ -35,7 +35,7 @@ def test_discovery_selects_only_composed_job_kinds(monkeypatch: pytest.MonkeyPat
         assert kinds == ((store.EXECUTE_KIND, jobs.REVIEW_KIND) if with_review else (store.EXECUTE_KIND,))
         return candidates
 
-    monkeypatch.setattr(worker_module, "transaction", lambda engine: nullcontext(connection))
+    monkeypatch.setattr(worker_module, "transaction", lambda engine, **kwargs: nullcontext(connection))
     monkeypatch.setattr(store, "discover_jobs", discover)
     worker = Worker(app_engine=engine, discovery_engine=engine, clock=FixedLeaseClock(FixedClock(NOW)),
                     catalog=RuntimeCatalog(), review=cast(ReviewRuntime, object()) if with_review else None)
@@ -109,8 +109,9 @@ def test_completion_fence_keeps_identity_lease_and_delivery_deadline_even_on_can
         monkeypatch: pytest.MonkeyPatch, fault: str | None) -> None:
     from tests.unit.test_runs_unit import run_record
 
-    run = run_record().model_copy(update={"state": "cancelled", "deadline_at": NOW-timedelta(seconds=1)})
-    row = job(workspace_id=run.workspace_id, run_id=run.id, state="leased", claim_id=uuid4(), lease_owner=uuid4(),
+    run = run_record().model_copy(update={"state": "cancelled", "deadline_at": None, "active_started_at": None})
+    row = job(workspace_id=run.workspace_id, run_id=run.id, state="leased", attempts=1,
+              claim_id=uuid4(), lease_owner=uuid4(),
               lease_expires_at=NOW+timedelta(seconds=30), deadline_at=NOW+timedelta(hours=24))
     assert row.claim_id is not None and row.lease_owner is not None
     token = store.ClaimToken(workspace_id=run.workspace_id, run_id=run.id, job_id=row.id,

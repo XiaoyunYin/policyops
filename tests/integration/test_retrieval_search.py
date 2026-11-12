@@ -19,7 +19,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from policyops.budget.config import Caps, Configuration
-from policyops.persistence.budget import build_app_ledger
 from policyops.persistence.embeddings import EmbeddingStore
 from policyops.persistence.retrieval import CANDIDATES_LIMIT, DENSE_SQL, LEXICAL_SQL, SCOPE_LIMIT
 from policyops.providers.embedding_calls import QUERY_PURPOSE, EmbedLimits, prepare_job, run_job
@@ -35,6 +34,7 @@ from policyops_contracts.retrieval import (
     TraceCandidates,
 )
 from policyops_testing.app_database import AppDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
 from policyops_testing.retrieval_fixtures import (
     TOKENIZER,
     Embeddings,

@@ -118,7 +118,7 @@ def flags(record: AttemptRecord) -> tuple[bool, bool]:
 
 def test_the_flags_are_trailing_defaulted_fields_and_positional_construction_still_works() -> None:
     names = [f.name for f in fields(AttemptRecord)]
-    assert names[-2:] == ["count_granted", "dispatch_granted"]
+    assert names[-3:] == ["count_granted", "dispatch_granted", "evidence"]
     record = AttemptRecord(uuid4(), "rerank.r0.a0", "a" * 64)
     assert (record.fate, record.reason, record.cleanup_confirmed, *flags(record)) == (None, None, None, False, False)
 

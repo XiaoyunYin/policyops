@@ -302,9 +302,9 @@ class Executor:
                     if not is_allowed(roles, Action.START_RUN):
                         return PrecheckRefused(ErrorCode.FORBIDDEN, "initiator_not_authorized")
                     # Membership locks can wait; the claim must still be live after that wait.
-                    run_store.check_fence(connection, token, self.clock)
+                    run_store.check_fence(connection, token, self.clock, active=True)
                 now = self.clock.now(connection)
-                if run.terminal or run.deadline_at <= now:
+                if run.terminal or run.active_started_at is None or run_store.remaining_us(run, now) == 0:
                     return PrecheckRefused(ErrorCode.EXPIRED, "run_deadline_exceeded" if not run.terminal
                                            else "run_terminal")
                 execution, created = ledger.reserve(
@@ -390,7 +390,7 @@ class Executor:
             refusal: tuple[str, str] | None = None
             if run.terminal:
                 refusal = ("cancelled_before_dispatch", "cancel")
-            elif run.deadline_at <= now:
+            elif run.active_started_at is None or run_store.remaining_us(run, now) == 0:
                 refusal = ("precheck_refused", "run_deadline_exceeded")
             elif row is None or row.status != "presented" or row.action_digest != execution.action_digest:
                 refusal = ("precheck_refused", "proposal_not_current")

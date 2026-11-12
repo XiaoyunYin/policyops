@@ -10,7 +10,6 @@ from typing import Any
 from langgraph.errors import GraphRecursionError, NodeCancelledError
 from langgraph.graph import START
 from sqlalchemy import Engine
-from sqlalchemy.exc import DBAPIError
 
 from policyops.budget.config import Configuration
 from policyops.budget.ledger import Ledger, RunBinding
@@ -37,8 +36,14 @@ from policyops.persistence import runs
 from policyops.persistence.budget import build_app_ledger
 from policyops.persistence.checkpoints import InvestigationSaver
 from policyops.persistence.citations import CitationRecorder
-from policyops.persistence.database import NotFound, workspace_transaction
+from policyops.persistence.database import (
+    DatabaseUnavailable,
+    NotFound,
+    TransactionOutcomeUnknown,
+    workspace_transaction,
+)
 from policyops.persistence.embeddings import EmbeddingStore
+from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.providers.calls import Providers
 from policyops.providers.serialize import prepare
 from policyops.providers.tokenizer import Tokenizer
@@ -54,6 +59,7 @@ from policyops.runtime.spec import (
     Retry,
     RuntimeSpec,
     StepContext,
+    UsageUnconfirmed,
 )
 from policyops.services.proposals import ProposalService
 from policyops_contracts.clock import Clock, SystemClock
@@ -109,8 +115,12 @@ class InvestigationExecutor:
         except (codec.CheckpointCompatibilityError, codec.CheckpointStateVersionError,
                 codec.CheckpointUnsafeTypeError, NotFound):
             return Failed(ErrorCode.UNAVAILABLE, "investigation.checkpoint_incompatible")
-        except DBAPIError:
+        except asyncio.CancelledError:
+            raise
+        except (DatabaseUnavailable, TransactionOutcomeUnknown):
             return Retry("investigation_database_unavailable")
+        except AccountingUnconfirmed as error:
+            return UsageUnconfirmed(error.report)
         except NodeCancelledError:
             # LangGraph wraps cancellation raised by a node body; resume its durable checkpoint.
             return Retry("investigation_node_cancelled")
@@ -201,9 +211,9 @@ class InvestigationExecutor:
         if state.terminal is not None:
             self.fence(context)
             return outcome(state)
-        deadline = observed_monotonic + max(0.0, (run.deadline_at - now).total_seconds())
+        deadline = observed_monotonic + runs.remaining_us(run, now) / 1_000_000
         ledger = build_app_ledger(env=self.env, engine=self.engine, workspace_id=context.workspace_id,
-                                  configuration=self.configuration, clock=self.clock)
+                                  configuration=self.configuration, clock=self.clock, claim_token=context.claim_token)
         model = (self.test_model(ledger, RunBinding(context.run_id)) if self.test_model is not None else
                  agent_model_port(ledger, RunBinding(context.run_id), self.providers))
         retriever = Retriever(self.engine, context.workspace_id,

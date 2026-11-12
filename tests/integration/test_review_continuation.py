@@ -121,6 +121,29 @@ def test_identical_decision_and_concurrent_job_replay_reserve_once(env: Env) -> 
                                   (env.run.run_id,)).fetchone() == (1,)
 
 
+def test_human_wait_outlives_old_projection_without_refunding_active_allowance(env: Env) -> None:
+    refs = env.approve()
+    with env.db.superuser() as connection:
+        # Fixture-only short allowance. Production creation derives it from the frozen runtime spec.
+        connection.execute("ALTER TABLE app.runs DISABLE TRIGGER runs_active_guard")
+        try:
+            connection.execute("UPDATE app.runs SET active_remaining_us = 180000000, active_started_at = %s, "
+                               "deadline_at = %s WHERE id = %s", (env.clock.now(),
+                               env.clock.now()+timedelta(seconds=180), env.run.run_id))
+        finally:
+            connection.execute("ALTER TABLE app.runs ENABLE TRIGGER runs_active_guard")
+    waiting(env)
+    env.clock.advance(timedelta(seconds=240))
+    handler = runtime(env)
+    assert handler.process(job_of(env).id, env.run.workspace_id, uuid4())
+    with workspace_transaction(env.app, env.run.workspace_id) as connection:
+        run = store.get_run(connection, env.run.run_id)
+        assert run is not None and run.state == "reconciling"
+        assert store.remaining_us(run, env.clock.now()) == 180_000_000
+        assert run.deadline_at == env.clock.now()+timedelta(seconds=180)
+    assert execution(env, refs) is not None and env.effects() == 0
+
+
 @pytest.mark.parametrize("after_reservation", [False, True])
 def test_crash_around_reservation_recovers_one_operation(env: Env, after_reservation: bool,
                                                        monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,13 +260,18 @@ def test_run_deadline_at_dispatch_checkpoint_refuses_even_a_cleared_precheck(env
     def pass_deadline(record: Any) -> None:
         with workspace_transaction(env.app, env.run.workspace_id) as connection:
             run = store.get_run(connection, env.run.run_id)
-            assert run is not None
+            assert run is not None and run.deadline_at is not None
         env.clock.advance(run.deadline_at-env.clock.now())
 
     # The execution lease also needs to outlast the test's deadline boundary.
     with env.db.superuser() as connection:
-        connection.execute("UPDATE app.runs SET deadline_at = %s WHERE id = %s",
-                           (env.clock.now()+timedelta(seconds=1), env.run.run_id))
+        connection.execute("ALTER TABLE app.runs DISABLE TRIGGER runs_active_guard")
+        try:
+            connection.execute("UPDATE app.runs SET active_started_at = %s, active_remaining_us = 1000000, "
+                               "deadline_at = %s WHERE id = %s",
+                               (env.clock.now(), env.clock.now()+timedelta(seconds=1), env.run.run_id))
+        finally:
+            connection.execute("ALTER TABLE app.runs ENABLE TRIGGER runs_active_guard")
     step = env.dispatcher(hooks=CrashHooks(before_checkpoint=pass_deadline)).executor.step(
         env.run.workspace_id, execution_id)
     assert step.state == "failed" and step.code == "run_deadline_exceeded" and env.effects() == 0

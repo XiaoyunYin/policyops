@@ -45,7 +45,7 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.documents": (SI, set()),
         "app.document_versions": (SI, {"status", "effective_to"}),
         "app.runs": (SI, {"state", "model_calls", "tool_calls", "updated_at", "version", "generation",
-                          "event_highwater"}),
+                          "event_highwater", "active_remaining_us", "active_started_at", "deadline_at"}),
         "app.run_events": (SI, set()),
         "app.action_proposals": (SI, {"status", "presented_at"}),
         "app.proposal_presentations": (SI, set()),
@@ -161,7 +161,7 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
     guards = {"app.guard_generation_member()", "app.guard_generation_insert()", "app.guard_generation_transition()",
               "app.check_generation_publication()", "app.guard_citation_insert()",  # 0010 trigger functions
               "app.tool_executions_guard()", "app.tool_executions_refuse_delete()",  # 0012
-              "app.jobs_review_guard()"}  # 0014
+              "app.jobs_review_guard()", "app.runs_active_guard()"}  # 0014
     assert set(acl) == {"app.current_workspace()", "app.guard_action_proposal_update()",
                         "app.refuse_legacy_usage_attempt()"} | guards
     # Owner plus the app runtime only; a PUBLIC entry would appear as "=X/...".

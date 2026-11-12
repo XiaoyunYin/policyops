@@ -31,7 +31,7 @@ from policyops.gateway.stores import PgDecisionStore, PgEvidencePort
 from policyops.persistence import customer_authentications as auth_rows
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs as run_store
-from policyops.persistence.database import transaction, workspace_transaction
+from policyops.persistence.database import DatabaseUnavailable, transaction, workspace_transaction
 from policyops.persistence.records import Membership, NewCase, NewRun, Principal, Workspace
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops.runtime.clock import FixedLeaseClock
@@ -320,20 +320,32 @@ def test_a_revocation_committed_first_refuses_the_decision_even_while_it_waits(t
     proposal = consented(t)
     t.clock.advance(timedelta(seconds=1))
     revoker = t.db.engine(AUTH_RUNTIME).connect()
+    outcome: list[BaseException] = []
+
+    def decide() -> None:
+        try:
+            t.decisions().decide(t.authorized(t.reviewer), proposal.proposal_id, ask(proposal))
+        except BaseException as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=decide)
     try:
         transaction_ = revoker.begin()
         assert repo.revoke_membership(revoker, t.memberships[t.reviewer], t.clock.now())  # holds the row lock
-        outcome: list[Any] = []
-        thread = threading.Thread(target=lambda: outcome.append(refused(lambda: t.decisions().decide(
-            t.authorized(t.reviewer), proposal.proposal_id, ask(proposal)))))
         thread.start()
-        thread.join(timeout=2)
-        assert thread.is_alive()  # waiting on FOR SHARE behind the uncommitted revocation
+        thread.join(timeout=5)
+        assert not thread.is_alive()  # the bounded lock wait must fail before revocation commits
+        assert len(outcome) == 1 and isinstance(outcome[0], DatabaseUnavailable)
+        assert (outcome[0].phase, outcome[0].sqlstate) == ("body", "55P03")
         transaction_.commit()
-        thread.join(timeout=30)
-        assert outcome == [(403, "auth.membership")]
     finally:
         revoker.close()
+        if thread.ident is not None:
+            thread.join(timeout=5)
+    assert not thread.is_alive()
+    # A retry after the revocation commits rechecks membership rather than creating a decision.
+    assert refused(lambda: t.decisions().decide(t.authorized(t.reviewer), proposal.proposal_id, ask(proposal))) == (
+        403, "auth.membership")
     assert counts(t)["decisions"] == 0
 
 

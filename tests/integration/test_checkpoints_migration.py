@@ -1,12 +1,13 @@
+
+
 """0012 -> 0013 preserves old data and refuses to forget checkpoint/replay intent."""
 
 import pytest
 
-from policyops.persistence.importer import import_synthetic_world
 from policyops.persistence.migrate import DataLossRefused, head
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops_testing.app_database import NewDatabase
 from policyops_testing.checkpoint_cases import claimed
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -14,7 +15,7 @@ pytestmark = pytest.mark.postgres
 
 def test_0013_preserves_populated_0012_and_empty_downgrade_reupgrade(new_app_database: NewDatabase) -> None:
     db = new_app_database("t21_upgrade", revision="0012")
-    import_synthetic_world(auth=db.engine(AUTH_RUNTIME), app=db.engine(APP_RUNTIME))
+    seed_world(db)
     with db.superuser() as conn:
         proposals = conn.execute("SELECT id, body::text, status FROM app.action_proposals ORDER BY id").fetchall()
         messages = conn.execute("SELECT id, text_sha256 FROM app.case_messages ORDER BY id").fetchall()
@@ -41,6 +42,7 @@ def test_downgrade_refuses_nonempty_checkpoint_tables(new_app_database: NewDatab
     db = new_app_database("t21_nonempty")
     owner = claimed(db)
     seed(owner)
+    db.downgrade("0014", allow_data_loss=True)
     with pytest.raises(DataLossRefused, match="checkpoints"):
         db.downgrade("0012", allow_data_loss=allow_data_loss)
     assert db.current() == "0013"
@@ -52,7 +54,7 @@ def test_downgrade_refuses_nonempty_checkpoint_tables(new_app_database: NewDatab
 
 def test_proposal_replay_intent_alone_prevents_downgrade(new_app_database: NewDatabase) -> None:
     db = new_app_database("t21_replay_downgrade", revision="0012")
-    import_synthetic_world(auth=db.engine(AUTH_RUNTIME), app=db.engine(APP_RUNTIME))
+    seed_world(db)
     db.upgrade("0013")
     with db.superuser() as conn:
         # The pre-existing all-fields-except-status guard must protect the NEW columns, even for the owner.

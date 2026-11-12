@@ -4,11 +4,18 @@ payload digest and the worst-case trace shape. Offline only."""
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
+from psycopg import Error, errors
 from pydantic import ValidationError
 import pytest
+from sqlalchemy.exc import DBAPIError
 
+from policyops.persistence.database import DatabaseUnavailable, transaction
+from policyops.persistence.retrieval import RetrievalStore, StepRefused
 from policyops.retrieval.search import trace_id_for, valid_vector, worst_case_trace
 from policyops_contracts.retrieval import (
     BranchDocument,
@@ -150,6 +157,48 @@ class _Connection:
         self.closed += 1
         if self.close_fail:
             raise OSError("close failed")
+
+
+@pytest.mark.parametrize("original", [errors.LockNotAvailable(), errors.QueryCanceled(),
+                                      errors.ConnectionFailure(), errors.IdleInTransactionSessionTimeout(),
+                                      errors.CheckViolation()])
+def test_trace_insert_preserves_transient_failure_instead_of_permanent_refusal(
+        original: Error, monkeypatch: pytest.MonkeyPatch) -> None:
+    error = DBAPIError("private SQL", {"private": "values"}, original)
+    log: list[str] = []
+
+    class Connection:
+        def begin(self) -> Any:
+            return SimpleNamespace(commit=lambda: log.append("commit"))
+
+        def execute(self, statement: Any, params: Any = None) -> Any:
+            if "pg_column_size" in str(statement):
+                return SimpleNamespace(one=lambda: (10, 10))
+            if "INSERT INTO app.retrieval_traces" in str(statement):
+                raise error
+            assert "set_config" in str(statement)
+
+        def rollback(self) -> None:
+            log.append("rollback")
+
+        def close(self) -> None:
+            log.append("close")
+
+    store = object.__new__(RetrievalStore)
+    store.engine, store.workspace_id = _Fake(connect=lambda: Connection()), UUID(int=1)  # type: ignore[assignment]
+    expected = StepRefused if isinstance(original, errors.CheckViolation) else DatabaseUnavailable
+    # Keep classification outside the method here so its DBAPIError handler actually
+    # receives the driver failure; the transient must reach the owning transaction.
+    with pytest.raises(expected) as caught, transaction(store.engine) as connection:
+        monkeypatch.setattr(store, "_tx", lambda: nullcontext(connection))
+        store.insert_trace(trace_id=UUID(int=2), run_id=RUN, generation_id=UUID(int=4), query_sha256="a" * 64,
+                           authorized_scope="{}", candidates="{}", final_chunk_ids=())
+    if isinstance(caught.value, DatabaseUnavailable):
+        assert caught.value.sqlstate == original.sqlstate and caught.value.__cause__ is error
+    else:
+        assert isinstance(caught.value, StepRefused)
+        assert caught.value.code == "trace_unavailable"
+    assert log == ["rollback", "close"]
 
 
 @pytest.mark.parametrize(("close_fail", "notes"), [

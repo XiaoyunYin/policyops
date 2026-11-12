@@ -511,7 +511,8 @@ function runView(value: unknown, caseId: string): RunView {
       || typeof value["event_highwater"] !== "number" || !Number.isSafeInteger(value["event_highwater"])
       || typeof value["config_sha256"] !== "string" || typeof value["graph_sha256"] !== "string"
       || typeof value["prompt_sha256"] !== "string" || typeof value["created_at"] !== "string"
-      || typeof value["updated_at"] !== "string" || typeof value["deadline_at"] !== "string") {
+      || typeof value["updated_at"] !== "string"
+      || (value["deadline_at"] !== null && typeof value["deadline_at"] !== "string")) {
     malformed();
   }
   return {

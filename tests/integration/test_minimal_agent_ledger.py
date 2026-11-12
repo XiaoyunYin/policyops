@@ -27,7 +27,6 @@ from policyops.orchestration import minimal
 from policyops.orchestration.minimal import ConversationClosed, MinimalAgent, agent_config, retail_catalog
 from policyops.orchestration.ports import agent_model_port
 from policyops.persistence import repositories as repo
-from policyops.persistence.budget import build_app_ledger
 from policyops.persistence.database import transaction, workspace_transaction
 from policyops.persistence.records import NewCase, NewRun, Workspace
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
@@ -36,6 +35,7 @@ from policyops_contracts.conversation import AgentToolCall, UserMessage
 from policyops_contracts.digest import text_sha256
 from policyops_testing.agent_fakes import FakeTools, fictional_policy
 from policyops_testing.app_database import AppDatabase, NewDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
 
 
 pytestmark = pytest.mark.postgres

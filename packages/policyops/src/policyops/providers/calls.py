@@ -38,7 +38,8 @@ liability, with bounded retries, at most one repair and one absolute deadline. T
 - **Bookkeeping:** ledger bookkeeping runs outside the timed scopes, in its own short transactions, so an expired
   deadline cannot skip it. The provider may still be working after a local cancel; the hold remains.
 
-The T21 fence and active-time integration is deferred: the caller supplies the deadline. The synchronous façade
+Run-bound app ledgers require the investigation claim at admission; callers derive monotonic deadlines from the
+persisted active allowance. SQL profiles bound operations, not total elapsed workflow time. The synchronous façade
 refuses to run inside an existing event loop.
 """
 
@@ -57,8 +58,11 @@ from pydantic import SecretStr
 
 from policyops.budget.config import Actor
 from policyops.budget.ledger import Binding, BudgetExhausted, CountGranted, DispatchGranted, Ledger, Settlement
+from policyops.persistence.database import TransactionOutcomeUnknown
+from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.providers.adapters import CountFailed, Invocation, as_contract_gap, count, invoke
 from policyops.providers.contract import ContractGap, Provider
+from policyops.providers.results import Evidence
 from policyops.providers.serialize import PreparedRequest, prepare
 from policyops_contracts.model import Message, ModelRequest, ModelResult, TextPart
 
@@ -118,6 +122,8 @@ class AttemptRecord:
     # cleared): facts about grants, not proof that any bytes left the process. The ledger stays the billing authority.
     count_granted: bool = False
     dispatch_granted: bool = False
+    # Normalized, bounded billing evidence survives a failed accounting transaction in this process.
+    evidence: Evidence | None = None
 
 
 @dataclass
@@ -140,6 +146,7 @@ class _Pending:
 
     record: AttemptRecord
     phase: Literal["reserved", "counting", "dispatched"] = "reserved"
+    invocation: Invocation | None = None
 
 
 def _repair(request: ModelRequest) -> ModelRequest:
@@ -191,8 +198,11 @@ def _finish_pending(ledger: Ledger, pending: _Pending | None) -> None:
     if pending.phase in ("counting", "dispatched"):
         record.cleanup_confirmed = False  # interrupted while a provider client was open: its close was not observed
     if pending.phase == "dispatched":
-        ledger.mark_unresolved(record.attempt_id)
-        record.fate = "unresolved"
+        if pending.invocation is not None:
+            record.fate = _settle_or_hold(ledger, record.attempt_id, pending.invocation)
+        else:
+            ledger.mark_unresolved(record.attempt_id)
+            record.fate = "unresolved"
         return
     if pending.phase == "counting":
         ledger.record_count(record.attempt_id, tokens=None, source="interrupted")
@@ -288,12 +298,18 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
     except _AttemptExpired:
         # Possibly sent and billed: the hold stays. Its close was never observed, so it is not claimed.
         invocation = Invocation(sent=True, error="timeout", cleanup_confirmed=False)
-    pending[0] = None
     record.cleanup_confirmed = invocation.cleanup_confirmed and record.cleanup_confirmed is not False
     config = ledger.configuration.actors[actor]
     invocation = _count_deviation(invocation, attempt.counted_input_tokens, config.count_headroom_percent,
                                   config.count_headroom_min)
-    record.fate = _settle_or_hold(ledger, attempt_id, invocation)
+    record.evidence = invocation.evidence
+    pending[0] = _Pending(record, "dispatched", invocation)
+    try:
+        record.fate = _settle_or_hold(ledger, attempt_id, invocation)
+    except Exception as error:
+        record.reason = "accounting_unconfirmed"
+        raise AccountingUnconfirmed(report) from error
+    pending[0] = None
     record.reason = invocation.error or (invocation.result.reason_code if invocation.result else None)
     return invocation
 
@@ -345,16 +361,29 @@ async def call(ledger: Ledger, providers: Providers, binding: Binding, invocatio
                               limits or CallLimits(), float(deadline), pending, report)
     except _Stop as stop:
         return stop.report
-    except TimeoutError:
-        _finish_pending(ledger, pending[0])
-        return CallReport(None, "deadline", "deadline", report.attempts)
-    except asyncio.CancelledError:
-        _finish_pending(ledger, pending[0])
+    except (TransactionOutcomeUnknown, AccountingUnconfirmed):
+        # A lost dispatch acknowledgement grants no send authority and no safe release authority.
+        # A failed settlement keeps normalized evidence reachable through the typed error's report.
         raise
-    except Exception:
+    except TimeoutError:
+        try:
+            _finish_pending(ledger, pending[0])
+        except Exception as error:
+            raise AccountingUnconfirmed(report) from error
+        return CallReport(None, "deadline", "deadline", report.attempts)
+    except asyncio.CancelledError as primary:
+        try:
+            _finish_pending(ledger, pending[0])
+        except Exception as cleanup:
+            primary.add_note(f"accounting unconfirmed: {type(cleanup).__name__}; reserved cost remains held")
+        raise
+    except Exception as primary:
         # Anything unexpected: the current attempt is still finished conservatively (unresolved after a grant,
         # released before one), then the error propagates.
-        _finish_pending(ledger, pending[0])
+        try:
+            _finish_pending(ledger, pending[0])
+        except Exception as cleanup:
+            primary.add_note(f"accounting cleanup also failed: {type(cleanup).__name__}")
         raise
 
 

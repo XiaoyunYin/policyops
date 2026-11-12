@@ -24,7 +24,7 @@ from policyops.persistence import executions as ledger
 from policyops.persistence import repositories as repo
 from policyops.persistence import review_jobs as jobs
 from policyops.persistence import runs as store
-from policyops.persistence.database import ImmutableRecord, verify_runtime_role, workspace_transaction
+from policyops.persistence.database import ImmutableRecord, SqlProfile, verify_runtime_role, workspace_transaction
 from policyops.persistence.roles import APP_RUNTIME
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
 from policyops.services.execution import Executor, Reserved, RetailFactory, RetailOperations, ScopeResolver
@@ -154,7 +154,7 @@ class ReviewRuntime:
         return Reserved(execution, False)
 
     def claim(self, job_id: UUID, workspace_id: UUID, owner: UUID) -> store.ClaimToken | None:
-        with workspace_transaction(self.executor.engine, workspace_id) as connection:
+        with workspace_transaction(self.executor.engine, workspace_id, profile=SqlProfile.LEASE) as connection:
             locked = self._locked(connection, job_id)
             if locked is None:
                 return None
@@ -174,10 +174,10 @@ class ReviewRuntime:
                 return None
             # The graph may have presented before its last checkpoint/finish commit. Never fence that claim.
             execute_job = store.execute_job_of(connection, run.id)
-            if (run.state in ("queued", "running") and now < run.deadline_at
+            if (run.state in ("queued", "running") and store.remaining_us(run, now) > 0
                     and execute_job is not None and execute_job.state in ("queued", "leased")):
                 store.end_job(connection, job, state="queued", now=now,
-                              available_at=min(now + DEFER, run.deadline_at))
+                              available_at=now + DEFER)
                 return None
             existing = self._existing(connection, run, binding)
             if job.deadline_at <= now:
@@ -192,7 +192,7 @@ class ReviewRuntime:
             token = store.claim(connection, run, job, owner=owner, lease=jobs.LEASE, now=now)
             if (existing is None and isinstance(binding, jobs.DecisionBinding) and decision is not None
                     and decision.decision == "approve" and run.state == "waiting_approval"
-                    and now < run.deadline_at):
+                    and store.remaining_us(run, now) > 0):
                 updated = store.set_state(connection, run, "reconciling", now)
                 store.append_event(connection, updated, RunStateChanged(previous=run.state, current="reconciling"), now)
             return token
@@ -221,12 +221,12 @@ class ReviewRuntime:
                     return ReviewRefusal(RefusalReason.REVIEW_REJECTED)
             if run.terminal:
                 return ReviewRefusal(RefusalReason.RUN_TERMINAL)
-            if run.deadline_at <= now:
+            if store.remaining_us(run, now) == 0:
                 return ReviewRefusal(RefusalReason.RUN_DEADLINE)
             if row.status != "presented":
                 return ReviewRefusal(RefusalReason.PROPOSAL_STALE)
             if isinstance(binding, jobs.ExpiryBinding):
-                if now < min(proposal.expires_at, run.deadline_at):
+                if now < proposal.expires_at:
                     return ReviewRetry()  # forged early wakeup cannot expire authority
                 return ReviewRefusal(RefusalReason.PROPOSAL_EXPIRED)
             if decision is None:

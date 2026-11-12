@@ -34,7 +34,7 @@ from sqlalchemy import Connection, Engine, text
 
 from policyops.persistence.database import verify_runtime_role, workspace_transaction
 from policyops.persistence.roles import APP_RUNTIME
-from policyops.persistence.runs import ACTIVE_STATES
+from policyops.persistence.runs import ACTIVE_STATES, WAITING_STATES
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, require_test_environment
 
 
@@ -298,7 +298,7 @@ class EmbeddingStore:
         and in an active state (T13: checked before a run-bound job plans, uses the cache or reconciles)."""
         with self._tx() as connection:
             state = connection.execute(text("SELECT state FROM app.runs WHERE id = :id"), {"id": run_id}).scalar()
-        return state in ACTIVE_STATES
+        return state in ACTIVE_STATES - WAITING_STATES
 
     def remaining_seconds(self, job_id: UUID) -> float:
         """Seconds left before the job's immutable deadline, on the database clock (zero or less: expired)."""

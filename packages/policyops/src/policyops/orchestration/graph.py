@@ -26,7 +26,9 @@ from policyops.orchestration.state import (
     InvestigationState,
     state_from_json,
 )
+from policyops.persistence.database import PersistenceError
 from policyops.persistence.runs import Fenced
+from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.runtime.spec import investigation_message_id
 from policyops_contracts.base import WireModel
 from policyops_contracts.conversation import (
@@ -119,7 +121,7 @@ class InvestigationGraph:
                     state = completed(state, kind, text)
                 else:
                     state = await self.dispatch(name, state)
-            except (Fenced, DBAPIError):
+            except (Fenced, DBAPIError, PersistenceError, AccountingUnconfirmed):
                 raise
             except asyncio.CancelledError:
                 # Executor-owned cancellation must propagate so lease loss cannot become a success.

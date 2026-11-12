@@ -233,7 +233,7 @@ Ranked delivery defaults to at most 6 chunks and 4096 cl100k tokens, counted on 
 
 A step is identified by its run and caller-owned step number; the digest of its query, scope and configuration is its request fingerprint. The query embedding is run-bound: exactly one input, reserved in the run's shared budget scope, cached per workspace, with a frozen job and no ambiguous reissue. A hybrid step may fall back to lexical only when explicitly configured and flagged; a strict mode refuses instead, and there is no model fallback. Revision `0011` records an append-only intent per run and step before any provider work, so a retry with a changed query, scope or configuration conflicts instead of silently paying again. A stored trace replays from the immutable version bodies, spans and digests; "current generation" there is only the last observation. A result never establishes current-policy validity, source support or authorization: the calling service must already have authorized the run, case and corpus, and after an activation retires a chunk, refreshing evidence is a new retrieval step by the caller, never reuse of the retired snapshot.
 
-It has been exercised only on synthetic fixture corpora with synthetic vectors and scripted transport; no retrieval-quality, latency, cost or hosted-CI result is claimed. Adjacent-context expansion is deferred to development tuning (T15), HNSW is a later extended task, and synchronous SQL waits are not interrupted by a deadline. See [docs/architecture.md](docs/architecture.md#retrieval-steps) and [docs/database.md](docs/database.md#migrations).
+It has been exercised only on synthetic fixture corpora with synthetic vectors and scripted transport; no retrieval-quality, latency, cost or hosted-CI result is claimed. Adjacent-context expansion is deferred to development tuning (T15), HNSW is a later extended task, and synchronous SQL can delay cancellation; configured SQL timeouts are per operation and do not establish a workflow wall-clock bound. See [docs/architecture.md](docs/architecture.md#retrieval-steps) and [docs/database.md](docs/database.md#migrations).
 
 **Reranking and citation grounding (T14).** Internal, programmatic additions to retrieval; no HTTP route, worker or agent graph calls them. An optional rerank stage, off by default, sends one bounded structured request on the run's shared budget, with mandatory count admission, to reorder a step's first fused documents, which it labels with server-assigned `D` labels and bounded excerpts; an invalid ranking is discarded whole, and the full chunk texts and the evidence-budget rules stay unchanged. A deterministic validator checks a model's cited answer against the run's own stored traces, and a recorder writes citation rows atomically. That establishes the historical identity of an exact quote in delivered evidence only: it is not entailment, consent, approval or authorization (the calling service must authorize the run, case and corpus), and `generation_current` is a last observation. Implemented, with an independent functional review of the internal component and local synthetic runtime checks. No real-provider, quality, saving, latency or hosted-CI result is claimed. See [docs/architecture.md](docs/architecture.md#reranking-and-citation-grounding).
 
@@ -305,9 +305,25 @@ stays unconfirmed and reconciling; it never means success. A late receipt produc
 version. A cancelled run stays cancelled and still receives later execution truth; cancellation cannot undo a
 remote commit. Outcome delivery has a separate 24-hour deadline, ten attempts and 30-second leases.
 
-Limits: the absolute run deadline includes human wait (T23 owns active-time accounting); pre-T22 pending proposals
-are not migrated; dead-lettered summaries have no operational repair tooling; synchronous SQL waits are not hard
-interruptible. See `tests/integration/test_review_outcomes.py` for the approval-to-summary and recovery cases.
+The run's active allowance counts queued, running and reconciling time, including backoff and downtime.
+Only `waiting_input` and `waiting_approval` pause it; duplicate transitions and reclaim do not replenish it.
+`deadline_at` is the current active segment's projection and is null while waiting or terminal. Proposal,
+consent, approval, execution authorization and job delivery deadlines remain absolute UTC. New execute jobs
+have a separate 24-hour delivery deadline. Migration `0015` cannot refund historical wait; upgrade with workers quiescent.
+
+Runtime transactions configure statement / lock / idle-in-transaction timeouts in milliseconds: DEFAULT
+5000 / 1000 / 5000, LEASE 1000 / 250 / 2000, and RETRIEVAL snapshot 15000 / 1000 / 5000. Pool checkout is
+configured for two seconds, and the served API retains its finite connection timeout. These are per-operation
+settings; synchronous SQL can delay cancellation, and network or COMMIT acknowledgement loss prevents a universal
+wall-clock guarantee. A failed COMMIT is an unknown outcome, reconciled by the original IDs before more work.
+Run-bound agent, query-embedding and reranker spending also requires the current investigation claim, rechecked
+inside admission after lock waits. Accounting can finish after fencing.
+
+If accounting fails after dispatch, further dispatch stops. Available normalized usage remains in the process's
+report, and unsettled reservations stay conservatively held; a typed failure summary states the uncertainty.
+There is no billing-evidence outbox: a process crash can lose that available evidence. A lost settlement COMMIT
+acknowledgement may already have settled the attempt; durable state must be checked using the same attempt ID.
+Pre-T22 pending proposals are not migrated, and dead-lettered summaries have no operational repair tooling. See `tests/integration/test_review_outcomes.py` for the approval-to-summary and recovery cases.
 
 [docs/policy-coverage.json](docs/policy-coverage.json) maps every policy rule to its executed cases. See
 [docs/architecture.md](docs/architecture.md#policy-and-tool-gateway).
@@ -417,7 +433,7 @@ Both pytest suites load `tests/support/policyops_testing` as a plugin. It provid
   - Explicitly known secrets must be at least 6 characters. Shorter ones are refused before anything runs or is written, because masking them would destroy ordinary output.
   - Unknown formats can pass. Pytest's own terminal output is not redacted.
 
-PostgreSQL tests (and the real-issuer tests, which also need the pinned Dex image) carry the `postgres` marker and are deselected by default. They cover the harness fixture and the application database: bootstrap, migrations (empty, populated previous revision, failed revision, refused/allowed lossy downgrade), dump/restore into a separate database, the full role/privilege matrix, RLS and pool scope reset, tenant-composite keys, immutability, binding records and optimistic/dedupe races. The run tests cover two-worker contention, a killed worker process and its reclaim, lease expiry and expired-but-unreclaimed writes, the database clock read after a lock wait, cancellation races, dead letters, outbox rollback/coalescing/starvation, the 0005 upgrade/refusals/downgrade and SSE over a real loopback server (positions, gaps, revocation mid-stream, lifetime). The budget ledger tests hold the contended scope row while competing reservations, dispatch grants, releases and settlements queue on it. They also cover overruns, cancellation, provider request ID reuse, tenancy, the eval study chain, role and grant refusals, and the 0006 upgrade and guarded downgrade. The case API tests drive the served app over HTTP: roles, tenancy and foreign IDs, same-key and separate-key races, original-response replay (also after a lost response), stale versions, revocation while waiting for a lock, rollback, body bounds, cursors, every response checked against the OpenAPI document and real bodies compiled against the generated TypeScript (this one needs Node and `npm ci` in `apps/web`). The restart self-test uses a separate owned server and leaves the shared test server untouched; it verifies a small fixture data set. Representative application shutdown and recovery validation remains pending. The PostgreSQL tests need Docker with Linux containers and the pinned image, which they never pull themselves:
+PostgreSQL tests (and the real-issuer tests, which also need the pinned Dex image) carry the `postgres` marker and are deselected by default. They cover the harness fixture and the application database: bootstrap, migrations (empty, populated previous revision, failed revision, refused/allowed lossy downgrade), dump/restore into a separate database, the full role/privilege matrix, RLS and pool scope reset, tenant-composite keys, immutability, binding records and optimistic/dedupe races. The run tests cover two-worker contention, a killed worker process and its reclaim, lease expiry and expired-but-unreclaimed writes, the claim clock read after a synchronized lock wait, cancellation races, dead letters, outbox rollback/coalescing/starvation, the 0005 upgrade/refusals/downgrade and SSE over a real loopback server (positions, gaps, revocation mid-stream, lifetime). The budget ledger tests hold the contended scope row while competing reservations, dispatch grants, releases and settlements queue on it. They also cover overruns, cancellation, provider request ID reuse, tenancy, the eval study chain, role and grant refusals, and the 0006 upgrade and guarded downgrade. The case API tests drive the served app over HTTP: roles, tenancy and foreign IDs, same-key and separate-key races, original-response replay (also after a lost response), stale versions, revocation while waiting for a lock, rollback, body bounds, cursors, every response checked against the OpenAPI document and real bodies compiled against the generated TypeScript (this one needs Node and `npm ci` in `apps/web`). The restart self-test uses a separate owned server and leaves the shared test server untouched; it verifies a small fixture data set. Representative application shutdown and recovery validation remains pending. The PostgreSQL tests need Docker with Linux containers and the pinned image, which they never pull themselves:
 
 ```powershell
 docker pull pgvector/pgvector@sha256:01215e09bd4bd582d20230e025b6c971deeeffee49ceef1aae167e839cb62a7e
@@ -477,8 +493,8 @@ Graph identity uses an explicit semantic version plus topology, state schema and
 in-flight runs through unrelated source edits while requiring a deliberate version bump for behavioral changes.
 
 SQL and gateway calls are synchronous and can block the event loop, heartbeat and cancellation: there is no hard
-deadline guarantee. Node-entry fences cannot eliminate the race in which a fenced worker reserves a model call
-before dispatch; a budget-admission claim fence is deferred to T23. Checkpoints do not supply provider-result
+deadline guarantee. The run-bound ledger checks the investigation claim at reservation, count and dispatch admission, including
+a post-lock-wait recheck. A previously admitted in-flight provider call cannot be unsent by a later fence. Checkpoints do not supply provider-result
 replay, remote exactly-once execution, customer consent or staff approval.
 
 ## Data and licensing

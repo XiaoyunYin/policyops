@@ -42,7 +42,7 @@ An attempt is one accounted provider request; a retry is a new attempt. Its oper
 ## Locks and time
 
 Every operation locks in one fixed order:
-1. the run row (`FOR SHARE`), only for reserve and dispatch, so a concurrent cancellation is ordered before or after;
+1. run and claim job rows for run-bound admission (reserve/count/dispatch), ordered against reclaim/cancellation;
 2. the scope rows, ordered by (kind rank, ID);
 3. the attempt row.
 
@@ -401,6 +401,10 @@ class LedgerTransaction(Protocol):
         """Lock the run of a run scope among `refs` (`FOR SHARE`) and report whether it is active; True otherwise."""
         ...
 
+    def check_admission(self, refs: Sequence[ScopeRef]) -> None:
+        """Recheck dispatch authority after scope/attempt waits, immediately before granting new work."""
+        ...
+
     def lock_scopes(self, refs: Sequence[ScopeRef]) -> list[Scope]:
         """Lock the scopes `FOR UPDATE`, one by one in the given order."""
         ...
@@ -476,6 +480,7 @@ class Ledger:
                             planned.cache_mode, planned.max_input, planned.max_output, operation_id,
                             planned.worst_usd, tuple(ref.id for ref in refs), request_sha256)
             existing = tx.lock_attempt(attempt_id)
+            tx.check_admission(refs)
             if existing is not None:
                 if existing.intent_sha256 != intent.digest():
                     raise LedgerConflict(f"attempt {attempt_id} was reserved with a different intent")
@@ -523,6 +528,7 @@ class Ledger:
             refs = self._refs(tx, attempt_id)
             active = tx.run_active(refs)
             scopes, attempt = self._lock(tx, attempt_id, refs)
+            tx.check_admission(refs)
             if attempt.intent.version != 2:
                 return CountRefused(attempt, "legacy_intent")
             if attempt.intent.request_sha256 != request_sha256:
@@ -578,6 +584,7 @@ class Ledger:
             refs = self._refs(tx, attempt_id)
             active = tx.run_active(refs)
             scopes, attempt = self._lock(tx, attempt_id, refs)
+            tx.check_admission(refs)
             if attempt.state != "reserved":
                 return DispatchRefused(attempt, attempt.state)
             if attempt.intent.version != 2:

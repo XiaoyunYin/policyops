@@ -134,7 +134,7 @@ def run_record() -> store.Run:
     return store.Run(id=uuid4(), workspace_id=uuid4(), case_id=uuid4(), case_version=1, mode="workbench",
                      graph_sha256="a" * 64, prompt_sha256="b" * 64, config_sha256="c" * 64, state="running",
                      initiated_by=None, generation=1, event_highwater=3, event_retention_floor=0, deadline_at=NOW,
-                     created_at=NOW, updated_at=NOW, version=2)
+                     active_remaining_us=0, active_started_at=NOW, created_at=NOW, updated_at=NOW, version=2)
 
 
 def row(*, schema: str = "policyops.run-event/v1", event_type: str = "escalation.requested",

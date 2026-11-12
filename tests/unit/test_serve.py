@@ -23,13 +23,14 @@ import httpx
 import psycopg
 from pydantic import SecretStr
 import pytest
+from sqlalchemy.exc import DBAPIError
 import uvicorn
 
 from policyops.api import app as app_module
 from policyops.api import serve
 from policyops.api.logging import LOG_CONFIG
 from policyops.auth.oidc import OidcClient
-from policyops.persistence.database import RuntimeRoleError
+from policyops.persistence.database import DatabaseUnavailable, RuntimeRoleError
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops.settings import DatabaseSettings
 from policyops_contracts.clock import SystemClock
@@ -206,7 +207,8 @@ def test_connector_pins_endpoint_identity_and_session(configured: dict[str, str]
     assert opened == ["connection", "connection"]
     common = {"host": "127.0.0.1", "hostaddr": "127.0.0.1", "port": 5432, "dbname": "policyops",
               "sslmode": "disable", "gssencmode": "disable", "require_auth": "scram-sha-256", "connect_timeout": 5,
-              "options": "-c timezone=UTC", "client_encoding": "UTF8"}
+              "options": "-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=1000 "
+                         "-c idle_in_transaction_session_timeout=5000", "client_encoding": "UTF8"}
     assert calls[0] == {**common, "user": AUTH_RUNTIME, "password": SECRETS["POLICYOPS_DB_AUTH_PASSWORD"],
                         "application_name": "policyops-api-auth"}
     assert calls[1] == {**common, "user": APP_RUNTIME, "password": SECRETS["POLICYOPS_DB_APP_PASSWORD"],
@@ -490,6 +492,18 @@ def test_build_auth_runtime_closes_its_oidc_client_when_wiring_fails(world: Worl
 def test_connection_failures_render_fixed_labels_only(message: str, label: str) -> None:
     category = serve._category(psycopg.OperationalError(message))
     assert category == f"OperationalError (no SQLSTATE: {label})"
+    assert_no_canary(category)
+
+
+@pytest.mark.parametrize("driver", [psycopg.OperationalError(f"Connection refused {CANARY}"),
+                                  psycopg.errors.LockNotAvailable(CANARY)])
+def test_classified_database_failure_keeps_safe_startup_category(driver: psycopg.Error) -> None:
+    original = DBAPIError("private SQL", {"password": CANARY}, driver)
+    wrapped = DatabaseUnavailable("acquire", driver.sqlstate)
+    wrapped.__cause__ = original
+    category = serve._category(wrapped)
+    assert category == serve._category(driver)
+    assert "connection refused" in category or "SQLSTATE 55P03" in category
     assert_no_canary(category)
 
 

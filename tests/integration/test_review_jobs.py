@@ -1,3 +1,5 @@
+
+
 """Review migration, scoped bindings, tombstones, rejection and no-consent expiry on PostgreSQL."""
 
 from collections.abc import Iterator
@@ -33,6 +35,7 @@ from policyops.services.review_outcomes import refusal_message_id
 from policyops_contracts.scalars import RunScope
 from policyops_testing.app_database import AppCluster, NewDatabase
 from policyops_testing.gateway_cases import FakeRetail, state
+from policyops_testing.migration_fixtures import seed_world
 from tests.integration import test_proposal_evidence as evidence_tests
 from tests.integration.test_investigation import scenario
 from tests.integration.test_proposal_decisions import Tenant, ask, consented, created, tenant
@@ -113,15 +116,20 @@ def test_no_consent_expiry_ends_without_a_decision_or_provider(new_app_database:
     proposal = created(t)
     if deadline_first:
         with t.db.superuser() as connection:
-            connection.execute("UPDATE app.runs SET deadline_at = %s WHERE id = %s",
-                               (t.clock.now()+timedelta(seconds=30), t.run.run_id))
+            connection.execute("ALTER TABLE app.runs DISABLE TRIGGER runs_active_guard")
+            try:
+                connection.execute("UPDATE app.runs SET active_started_at = %s, active_remaining_us = 30000000, "
+                                   "deadline_at = %s WHERE id = %s",
+                                   (t.clock.now(), t.clock.now()+timedelta(seconds=30), t.run.run_id))
+            finally:
+                connection.execute("ALTER TABLE app.runs ENABLE TRIGGER runs_active_guard")
     assert isinstance(t.proposals().present(t.run, proposal.proposal_id, 1), Presented)
     waiting(t)
     job = job_of(t, "expiry")
     assert not no_retail(t).process(job.id, t.run.workspace_id, uuid4())  # not due
     t.clock.advance(job.available_at-t.clock.now())
     assert no_retail(t).process(job.id, t.run.workspace_id, uuid4())
-    assert job_of(t, "expiry").last_error_code == ("run_deadline_exceeded" if deadline_first else "proposal_expired")
+    assert job_of(t, "expiry").last_error_code == "proposal_expired"
     assert t.value("SELECT state FROM app.runs WHERE id = %s", t.run.run_id) == "failed"
     assert t.count("SELECT count(*) FROM app.approval_decisions WHERE run_id = %s", t.run.run_id) == 0
     assert t.count("SELECT count(*) FROM app.tool_executions WHERE run_id = %s", t.run.run_id) == 0
@@ -136,9 +144,12 @@ def test_completed_tombstone_refuses_downgrade_even_with_override(new_app_databa
     t.decisions().decide(t.authorized(t.reviewer), proposal.proposal_id, ask(proposal, decision="reject"))
     job = job_of(t, "decision")
     no_retail(t).process(job.id, t.run.workspace_id, uuid4())
+    t.db.downgrade("0014", allow_data_loss=True)
     with pytest.raises(DataLossRefused, match="tombstones"):
         t.db.downgrade("0013", allow_data_loss=allow_data_loss)
-    assert t.db.current() == head() and job_of(t, "decision").state == "done"
+    assert t.db.current() == "0014"
+    t.db.upgrade()
+    assert job_of(t, "decision").state == "done"
     with t.db.superuser() as connection:
         for sql in ("DELETE FROM app.jobs WHERE id = %s", "UPDATE app.jobs SET state = 'queued' WHERE id = %s",
                     "UPDATE app.jobs SET proposal_version = 2 WHERE id = %s"):
@@ -147,16 +158,14 @@ def test_completed_tombstone_refuses_downgrade_even_with_override(new_app_databa
 
 
 def test_upgrade_preserves_ordinary_jobs_and_empty_review_downgrade_roundtrip(new_app_database: NewDatabase) -> None:
-    from policyops.persistence.importer import import_synthetic_world
-    from policyops.persistence.roles import AUTH_RUNTIME
 
     db = new_app_database("t22_upgrade", revision="0013")
-    import_synthetic_world(auth=db.engine(AUTH_RUNTIME), app=db.engine(APP_RUNTIME))
+    seed_world(db)
     with db.superuser() as connection:
         before = connection.execute("SELECT id, request_sha256, state FROM app.jobs ORDER BY id").fetchall()
         assert connection.execute("SELECT has_column_privilege(%s, 'app.jobs', 'kind', 'SELECT')",
                                   (WORKER_DISCOVERY,)).fetchone() == (False,)
-    db.upgrade()
+    db.upgrade("0014")
     with db.superuser() as connection:
         assert connection.execute("SELECT id, request_sha256, state FROM app.jobs ORDER BY id").fetchall() == before
         assert connection.execute("SELECT has_column_privilege(%s, 'app.jobs', 'kind', 'SELECT')",

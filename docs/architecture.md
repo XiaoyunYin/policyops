@@ -831,8 +831,8 @@ use.
 
 A failed or interrupted import leaves the previous generation active; failed jobs keep their accounting and cache.
 Step 5 partly re-reads values this process just wrote: it catches database-side differences, and is not an
-independent oracle. The `0010` guards independently prevent later rows in a published generation. SQL waits are
-not interrupted by any deadline (the accepted SQL-wait exception), so no wall-clock bound on the publish is claimed,
+independent oracle. The `0010` guards independently prevent later rows in a published generation. Runtime SQL statements, lock waits and idle transactions have configured finite timeout profiles. Synchronous
+SQL can still delay cancellation, so no total wall-clock bound on publication is claimed,
 and no duration, row or byte measurements of a real corpus import are reported here.
 
 **Citation read** (`CorpusStore.resolve_citation_text`). A narrow typed read port returns the cited span from the
@@ -883,7 +883,7 @@ T13: an internal, programmatic retrieval step (`policyops.retrieval` `search.py`
 **Limits.**
 - The tests use synthetic fixture corpora, synthetic vectors, synthetic credentials and a scripted provider transport. A passing semantic fixture shows mechanics, not retrieval quality, and no real-corpus query result exists.
 - The local retrieval budget counts cl100k tokens of the formatted evidence string. It is not a provider token count and not the size of any serialized model prompt; provider request tokens and live limits are measured separately with the providers' counting (see the token notes in the data provenance page).
-- SQL transactions (intent, snapshot, size measurement, trace insert) are not interrupted by deadlines and there is no per-statement timeout; provider awaits (the embedding request and, when enabled, the rerank request) can be cancelled, while synchronous SQL remains non-interruptible. No hard wall-clock bound is claimed.
+- SQL transactions (intent, snapshot, size measurement, trace insert) are not interrupted by deadlines and runtime transactions set finite statement, lock and idle-in-transaction timeouts; provider awaits (the embedding request and, when enabled, the rerank request) can be cancelled, while synchronous SQL remains non-interruptible. No hard wall-clock bound is claimed.
 - Intent rows are permanent per run and step. Exact dense search is linear in generation size; no timing or plan on the real corpus is measured here. There is no approximate index (HNSW is a later extended task); reranking is optional and off by default, and no claim-support (entailment) validation exists.
 
 ## Reranking and citation grounding
@@ -1190,7 +1190,7 @@ PostgreSQL as the runtime and discovery roles.
   claimant fences. Once-per-order tools with their own
   unresolved execution are fenced rather than resent. Past the reconciliation cap a row stays `unknown`,
   unscheduled and holding its target: explicitly unresolved, never guessed.
-- **Limits.** PostgreSQL lock waits and COMMIT are synchronous and not interrupted; an in-flight request cannot be
+- **Limits.** PostgreSQL uses configured per-statement, lock and idle timeout profiles, but SQL and COMMIT are synchronous and can delay cancellation; an in-flight request cannot be
   cancelled; the token's lease cap narrows a stale worker's window but is no COMMIT deadline. The component assumes
   one coherent retail database and ledger lifetime with no independent ledger deletion and no retail reset while
   operations are unresolved: such a reset is not detected (T38). `LedgerHistory` is complete only for a simulator

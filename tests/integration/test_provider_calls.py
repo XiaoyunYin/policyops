@@ -23,7 +23,7 @@ import pytest
 from policyops.budget.config import DEFAULT_ACTORS, Caps, ChatActor, Configuration
 from policyops.budget.ledger import EvalBinding, Ledger, LedgerConflict, RunBinding
 from policyops.persistence import repositories as repo
-from policyops.persistence.budget import build_app_ledger, build_eval_ledger
+from policyops.persistence.budget import build_eval_ledger
 from policyops.persistence.database import transaction, workspace_transaction
 from policyops.persistence.records import NewCase, NewRun, Workspace
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME
@@ -34,6 +34,7 @@ from policyops.providers.serialize import prepare
 from policyops_contracts.digest import text_sha256
 from policyops_contracts.model import Message, ModelRequest, ModelResult, OutputSpec, TextPart
 from policyops_testing.app_database import AppDatabase, NewDatabase
+from policyops_testing.claims import component_ledger as build_app_ledger
 
 
 pytestmark = pytest.mark.postgres

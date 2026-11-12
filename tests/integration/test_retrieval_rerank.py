@@ -23,7 +23,10 @@ import pytest
 
 from policyops.budget.config import DEFAULT_ACTORS, Caps, ChatActor, Configuration
 from policyops.persistence.budget import build_app_ledger
+from policyops.persistence.database import DatabaseUnavailable
 from policyops.persistence.embeddings import EmbeddingStore
+from policyops.persistence.runs import Fenced
+from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.providers.embedding_calls import BindingMismatch
 from policyops.retrieval.rerank import RERANK_OPERATION, _ModelReranker
 from policyops.retrieval.search import Retriever
@@ -288,8 +291,10 @@ def test_a_run_ended_during_the_rerank_count_refuses(world: World) -> None:
         return reply
 
     transport = Scripted(counts=[end_then_count])
-    result = refused(go(world.retriever(transport, rerank=True), step(run, mode="lexical")), "run_not_active")
-    assert result.invocation == work(0, 1, 0) and transport.seen == ["count"]
+    with pytest.raises(Fenced, match="run_terminal"):
+        go(world.retriever(transport, rerank=True), step(run, mode="lexical"))
+    assert transport.seen == ["count"] and world.count("app.retrieval_traces") == 0
+    assert rerank_attempts(world, run) == [("released", "admitted")]
 
 
 # -- gating and bounds ---------------------------------------------------------------------------------------------
@@ -589,16 +594,17 @@ def test_the_lock_holder_owns_its_thread_through_every_startup_failure() -> None
     assert quick.thread is not None and not quick.thread.is_alive()
 
 
-def test_late_ledger_bookkeeping_after_a_valid_answer_is_a_timeout(world: World) -> None:
+def test_late_ledger_bookkeeping_after_a_valid_answer_stops_with_unconfirmed_usage(world: World) -> None:
     """Composed: the real SDK answers within the local cap, then the real ledger settlement waits on the run's budget
-    scope row (held by a test transaction) past the cap. The valid ranking is not used; the bill settles."""
+    scope row past the SQL lock cap. The valid ranking is not used; available usage and the hold are retained."""
     run = world.run()
+    release = threading.Event()
 
     def lock_the_scope(locked: threading.Event) -> None:
         with world.db.superuser() as conn, conn.transaction():
             conn.execute("SELECT 1 FROM app.budget_scopes WHERE run_id = %s FOR UPDATE", (run,))
             locked.set()
-            time.sleep(1.6)
+            assert release.wait(10)
 
     with scope_lock_holder(lock_the_scope) as holder:
         def answer_then_lock(request: httpx2.Request) -> httpx2.Response:
@@ -609,9 +615,19 @@ def test_late_ledger_bookkeeping_after_a_valid_answer_is_a_timeout(world: World)
             return reply
 
         transport = Scripted(counts=[count_reply(900)], creates=[answer_then_lock])
-        result = ok(go(world.retriever(transport, rerank=True), step(run, mode="lexical",
-                                                                     rerank=RerankConfig(seconds=1))))
+        try:
+            with pytest.raises(AccountingUnconfirmed) as stopped:
+                go(world.retriever(transport, rerank=True), step(run, mode="lexical",
+                                                                rerank=RerankConfig(seconds=1)))
+        finally:
+            release.set()
     assert holder.thread is not None and not holder.thread.is_alive()
-    assert result.rerank is not None and (result.rerank.status, result.rerank.reason) == ("timeout", "late_result")
-    assert result.invocation == work(0, 1, 1) and transport.seen == ["count", "create"]
-    assert rerank_attempts(world, run) == [("settled", "admitted")]
+    assert isinstance(stopped.value.__cause__, DatabaseUnavailable)
+    assert (stopped.value.__cause__.phase, stopped.value.__cause__.sqlstate) == ("body", "55P03")
+    report = stopped.value.report
+    assert report.attempts[0].evidence is not None and report.attempts[0].dispatch_granted
+    assert transport.seen == ["count", "create"] and world.count("app.retrieval_traces") == 0
+    assert rerank_attempts(world, run) == [("dispatching", "admitted")]
+    with world.db.superuser() as conn:
+        assert conn.execute("SELECT held_usd > 0 FROM app.budget_scopes WHERE run_id = %s", (run,)).fetchone() == (
+            True,)

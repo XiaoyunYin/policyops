@@ -14,19 +14,19 @@ from policyops.domain.examples import World
 from policyops.persistence import bootstrap, migrate
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import workspace_transaction
-from policyops.persistence.importer import AlreadyImported, import_synthetic_world
+from policyops.persistence.importer import AlreadyImported
 from policyops.persistence.migrate import DataLossRefused
 from policyops.persistence.records import UsageEvent
 from policyops.persistence.roles import (
     ALL_ROLES,
     APP_MIGRATOR,
     APP_RUNTIME,
-    AUTH_RUNTIME,
     RUNTIME_ROLES,
     RolePassword,
     scram_sha256_verifier,
 )
 from policyops_testing.app_database import AppCluster, AppDatabase, NewDatabase
+from policyops_testing.migration_fixtures import seed_world
 
 
 pytestmark = pytest.mark.postgres
@@ -100,7 +100,7 @@ def test_populated_previous_revision_upgrades_with_data_intact(new_app_database:
     first, *_ = migrate.revisions()
     database = new_app_database("previous", revision=first)
     assert database.current() == first and "app.chunks" not in _tables(database)
-    report = import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    report = seed_world(database)
     before = _counts(database)
     assert before["app.case_messages"] == report.messages == 11 and before["app.approval_decisions"] == 1
     database.upgrade()
@@ -109,7 +109,7 @@ def test_populated_previous_revision_upgrades_with_data_intact(new_app_database:
     assert {table: after[table] for table in before} == before  # nothing changed in pre-existing tables
     assert after["app.chunks"] == after["evaluation.evaluation_runs"] == 0
     with pytest.raises(AlreadyImported):
-        import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+        seed_world(database)
 
 
 def test_failed_revision_rolls_back_alone(new_app_database: NewDatabase) -> None:
@@ -130,7 +130,7 @@ def test_failed_revision_rolls_back_alone(new_app_database: NewDatabase) -> None
 def test_lossy_downgrade_is_refused_unless_explicitly_allowed(new_app_database: NewDatabase) -> None:
     first, second, *_ = migrate.revisions()
     database = new_app_database("downgrade")
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     world = World()
     with workspace_transaction(database.engine(APP_RUNTIME), world.workspace) as conn:
         repo.record_usage(conn, UsageEvent(
@@ -182,7 +182,7 @@ def _security_snapshot(database: AppDatabase) -> dict[str, object]:
 def test_restore_into_a_separate_database_preserves_rows_and_security(app_cluster: AppCluster,
                                                                       new_app_database: NewDatabase) -> None:
     source = new_app_database("restore_src")
-    import_synthetic_world(auth=source.engine(AUTH_RUNTIME), app=source.engine(APP_RUNTIME))
+    seed_world(source)
     target = new_app_database("restore_dst", extensions=False, revision=None)  # empty database, grants only
     dump = app_cluster.server.dump_and_restore(source.name, target.name)
     assert dump.is_file() and dump.stat().st_size > 0
@@ -294,7 +294,7 @@ def test_0003_upgrades_populated_data_and_refuses_lossy_downgrade(new_app_databa
 
     _, second, third, *_ = migrate.revisions()
     database = new_app_database("auth_upgrade", revision=second)
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     world = World()
     with database.superuser() as conn:
         conn.execute("INSERT INTO identity.sessions (id, principal_id, cookie_sha256, created_at, expires_at) "
@@ -326,7 +326,7 @@ def test_0004_upgrades_populated_data_and_guards_the_response_ledger(new_app_dat
 
     _, _, third, fourth, *_ = migrate.revisions()
     database = new_app_database("idempotency_upgrade", revision=third)
-    import_synthetic_world(auth=database.engine(AUTH_RUNTIME), app=database.engine(APP_RUNTIME))
+    seed_world(database)
     world = World()
     before = _counts(database)
     database.upgrade(fourth)

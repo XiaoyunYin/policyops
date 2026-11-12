@@ -112,7 +112,7 @@ def enqueue_decision(connection: Connection, decision: ApprovalDecision) -> UUID
 def enqueue_expiry(connection: Connection, run: store.Run, proposal: ActionProposal, presented_at: datetime) -> UUID:
     return enqueue(connection, NewReviewJob(workspace_id=run.workspace_id, run_id=run.id,
         binding=ExpiryBinding(proposal_id=proposal.proposal_id, proposal_version=proposal.proposal_version),
-        available_at=min(proposal.expires_at, run.deadline_at), created_at=presented_at))
+        available_at=proposal.expires_at, created_at=presented_at))
 
 
 def enqueue_outcome(connection: Connection, execution: ExecutionRecord) -> UUID:
@@ -147,8 +147,8 @@ def check_claim(connection: Connection, token: store.ClaimToken, clock: LeaseClo
             token.workspace_id, token.workspace_id, run.id):
         raise store.Fenced("review_binding_changed")
     binding_of(job)
-    if (job.state, job.claim_id, job.lease_owner, run.generation) != (
-            "leased", token.claim_id, token.owner, token.generation):
+    if (job.state, job.claim_id, job.lease_owner, run.generation, job.attempts) != (
+            "leased", token.claim_id, token.owner, token.generation, token.attempt):
         raise store.Fenced("claim_lost")
     if job.lease_expires_at is None or job.lease_expires_at <= now:
         raise store.Fenced("lease_expired")

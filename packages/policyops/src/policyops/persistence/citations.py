@@ -23,7 +23,7 @@ acquisition, with static SQL only and no provider, human or model work inside:
 
 New writes are all-or-none; equal rows that already existed are a normal state (an earlier subset, or another bundle
 citing the same span) and are reported, never rewritten. A concurrent uncommitted insert of the same ID makes
-PostgreSQL wait on that key: an unbounded synchronous SQL wait under the retained SQL-wait limitation, with checkpoints
+PostgreSQL wait on that key: a synchronous wait with configured SQL timeout profiles, with checkpoints
 only after control returns. `recorded` claims only that these exact rows exist and were, at commit, ready-generation
 evidence delivered to this run's authorized step, quoting the exact body slice; not that they stay current.
 
@@ -48,7 +48,14 @@ from pydantic import ValidationError
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError
 
-from policyops.persistence.database import SCOPE_SETTING, verify_runtime_role, workspace_transaction
+from policyops.persistence.database import (
+    DatabaseUnavailable,
+    classify_sql_failure,
+    connect_runtime,
+    initialize_transaction,
+    verify_runtime_role,
+    workspace_transaction,
+)
 from policyops.persistence.retrieval import RetrievalStore, read_spans, read_step_record
 from policyops.persistence.roles import APP_RUNTIME
 from policyops.retrieval.grounding import (
@@ -254,7 +261,7 @@ class CitationRecorder:
             return RecordOutcome(status="deadline_passed", code=problem, committed="none", **counts)
         if not self._context_matches(prepared, run_id, authorized_steps, corpus_key):
             return RecordOutcome(status="refused", code="record_context_mismatch", committed="none", **counts)
-        connection = self.engine.connect()  # owned from acquisition: always closed below
+        connection = connect_runtime(self.engine)  # owned from acquisition: always closed below
         try:
             outcome = self._record_in(connection, prepared, run_id, corpus_key, float(deadline))
         except BaseException as primary:
@@ -286,8 +293,7 @@ class CitationRecorder:
         transaction = connection.begin()
         existing_before: tuple[UUID, ...] = ()
         try:
-            connection.execute(text("SELECT set_config(:n, :v, true)"),
-                               {"n": SCOPE_SETTING, "v": str(self.workspace_id)})
+            initialize_transaction(connection, self.workspace_id)
             corpus = connection.execute(text(
                 "SELECT corpus_key, active_generation_id FROM app.corpora WHERE corpus_key = :k FOR SHARE"),
                 {"k": corpus_key}).mappings().first()
@@ -321,6 +327,8 @@ class CitationRecorder:
                         "versions": [c.document_version_id for c in rows], "starts": [c.span_start for c in rows],
                         "ends": [c.span_end for c in rows]}).scalars().all())
                 except DBAPIError as error:
+                    if isinstance(classify_sql_failure(error, "body"), DatabaseUnavailable):
+                        raise  # outer transaction handler owns rollback and transient classification
                     raise _Refusal("stale_evidence" if _STALE_GUARD in _primary_message(error)
                                    else "citation_integrity") from None
             after = _rows(connection, prepared.distinct_ids)
@@ -342,6 +350,10 @@ class CitationRecorder:
                 transaction.rollback()
             except BaseException as cleanup:
                 primary.add_note(f"citation rollback also failed: {type(cleanup).__name__}")
+            if isinstance(primary, Exception):
+                classified = classify_sql_failure(primary, "body")
+                if classified is not None:
+                    raise classified from primary
             raise
         try:
             transaction.commit()

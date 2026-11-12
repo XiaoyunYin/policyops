@@ -53,7 +53,7 @@ from policyops.domain.session import CustomerSession
 from policyops.gateway.facts import Collected
 from policyops.gateway.ports import GatewayScope
 from policyops.gateway.stores import evidence_status
-from policyops.persistence import checkpoint_json, customer_authentications
+from policyops.persistence import checkpoint_json, customer_authentications, review_jobs
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs as run_store
 from policyops.persistence.customer_authentications import AuthenticationConflict
@@ -376,6 +376,7 @@ class ProposalService:
             action_digest=proposal.action_digest, presentation_sha256=proposal.presentation.text_sha256,
             message_id=message.message_id, message_sequence=message.sequence, presented_at=now)
         repo.mark_presented(connection, record)
+        review_jobs.enqueue_expiry(connection, run, proposal, now)
         run_store.append_event(connection, run, MessagePosted(message_id=message.message_id,
                                                               message_sequence=message.sequence, source="agent"),
                                now)

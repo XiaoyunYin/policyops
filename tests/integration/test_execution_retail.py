@@ -40,6 +40,7 @@ from policyops.persistence import executions as ledger
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs as run_store
 from policyops.persistence.database import IdempotencyConflict, ImmutableRecord, transaction, workspace_transaction
+from policyops.persistence.migrate import head
 from policyops.persistence.migration_guard import DataLossRefused
 from policyops.persistence.records import Membership, NewCase, NewRun, Principal, Workspace
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, WORKER_DISCOVERY
@@ -481,8 +482,8 @@ def test_a_populated_ledger_refuses_the_downgrade(env: Env) -> None:
         try:
             with pytest.raises(DataLossRefused):
                 env.db.downgrade("0011", allow_data_loss=allow)
-            # Each revision commits separately: empty 0013 downgrades before populated 0012 refuses.
-            assert env.db.current() == "0012"
+            # The durable review intent refuses at 0014 before the populated 0012 ledger is reached.
+            assert env.db.current() == head()
         finally:
             env.db.upgrade()  # restore head for the dispatcher and the module's shared database
     assert env.dispatcher().dispatch_once()[0].state == "succeeded"  # leave no due row for later tests

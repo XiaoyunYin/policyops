@@ -39,6 +39,7 @@ from policyops.auth.service import AuthError, Authorized, forbidden
 from policyops.domain.approval_rules import Decided, decide
 from policyops.domain.roles import Action, Role, is_allowed
 from policyops.persistence import repositories as repo
+from policyops.persistence import review_jobs
 from policyops.persistence import runs as run_store
 from policyops.persistence.database import DecisionConflict, ImmutableRecord, workspace_transaction
 from policyops.persistence.records import AuditEvent
@@ -177,6 +178,7 @@ class DecisionService:
                 if isinstance(outcome, Refusal):
                     raise outcome.error()
                 if isinstance(outcome, Replay):
+                    review_jobs.enqueue_decision(connection, outcome.decision)
                     body_completed = True
                     return DecisionResult(outcome.decision, replayed=True)
                 decision = outcome.decision
@@ -196,6 +198,7 @@ class DecisionService:
                     actor_principal_id=principal, action="proposal.decide", target_type="action_proposal",
                     target_id=row.row_id, before_sha256=None, after_sha256=decision_digest(decision),
                     reason=decision.reason, correlation_id=uuid4(), occurred_at=checked))
+                review_jobs.enqueue_decision(connection, decision)
                 body_completed = True
         except DBAPIError as error:
             if body_completed:  # raised by COMMIT: the outcome is unknown

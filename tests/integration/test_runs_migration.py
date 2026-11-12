@@ -200,8 +200,10 @@ def ledger(database: AppDatabase) -> dict[str, int]:
 
 
 def test_a_lossy_0005_downgrade_with_run_ledger_rows(new_app_database: NewDatabase) -> None:
-    database = new_app_database("runs_ledger_downgrade", revision="0005")  # this revision's own downgrade
+    database = new_app_database("runs_ledger_downgrade")
     _api, run = served_start_and_cancel(database)
+    # Current API code requires head. Only the migration under test runs against the historical schema.
+    database.downgrade("0005")
     assert ledger(database) == {"case.create": 1, "run.start": 1, "run.cancel": 1}
     before = counts(database)
     with pytest.raises(DataLossRefused, match=r"app\.runs"):  # the default refuses, atomically

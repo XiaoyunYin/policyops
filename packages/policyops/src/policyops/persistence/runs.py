@@ -46,7 +46,8 @@ RUN_COLUMNS = ("id, workspace_id, case_id, case_version, mode, graph_sha256, pro
                "initiated_by, generation, event_highwater, event_retention_floor, deadline_at, created_at, "
                "updated_at, version")
 JOB_COLUMNS = ("id, workspace_id, run_id, kind, state, claim_id, lease_owner, lease_expires_at, attempts, "
-               "max_attempts, available_at, deadline_at, last_error_code, version")
+               "max_attempts, available_at, deadline_at, last_error_code, version, review_trigger, proposal_id, "
+               "proposal_version, decision_id, execution_id, execution_version")
 # Fixed column lists only (no input): S608 does not apply.
 INSERT_RUN = ("INSERT INTO app.runs (id, workspace_id, case_id, case_version, mode, graph_sha256, prompt_sha256, "  # noqa: S608
               "config_sha256, state, initiated_by, deadline_at, created_at, updated_at) VALUES (:id, :w, :c, :cv, "
@@ -111,6 +112,12 @@ class Job(WireModel):
     deadline_at: UtcDatetime
     last_error_code: str | None
     version: int
+    review_trigger: Literal["decision", "expiry", "outcome"] | None = None
+    proposal_id: UUID | None = None
+    proposal_version: int | None = None
+    decision_id: UUID | None = None
+    execution_id: UUID | None = None
+    execution_version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -294,6 +301,8 @@ def check_fence(connection: Connection, token: ClaimToken, clock: LeaseClock) ->
     now = clock.now(connection)
     if run is None or job is None:
         raise Fenced("missing")
+    if (run.workspace_id, job.workspace_id, job.run_id) != (token.workspace_id, token.workspace_id, run.id):
+        raise Fenced("binding_changed")
     if job.state != "leased" or job.claim_id != token.claim_id or job.lease_owner != token.owner:
         raise Fenced("claim_lost")
     if run.generation != token.generation:
@@ -335,13 +344,15 @@ def end_job(connection: Connection, job: Job, *, state: Literal["queued", "done"
 
 # -- discovery (worker discovery role) and dispatch ---------------------------------------------------------------
 
-def discover_jobs(connection: Connection, now: datetime, limit: int) -> list[tuple[UUID, UUID]]:
+def discover_jobs(connection: Connection, now: datetime, limit: int, *, kinds: tuple[str, ...]
+                  ) -> list[tuple[UUID, UUID]]:
     """(job, workspace) pairs that look claimable: due queued jobs, then expired leases. Only scheduling metadata
     is readable; the claim re-reads and re-checks everything under the app role."""
     rows = connection.execute(text(
-        "SELECT id, workspace_id FROM app.jobs WHERE (state = 'queued' AND available_at <= :now) "
-        "OR (state = 'leased' AND lease_expires_at <= :now) ORDER BY coalesce(lease_expires_at, available_at), id "
-        "LIMIT :limit"), {"now": now, "limit": limit}).all()
+        "SELECT id, workspace_id FROM app.jobs WHERE kind = ANY(:kinds) "
+        "AND ((state = 'queued' AND available_at <= :now) "
+        "OR (state = 'leased' AND lease_expires_at <= :now)) ORDER BY coalesce(lease_expires_at, available_at), id "
+        "LIMIT :limit"), {"now": now, "limit": limit, "kinds": list(kinds)}).all()
     return [(row[0], row[1]) for row in rows]
 
 

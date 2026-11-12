@@ -17,9 +17,10 @@
    backoff (dead letter once attempts are exhausted). A lost claim (`Fenced`) is abandoned without writing:
    whoever fenced it out owns the run now.
 
-A job of another kind than `run.execute` is dead-lettered as `unsupported_job_kind` without touching its run (so
-it cannot be run as execution, and cannot starve discovery); a new job kind must therefore be introduced only after
-every worker supports it. Logs carry fixed codes, IDs and exception type names, never exception text.
+`run.review` routes to the deterministic review runtime's separate claim/finish path. A missing review composition
+leaves its durable intent queued and excludes it from discovery. Discovery selects only composed kinds; directly
+submitted unknown kinds are dead-lettered as `unsupported_job_kind` without touching their run. Deploy schema and
+supporting workers before enabling new producers. Logs contain no exception text.
 
 Events written by any step carry their outbox intent in the same transaction; `OutboxDispatcher` publishes them
 independently of the claim, so a committed intent survives the end of the lease that produced it.
@@ -39,10 +40,12 @@ from sqlalchemy import Connection, Engine
 
 from policyops.domain.roles import Action, Role, is_allowed
 from policyops.persistence import repositories as repo
+from policyops.persistence import review_jobs
 from policyops.persistence import runs as store
 from policyops.persistence.database import ImmutableRecord, transaction, verify_runtime_role, workspace_transaction
 from policyops.persistence.roles import APP_RUNTIME, WORKER_DISCOVERY
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
+from policyops.runtime.review import ReviewRuntime
 from policyops.runtime.spec import (
     UNCONFIGURED,
     AwaitingApproval,
@@ -63,8 +66,7 @@ from policyops_contracts.scalars import CaseScope
 
 log = logging.getLogger("policyops.worker")
 BACKOFF_BASE = timedelta(seconds=2)
-# The run states a claim may execute in. Paused states (waiting_input, waiting_approval, reconciling) need their
-# own authorized resume path (later tasks): a job found for them is not executed (fail closed).
+# Graph jobs execute only in these states; run.review owns the separate approval/reconciliation path.
 EXECUTABLE_STATES = frozenset({"queued", "running"})
 BACKOFF_CAP = timedelta(minutes=5)
 
@@ -111,16 +113,22 @@ class Context:
 
 
 def build_worker(*, env: str, app_engine: Engine, discovery_engine: Engine, clock: LeaseClock | None = None,
-                 catalog: RuntimeCatalog | None = None, **options: Any) -> Worker:
+                 catalog: RuntimeCatalog | None = None, review: ReviewRuntime | None = None,
+                 **options: Any) -> Worker:
     """The supported way to compose a worker. Test-only parts (the fixed lease clock, scripted runtime specs) are
     refused unless `env == "test"`; this check needs no database and comes first. Both engines must then
     authenticate as their restricted roles (the app runtime and the worker discovery role). `Worker` itself is an
     internal component that assumes this validation was done."""
-    lease_clock, installed = checked_parts(env, clock, catalog)
+    lease_clock, installed = checked_parts(
+        env, clock or (review.executor.clock if review is not None else None), catalog)
+    if review is not None:
+        require_test_environment(review, env)
+        if review.executor.engine is not app_engine or review.executor.clock is not lease_clock:
+            raise ValueError("review runtime must share the worker engine and lease clock")
     verify_runtime_role(app_engine, APP_RUNTIME)
     verify_runtime_role(discovery_engine, WORKER_DISCOVERY)
     return Worker(app_engine=app_engine, discovery_engine=discovery_engine, clock=lease_clock, catalog=installed,
-                  **options)
+                  review=review, **options)
 
 
 def checked_parts(env: str, clock: LeaseClock | None, catalog: RuntimeCatalog | None
@@ -142,10 +150,12 @@ class Worker:
     owner: UUID = field(default_factory=uuid4)
     batch: int = 10
     on_claimed: Callable[[store.ClaimToken], None] | None = None  # test observation hook (no behavior change)
+    review: ReviewRuntime | None = None
 
     def discover(self) -> list[tuple[UUID, UUID]]:
+        kinds = (store.EXECUTE_KIND,) if self.review is None else (store.EXECUTE_KIND, review_jobs.REVIEW_KIND)
         with transaction(self.discovery_engine) as connection:
-            return store.discover_jobs(connection, self.clock.now(connection), self.batch)
+            return store.discover_jobs(connection, self.clock.now(connection), self.batch, kinds=kinds)
 
     def run_once(self) -> int:
         """Process the currently due jobs once; returns how many this worker claimed. A failure while handling
@@ -166,6 +176,11 @@ class Worker:
                 stop.wait(idle)
 
     def process(self, job_id: UUID, workspace_id: UUID) -> bool:
+        with workspace_transaction(self.app_engine, workspace_id) as connection:
+            observed = store.get_job(connection, job_id)
+        if observed is not None and observed.kind == review_jobs.REVIEW_KIND:
+            # Missing composition leaves durable intent queued; it cannot consume it as a graph execution.
+            return False if self.review is None else self.review.process(job_id, workspace_id, self.owner)
         claimed = self.claim(job_id, workspace_id)
         if claimed is None:
             return False
@@ -200,6 +215,8 @@ class Worker:
             now = self.clock.now(connection)  # after the locks
             if not store.claimable(job, now):
                 return None
+            if job.kind == review_jobs.REVIEW_KIND:
+                return None  # ReviewRuntime owns its distinct claim/finish path.
             if job.kind != store.EXECUTE_KIND:  # the only kind this worker handles; never run another as execution
                 store.end_job(connection, job, state="dead", now=now, error_code="unsupported_job_kind")
                 return None

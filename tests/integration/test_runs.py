@@ -288,10 +288,42 @@ def test_an_unsupported_job_kind_is_dead_lettered_without_touching_its_run(api: 
                                                   dedupe_key="future-kind", kind="run.future_kind", run_generation=0,
                                                   max_attempts=3, available_at=now, deadline_at=now + timedelta(1),
                                                   created_at=now))
-    assert api.worker(catalog_of(scripted)).run_once() == 0 and scripted.calls == 0
+    worker = api.worker(catalog_of(scripted))
+    assert (job_id, workspace) not in worker.discover()
+    assert not worker.process(job_id, workspace) and scripted.calls == 0
     assert api.rows("SELECT state, last_error_code FROM app.jobs WHERE id = %s", job_id) == [
         ("dead", "unsupported_job_kind")]
     assert run_state(api, run) == "cancelled"
+
+
+@pytest.mark.parametrize("review_state", ["queued", "leased"])
+def test_review_backlog_cannot_starve_a_worker_without_review(api: CaseApi, scripted: ScriptedExecutor,
+                                                           review_state: str) -> None:
+    from policyops.persistence import review_jobs
+    from tests.integration.test_proposal_decisions import created, tenant
+
+    t = tenant(api.db)
+    worker = api.worker(catalog_of(scripted))
+    assert worker.review is None
+    for _ in range(worker.batch + 1):
+        proposal = created(t)
+        with workspace_transaction(t.engine, t.run.workspace_id) as conn:
+            review_jobs.enqueue(conn, review_jobs.NewReviewJob(workspace_id=t.run.workspace_id, run_id=t.run.run_id,
+                binding=review_jobs.ExpiryBinding(proposal_id=proposal.proposal_id,
+                                                  proposal_version=proposal.proposal_version),
+                created_at=t.clock.now(), available_at=t.clock.now()))
+    api.clock.advance(timedelta(minutes=2))
+    if review_state == "leased":
+        with api.db.superuser() as conn:
+            conn.execute("UPDATE app.jobs SET state = 'leased', claim_id = gen_random_uuid(), lease_owner = %s, "
+                         "lease_expires_at = %s WHERE kind = 'run.review'",
+                         (uuid4(), api.clock.now() - timedelta(seconds=1)))
+    workspace, browser, _ = team(api)
+    run = api.start_run(browser, new_case(api, browser), '"1"').json()["run_id"]
+    assert worker.discover() == [(api.rows("SELECT id FROM app.jobs WHERE run_id = %s", UUID(run))[0][0], workspace)]
+    assert worker.run_once() == 1 and scripted.calls == 1 and run_state(api, run) == "succeeded"
+    assert api.rows("SELECT state, attempts FROM app.jobs WHERE kind = 'run.review'") == [
+        (review_state, 0)] * (worker.batch + 1)
 
 
 def test_lease_expiry_reclaim_fences_the_first_worker(fresh: AppDatabase) -> None:

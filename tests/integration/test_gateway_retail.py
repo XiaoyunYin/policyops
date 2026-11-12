@@ -74,7 +74,11 @@ CUSTOMER, ORDER, CARD = T16.CUSTOMER, T16.ORDER, T16.CARD
 EMAIL, NAME = "james.johnson7869@example.com", ("James", "Johnson", "60625")
 PROCESSED = "#W3723163"
 ITEM, REPLACEMENT = "5172162216", "4068787148"
-NOW = datetime.now(UTC).replace(microsecond=0)
+
+
+@pytest.fixture
+def now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
 
 
 def other_customer() -> tuple[str, str]:
@@ -89,24 +93,24 @@ def service(postgres: OwnedPostgres, new_app_database: NewDatabase, tmp_path: Pa
     return T16.Service(postgres, new_app_database("gateway_retail"), tmp_path)
 
 
-def seed(db: AppDatabase) -> tuple[RunScope, UUID, UUID]:
+def seed(db: AppDatabase, now: datetime) -> tuple[RunScope, UUID, UUID]:
     """A workspace, a reviewer membership and a case bound to the fixture customer with one run."""
     ws, case, run, reviewer = uuid4(), uuid4(), uuid4(), uuid4()
     membership = uuid4()
     with transaction(db.engine(AUTH_RUNTIME)) as conn:
-        repo.create_workspace(conn, Workspace(id=ws, slug=f"ws-{ws.hex[:12]}", name="Gateway e2e", created_at=NOW))
+        repo.create_workspace(conn, Workspace(id=ws, slug=f"ws-{ws.hex[:12]}", name="Gateway e2e", created_at=now))
         repo.create_principal(conn, Principal(id=reviewer, issuer="https://issuer.example.invalid",
                                               subject=f"s-{reviewer.hex}", display_name="Synthetic Reviewer",
-                                              created_at=NOW))
+                                              created_at=now))
         repo.add_membership(conn, Membership(id=membership, workspace_id=ws, principal_id=reviewer,
-                                             role="reviewer", created_at=NOW))
+                                             role="reviewer", created_at=now))
     with workspace_transaction(db.engine(APP_RUNTIME), ws) as conn:
         record = repo.create_case(conn, NewCase(id=case, workspace_id=ws, scenario="retail",
-                                                customer_user_id=CUSTOMER, created_by=None, created_at=NOW))
+                                                customer_user_id=CUSTOMER, created_by=None, created_at=now))
         repo.create_run(conn, NewRun(id=run, workspace_id=ws, case_id=case, case_version=record.version,
                                      mode="workbench", graph_sha256=text_sha256("g"), prompt_sha256=text_sha256("p"),
-                                     config_sha256=text_sha256("c"), deadline_at=NOW + timedelta(hours=1),
-                                     created_at=NOW))
+                                     config_sha256=text_sha256("c"), deadline_at=now + timedelta(hours=1),
+                                     created_at=now))
     return RunScope(workspace_id=ws, case_id=case, run_id=run), reviewer, membership
 
 
@@ -121,18 +125,18 @@ class Steps:
 
 
 @pytest.fixture
-def e2e(service: Any) -> Iterator[tuple[Any, AppDatabase, RunScope, UUID, UUID]]:
+def e2e(service: Any, now: datetime) -> Iterator[tuple[Any, AppDatabase, RunScope, UUID, UUID]]:
     db = service.database
-    scope, reviewer, membership = seed(db)
+    scope, reviewer, membership = seed(db, now)
     yield service, db, scope, reviewer, membership
 
 
-def test_gateway_lookup_reads_previews_and_precheck_against_the_real_service(e2e: Any) -> None:
+def test_gateway_lookup_reads_previews_and_precheck_against_the_real_service(e2e: Any, now: datetime) -> None:
     service, db, scope, reviewer, membership = e2e
     runtime = db.engine(APP_RUNTIME)
     verify_runtime_role(runtime, APP_RUNTIME)
     binding = CaseCustomerBinding(scope=CaseScope(workspace_id=scope.workspace_id, case_id=scope.case_id),
-                                  seed_id="retail-demo-9999", user_id=CUSTOMER, bound_at=NOW)
+                                  seed_id="retail-demo-9999", user_id=CUSTOMER, bound_at=now)
     gateway_scope = load_scope(runtime, workspace_id=scope.workspace_id, run_id=scope.run_id, binding=binding,
                                fixture_sha256=FIXTURE_SHA256)
     foreign_order, foreign_email = other_customer()
@@ -185,12 +189,12 @@ def test_gateway_lookup_reads_previews_and_precheck_against_the_real_service(e2e
         assert isinstance(parsed, ToolCallStep) and preview.collected is not None
         proposal = propose(proposal_id=uuid4(), proposal_version=1, session=step.gateway.session(),
                            call=parsed.call, facts=preview.collected.facts, evidence=(),  # type: ignore[arg-type]
-                           rationale="The customer no longer needs the order.", now=NOW)
+                           rationale="The customer no longer needs the order.", now=now)
         assert isinstance(proposal, ActionProposal)
         refs = AuthorityRefs(proposal_id=proposal.proposal_id, proposal_version=1, consent_id=uuid4(),
                              approval_id=uuid4())
         consent, approval = authority(proposal, approver=reviewer, entered_by=uuid4(), refs=refs)
-        clock = FixedClock(NOW + timedelta(minutes=3))
+        clock = FixedClock(now + timedelta(minutes=3))
         membership_port = PgMembership(runtime)
 
         def check(decisions: Any = None) -> Cleared | PrecheckRefused:
@@ -202,12 +206,12 @@ def test_gateway_lookup_reads_previews_and_precheck_against_the_real_service(e2e
         decisions = MemoryDecisions(proposal, consent, approval)
         assert isinstance(check(decisions), Cleared)
         with workspace_transaction(runtime, scope.workspace_id) as conn:
-            assert repo.revoke_membership(conn, membership, NOW)
+            assert repo.revoke_membership(conn, membership, now)
         revoked = check(decisions)
         assert isinstance(revoked, PrecheckRefused) and revoked.detail == "approver_not_current_reviewer"
         with transaction(db.engine(AUTH_RUNTIME)) as conn:
             repo.add_membership(conn, Membership(id=uuid4(), workspace_id=scope.workspace_id, principal_id=reviewer,
-                                                 role="reviewer", created_at=NOW))
+                                                 role="reviewer", created_at=now))
         cleared = check(decisions)
         assert isinstance(cleared, Cleared)
         committed = client.mutate(uuid4(), cleared.request,

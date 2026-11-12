@@ -3,7 +3,7 @@
 import pytest
 
 from policyops.persistence.importer import import_synthetic_world
-from policyops.persistence.migrate import DataLossRefused
+from policyops.persistence.migrate import DataLossRefused, head
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops_testing.app_database import NewDatabase
 from policyops_testing.checkpoint_cases import claimed
@@ -46,6 +46,8 @@ def test_downgrade_refuses_nonempty_checkpoint_tables(new_app_database: NewDatab
     assert db.current() == "0013"
     with db.superuser() as conn:
         assert conn.execute("SELECT count(*) FROM checkpoints.writes").fetchone() == (1,)
+    db.upgrade()  # transaction_per_migration already removed empty 0014 before the refusal
+    assert db.current() == head()
 
 
 def test_proposal_replay_intent_alone_prevents_downgrade(new_app_database: NewDatabase) -> None:

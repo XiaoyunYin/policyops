@@ -100,7 +100,7 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
 # role -> table -> columns readable through column-level SELECT grants without a table-level SELECT (T09).
 COLUMN_SELECT: dict[str, dict[str, set[str]]] = {
     WORKER_DISCOVERY: {
-        "app.jobs": {"id", "workspace_id", "state", "available_at", "lease_expires_at", "deadline_at"},
+        "app.jobs": {"id", "workspace_id", "kind", "state", "available_at", "lease_expires_at", "deadline_at"},
         "app.outbox_events": {"id", "workspace_id", "topic", "created_at", "delivered_at"},
         "app.tool_executions": {"id", "workspace_id", "state", "next_attempt_at", "lease_expires_at"},  # T19
     },
@@ -160,7 +160,8 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
     acl = dict(functions)
     guards = {"app.guard_generation_member()", "app.guard_generation_insert()", "app.guard_generation_transition()",
               "app.check_generation_publication()", "app.guard_citation_insert()",  # 0010 trigger functions
-              "app.tool_executions_guard()", "app.tool_executions_refuse_delete()"}  # 0012
+              "app.tool_executions_guard()", "app.tool_executions_refuse_delete()",  # 0012
+              "app.jobs_review_guard()"}  # 0014
     assert set(acl) == {"app.current_workspace()", "app.guard_action_proposal_update()",
                         "app.refuse_legacy_usage_attempt()"} | guards
     # Owner plus the app runtime only; a PUBLIC entry would appear as "=X/...".
@@ -169,6 +170,8 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
     assert acl["app.refuse_legacy_usage_attempt()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"
     for guard in guards:
         assert acl[guard] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}", guard
+    assert _rows(shared_db, "SELECT proconfig FROM pg_proc WHERE oid = 'app.jobs_review_guard()'::regprocedure") == [
+        (["search_path=pg_catalog"],)]
     assert _rows(shared_db, "SELECT p.oid::regprocedure::text, p.proacl::text FROM pg_proc p "
                  "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'checkpoints'") == [
                      ("checkpoints.guard_write_update()", f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}")]

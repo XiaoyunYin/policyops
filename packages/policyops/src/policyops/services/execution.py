@@ -59,10 +59,12 @@ from policyops.gateway.precheck import AuthorityRefs, Cleared, PrecheckRefused, 
 from policyops.gateway.stores import PgDecisionStore, PgEvidencePort, evidence_status
 from policyops.persistence import executions as ledger
 from policyops.persistence import repositories as repo
+from policyops.persistence import review_jobs
 from policyops.persistence import runs as run_store
 from policyops.persistence.database import IdempotencyConflict, workspace_transaction
 from policyops.persistence.records import AuditEvent, ExecutionRecord
 from policyops.runtime.clock import LeaseClock
+from policyops_contracts.errors import ErrorCode
 from policyops_contracts.events import ExecutionChanged
 from policyops_contracts.retail import OrderOperationHistory, ToolName
 from policyops_contracts.retail_service import LookupResult, MutationRequest, OperationResult, Receipt
@@ -255,7 +257,8 @@ class Executor:
 
     # -- reservation ----------------------------------------------------------------------------------------
 
-    def reserve(self, scope: GatewayScope, refs: AuthorityRefs) -> Reserved | PrecheckRefused:
+    def reserve(self, scope: GatewayScope, refs: AuthorityRefs, *,
+                token: run_store.ClaimToken | None = None) -> Reserved | PrecheckRefused:
         """Reserve the approval's execution after a clearing precheck. Idempotent per approval: the stored
         operation ID is returned on every repeat that names the same run (hence case and server-derived customer
         binding) and the same proposal, consent and approval; any other combination is an IdempotencyConflict. A
@@ -276,7 +279,32 @@ class Executor:
                 run = run_store.get_run(connection, scope.run.run_id, lock=True)
                 if run is None:
                     raise ledger.LostClaim("the run is not visible")
+                # Recheck under the run lock: another worker may have committed during the precheck.
+                existing = ledger.by_approval(connection, refs.approval_id)
+                if existing is not None:
+                    if not ledger.matches_reservation(existing, run=scope.run, approval_id=refs.approval_id,
+                            consent_id=refs.consent_id, proposal_id=refs.proposal_id,
+                            proposal_version=refs.proposal_version):
+                        raise IdempotencyConflict("approval reserved with other references")
+                    return Reserved(existing, False)
+                if token is not None:
+                    fenced_run, job, _ = run_store.check_fence(connection, token, self.clock)
+                    binding = review_jobs.binding_of(job)
+                    if (fenced_run.scope != scope.run or fenced_run.state != "reconciling"
+                            or not isinstance(binding, review_jobs.DecisionBinding)
+                            or (binding.proposal_id, binding.proposal_version, binding.decision_id) != (
+                                refs.proposal_id, refs.proposal_version, refs.approval_id)):
+                        raise run_store.Fenced("review_binding_changed")
+                    roles = frozenset() if run.initiated_by is None else frozenset(
+                        Role(name) for name in repo.locked_roles(connection, run.initiated_by))
+                    if not is_allowed(roles, Action.START_RUN):
+                        return PrecheckRefused(ErrorCode.FORBIDDEN, "initiator_not_authorized")
+                    # Membership locks can wait; the claim must still be live after that wait.
+                    run_store.check_fence(connection, token, self.clock)
                 now = self.clock.now(connection)
+                if run.terminal or run.deadline_at <= now:
+                    return PrecheckRefused(ErrorCode.EXPIRED, "run_deadline_exceeded" if not run.terminal
+                                           else "run_terminal")
                 execution, created = ledger.reserve(
                     connection, run=scope.run, approval_id=refs.approval_id, consent_id=refs.consent_id,
                     proposal_id=refs.proposal_id, proposal_version=refs.proposal_version, request=cleared.request,
@@ -360,6 +388,8 @@ class Executor:
             refusal: tuple[str, str] | None = None
             if run.terminal:
                 refusal = ("cancelled_before_dispatch", "cancel")
+            elif run.deadline_at <= now:
+                refusal = ("precheck_refused", "run_deadline_exceeded")
             elif row is None or row.status != "presented" or row.action_digest != execution.action_digest:
                 refusal = ("precheck_refused", "proposal_not_current")
             elif approval is None or Role.REVIEWER not in roles or not is_allowed(roles, Action.DECIDE_PROPOSAL):

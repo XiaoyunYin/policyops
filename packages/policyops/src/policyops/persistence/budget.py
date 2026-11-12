@@ -55,6 +55,7 @@ from policyops.budget.ledger import (
 from policyops.budget.prices import PriceSnapshot
 from policyops.persistence import runs
 from policyops.persistence.database import transaction, verify_runtime_role, workspace_transaction
+from policyops.persistence.evaluation import EvaluationClaimToken, check_claim_admission, lock_claim
 from policyops.persistence.records import exact_usd
 from policyops.persistence.roles import APP_RUNTIME, EVAL_RUNTIME
 from policyops.persistence.runs import ClaimToken
@@ -332,9 +333,17 @@ class AppLedgerStore:
 class _EvalTransaction:
     connection: Connection
     clock: LeaseClock
+    claim_token: EvaluationClaimToken | None = None
 
     def check_admission(self, refs: Sequence[ScopeRef]) -> None:
-        pass  # evaluation scopes have no application job/claim
+        if self.claim_token is not None:
+            check_claim_admission(self.connection, self.claim_token, refs)
+        else:
+            for ref in refs:
+                if ref.kind == "scenario" and self.connection.execute(text(
+                    "SELECT EXISTS (SELECT 1 FROM evaluation.trial_claims WHERE scenario_scope = :id)"
+                ), {"id": ref.id}).scalar_one():
+                    raise LedgerConflict("evaluation_claim_required")
 
     def now(self) -> datetime:
         return self.clock.now(self.connection)
@@ -366,10 +375,20 @@ class _EvalTransaction:
                 ScopeRef.of("scenario", row["scenario_scope_id"]))
 
     def run_active(self, refs: Sequence[ScopeRef]) -> bool:
-        del refs
+        self.check_admission(refs)
         return True
 
     def lock_scopes(self, refs: Sequence[ScopeRef]) -> list[Scope]:
+        if self.claim_token is not None:
+            expected = self.claim_token.binding
+            if {ref.id for ref in refs} != {expected.study_id, expected.invocation_id, expected.scenario_id}:
+                raise LedgerConflict("evaluation_claim_binding_changed")
+        else:
+            for ref in refs:
+                if ref.kind == "scenario" and self.connection.execute(text(
+                    "SELECT id FROM evaluation.trial_claims WHERE scenario_scope = :id FOR UPDATE"
+                ), {"id": ref.id}).first() is not None:
+                    raise LedgerConflict("evaluation_claim_required")
         scopes = []
         for ref in refs:
             row = _one(self.connection, EVAL_SCOPE, {"id": ref.id})
@@ -409,15 +428,19 @@ def _eval_scope_row(connection: Connection, scope_id: UUID) -> dict[str, Any] | 
 
 
 class EvalLedgerStore:
-    def __init__(self, engine: Engine, *, env: str, clock: LeaseClock | None = None) -> None:
+    def __init__(self, engine: Engine, *, env: str, clock: LeaseClock | None = None,
+                 claim_token: EvaluationClaimToken | None = None) -> None:
         self.clock = _checked_clock(env, clock)
         verify_runtime_role(engine, EVAL_RUNTIME)
         self.engine = engine
+        self.claim_token = claim_token
 
     @contextmanager
     def transaction(self) -> Iterator[_EvalTransaction]:
         with transaction(self.engine) as connection:
-            yield _EvalTransaction(connection, self.clock)
+            if self.claim_token is not None:
+                lock_claim(connection, self.claim_token)  # always before scope/attempt, including settlement
+            yield _EvalTransaction(connection, self.clock, self.claim_token)
 
     def ensure_study(self, study_key: str, manifest_sha256: str, *, cap_usd: Decimal, cap_calls: int) -> UUID:
         """The study's one scope. The same key with the same manifest and caps is a replay; anything else conflicts,

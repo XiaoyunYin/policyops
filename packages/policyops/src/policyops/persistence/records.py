@@ -211,6 +211,7 @@ class AuditEvent(WireModel):
 
 class EvaluationRun(WireModel):
     id: UUID
+    study_scope: UUID
     dataset: Slug
     dataset_revision: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
     split_id: Slug
@@ -237,6 +238,8 @@ class EvaluationTrial(WireModel):
 
     @model_validator(mode="after")
     def _values(self) -> Self:
+        if self.outcome not in {"success", "failure"} and self.reward is not None:
+            raise ValueError("errors and aborts have no reward")
         if (self.cost_status == "unknown") != (self.cost_usd is None):
             raise ValueError("an unknown cost is NULL, and only an unknown cost")
         exact_usd(self.cost_usd, "cost_usd")

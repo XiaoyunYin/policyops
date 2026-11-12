@@ -163,7 +163,15 @@ def command_seed_bindings(args: argparse.Namespace) -> int:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="policyops-evals", description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
-    data = root.add_subparsers(dest="group", required=True).add_parser("data", help="public benchmark data")
+    groups = root.add_subparsers(dest="group", required=True)
+    for name in ("preflight", "run"):
+        study = groups.add_parser(name, help="plan or execute a durable dev study")
+        study.add_argument("--study", type=Path, required=True)
+        study.set_defaults(handler=command_study)
+        if name == "run":
+            study.add_argument("--allow-paid", action="store_true")
+            study.add_argument("--resume", action="store_true")
+    data = groups.add_parser("data", help="public benchmark data")
     commands = data.add_subparsers(dest="command", required=True)
 
     def add(name: str, handler: object, help_text: str, *, acquired: bool = True) -> argparse.ArgumentParser:
@@ -192,6 +200,24 @@ def parser() -> argparse.ArgumentParser:
     add("seed-bindings", command_seed_bindings, "derive server-only seed customer bindings").add_argument(
         "--out", type=outside_repository, required=True, help="private output directory outside the repository")
     return root
+
+
+def command_study(args: argparse.Namespace) -> int:
+    from policyops_evals.studies.runner import command
+
+    try:
+        result = command(args.study, run=args.group == "run", allow_paid=getattr(args, "allow_paid", False),
+                         resume=getattr(args, "resume", False))
+    except Exception as error:
+        # DB/provider exceptions can contain credentials or hidden task text.
+        # Emit only the type; fixed StudyRefused codes are safe to display.
+        from policyops_evals.studies.runner import StudyRefused
+
+        code = str(error) if isinstance(error, StudyRefused) else type(error).__name__
+        print(f"policyops-evals: study refused: {code}", file=sys.stderr)
+        return 1
+    report(result)
+    return 0 if result.get("within_caps", True) and result.get("execution_complete", True) else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:

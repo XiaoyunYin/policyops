@@ -1,0 +1,71 @@
+{
+  "cache_mode": "none",
+  "calibration_sha256": "8c204ea3e21d6f9735a2e20628f14f5bc217e09240bdcd2bea1419d7089bb3a2",
+  "dataset_sha256": "fc0f802747a21405053c3ccf1a3124042d7aea10ce8339694ae0c3e515dc877a",
+  "limits": {
+    "invocation_calls": 96,
+    "invocation_counts": 96,
+    "invocation_usd": "0.30",
+    "scenario_calls": 32,
+    "scenario_counts": 32,
+    "scenario_usd": "0.10",
+    "study_calls": 96,
+    "study_counts": 96,
+    "study_input_tokens": 1536000,
+    "study_output_tokens": 196608,
+    "study_usd": "0.30",
+    "trial_seconds": 180
+  },
+  "price_revision": "pricing.2026-11-05.v1",
+  "provider_mode": "live",
+  "purpose": "dev",
+  "repairs": 0,
+  "retries": 0,
+  "schema_version": "policyops.study/v1",
+  "seeds": [
+    20261112
+  ],
+  "split_sha256": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+  "study_key": "t29-luna-dev-smoke-v1",
+  "task_list_sha256": "84f87e973070efee395436cef36b3131c09b8fde5e97f28cf0e3d63c4752c4e2",
+  "tasks": [
+    "0",
+    "1",
+    "24"
+  ],
+  "variants": [
+    {
+      "actors": {
+        "agent": {
+          "effort": "low",
+          "logical_calls": 16,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 120000,
+          "planning_output": 4000
+        },
+        "judge": {
+          "effort": "low",
+          "logical_calls": 1,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 16000,
+          "planning_output": 400
+        },
+        "simulator": {
+          "effort": "low",
+          "logical_calls": 12,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 60000,
+          "planning_output": 2000
+        }
+      },
+      "agent_kind": "minimal",
+      "name": "minimal"
+    }
+  ]
+}

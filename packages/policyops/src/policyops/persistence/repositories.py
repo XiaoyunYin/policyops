@@ -691,14 +691,19 @@ def usage_cost(connection: Connection, usage_id: UUID) -> tuple[str, Any]:
 
 def create_evaluation_run(connection: Connection, run: EvaluationRun) -> None:
     connection.execute(text(
-        "INSERT INTO evaluation.evaluation_runs (id, dataset, dataset_revision, split_id, config_sha256, config, "
-        "status, created_at) VALUES (:id, :dataset, :dataset_revision, :split_id, :config_sha256, "
+        "INSERT INTO evaluation.evaluation_runs (id, study_scope, dataset, dataset_revision, split_id, "
+        "config_sha256, config, status, created_at) VALUES (:id, :study_scope, :dataset, :dataset_revision, "
+        ":split_id, :config_sha256, "
         "CAST(:config_json AS jsonb), 'planned', :created_at)"), run.model_dump())
 
 
 def add_trial(connection: Connection, trial: EvaluationTrial) -> None:
+    from policyops.persistence.evaluation import result_digest
+
     connection.execute(text(
         "INSERT INTO evaluation.evaluation_trials (id, evaluation_run_id, task_id, trial_index, seed, outcome, reward, "
-        "components, error_class, cost_status, cost_usd, latency_ms, artifact_sha256, created_at) VALUES (:id, "
+        "components, error_class, cost_status, cost_usd, latency_ms, artifact_sha256, created_at, result_sha256) "
+        "VALUES (:id, "
         ":evaluation_run_id, :task_id, :trial_index, :seed, :outcome, :reward, CAST(:components_json AS jsonb), "
-        ":error_class, :cost_status, :cost_usd, :latency_ms, :artifact_sha256, :created_at)"), trial.model_dump())
+        ":error_class, :cost_status, :cost_usd, :latency_ms, :artifact_sha256, :created_at, :result_sha256)"),
+        trial.model_dump() | {"result_sha256": result_digest(trial)})

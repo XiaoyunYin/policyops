@@ -171,16 +171,30 @@ def test_auth_role_is_confined_to_identity(shared_db: AppDatabase, two_tenants: 
 
 
 def test_evaluation_role_is_confined_to_evaluation(shared_db: AppDatabase) -> None:
-    run = EvaluationRun(id=uuid4(), dataset="tau2-retail", dataset_revision="1" * 40, split_id="dev",
-                        config_sha256="2" * 64, config_json='{"model": "fake"}', created_at=NOW)
     from decimal import Decimal
 
-    with transaction(shared_db.engine(EVAL_RUNTIME)) as conn:
-        repo.create_evaluation_run(conn, run)
-        repo.add_trial(conn, EvaluationTrial(
-            id=uuid4(), evaluation_run_id=run.id, task_id="7", trial_index=0, seed=20261104, outcome="success",
+    from policyops.budget.config import Caps
+    from policyops.persistence.budget import EvalLedgerStore
+    from policyops.persistence.evaluation import EvaluationRepository, Slot
+
+    store = EvalLedgerStore(shared_db.engine(EVAL_RUNTIME), env="test")
+    repository = EvaluationRepository(shared_db.engine(EVAL_RUNTIME))
+    caps = Caps()
+    study = store.ensure_study(f"tenancy-{uuid4()}", "2" * 64, cap_usd=caps.study_usd, cap_calls=caps.study_calls)
+    run = EvaluationRun(id=uuid4(), study_scope=study, dataset="tau2-retail", dataset_revision="1" * 40, split_id="dev",
+                        config_sha256="2" * 64, config_json='{"model": "fake"}', created_at=NOW)
+    repository.ensure_run(run)
+    scenario = store.ensure_scenario(study, "7", 0, run.config_sha256, caps)
+    invocation = store.ensure_invocation(study, uuid4(), caps)
+    slot = Slot(uuid4(), run.id, study, run.config_sha256, "7", 0, 20261104, scenario, "scheduled")
+    repository.schedule(slot)
+    with repository.study_lock(study) as lease:
+        token = repository.claim(slot, invocation, lease)
+        assert token is not None
+        repository.finalize(EvaluationTrial(
+            id=slot.id, evaluation_run_id=run.id, task_id="7", trial_index=0, seed=20261104, outcome="success",
             reward=Decimal("1"), components_json='{"db": 1}', cost_status="known",
-            cost_usd=Decimal("0.000000000000000123"), created_at=NOW))
+            cost_usd=Decimal("0.000000000000000123"), created_at=NOW), token, lease)
     with transaction(shared_db.engine(EVAL_RUNTIME)) as conn:
         stored = conn.execute(text("SELECT cost_usd FROM evaluation.evaluation_trials WHERE evaluation_run_id = :r"),
                               {"r": run.id}).scalar_one()

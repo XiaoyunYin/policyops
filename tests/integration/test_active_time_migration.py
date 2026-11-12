@@ -51,9 +51,20 @@ def test_0015_backfill_preserves_active_projection_freezes_waits_and_terminal_ze
     with db.superuser() as connection:
         assert connection.execute("SELECT relforcerowsecurity FROM pg_class WHERE oid = 'app.runs'::regclass"
                                   ).fetchone() == (True,)
+    with db.superuser() as connection:
+        before = connection.execute("SELECT id, state, deadline_at, active_remaining_us, active_started_at "
+                                    "FROM app.runs ORDER BY id").fetchall()
     with pytest.raises(DataLossRefused):
         db.downgrade("0014")
-    assert db.current() == migrate.head()
+    # Empty later revisions may already have downgraded; the active-time schema and clocks must survive.
+    stopped_at = db.current()
+    chain = migrate.revisions()
+    assert stopped_at is not None and chain.index(stopped_at) >= chain.index("0015")
+    with db.superuser() as connection:
+        assert connection.execute("SELECT id, state, deadline_at, active_remaining_us, active_started_at "
+                                  "FROM app.runs ORDER BY id").fetchall() == before
+        assert connection.execute("SELECT relforcerowsecurity FROM pg_class WHERE oid = 'app.runs'::regclass"
+                                  ).fetchone() == (True,)
     # Exercise the allowed lossy conversion, including terminal/waiting rows that need a
     # non-null historical deadline, then prove that those same populated rows can re-upgrade.
     db.downgrade("0014", allow_data_loss=True)

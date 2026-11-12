@@ -92,6 +92,8 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
     EVAL_RUNTIME: {
         "evaluation.evaluation_runs": (SI, {"status", "started_at", "finished_at", "total_cost_usd", "version"}),
         "evaluation.evaluation_trials": (SI, set()),
+        "evaluation.trial_claims": (SI, {"state", "owner_token", "invocation_scope", "started_at", "finished_at",
+                                        "result_id"}),
         "evaluation.budget_scopes": (SI, SCOPE_COUNTERS),
         "evaluation.usage_attempts": (SI, ATTEMPT_SETTLEMENT),
     },
@@ -175,6 +177,10 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
     assert _rows(shared_db, "SELECT p.oid::regprocedure::text, p.proacl::text FROM pg_proc p "
                  "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'checkpoints'") == [
                      ("checkpoints.guard_write_update()", f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}")]
+    assert _rows(shared_db, "SELECT p.oid::regprocedure::text, p.proacl::text FROM pg_proc p "
+                 "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'evaluation' ORDER BY 1") == [
+                     ("evaluation.guard_trial_claim()", f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"),
+                     ("evaluation.refuse_legacy_usage_attempt()", f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}")]
 
 
 def test_schema_usage_and_no_runtime_create_anywhere(shared_db: AppDatabase) -> None:

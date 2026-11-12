@@ -40,7 +40,7 @@ from policyops.persistence import executions as ledger
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs as run_store
 from policyops.persistence.database import IdempotencyConflict, ImmutableRecord, transaction, workspace_transaction
-from policyops.persistence.migrate import head
+from policyops.persistence.migrate import revisions
 from policyops.persistence.migration_guard import DataLossRefused
 from policyops.persistence.records import Membership, NewCase, NewRun, Principal, Workspace
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, WORKER_DISCOVERY
@@ -478,17 +478,27 @@ def test_runtime_and_discovery_roles_cannot_bypass_the_ledger(env: Env) -> None:
 
 def test_a_populated_ledger_refuses_the_downgrade(env: Env) -> None:
     execution = env.reserve(env.approve())
-    for allow in (False, True):  # allow_data_loss does not apply: the row may be an unresolved remote operation
-        try:
-            with pytest.raises(DataLossRefused):
-                env.db.downgrade("0011", allow_data_loss=allow)
-            # Without override 0015 refuses the runs; with it 0015 commits, then the
-            # durable review intent refuses at 0014 before the populated 0012 ledger.
-            assert env.db.current() == ("0014" if allow else head())
-        finally:
-            env.db.upgrade()  # restore head for the dispatcher and the module's shared database
-    assert env.dispatcher().dispatch_once()[0].state == "succeeded"  # leave no due row for later tests
-    assert env.row(execution)["state"] == "succeeded"
+    try:
+        with workspace_transaction(env.app, env.run.workspace_id) as conn:
+            before = ledger.get(conn, execution)
+            assert before is not None
+        chain = revisions()
+        for allow in (False, True):  # the row may be an unresolved remote operation, even with the override
+            try:
+                with pytest.raises(DataLossRefused):
+                    env.db.downgrade("0011", allow_data_loss=allow)
+                # Each downgrade commits separately; the refusing revision remains applied.
+                # Later guards may refuse first, but the 0012 ledger must survive intact.
+                stopped_at = env.db.current()
+                assert stopped_at is not None and chain.index(stopped_at) >= chain.index("0012")
+                with workspace_transaction(env.app, env.run.workspace_id) as conn:
+                    assert ledger.get(conn, execution) == before
+            finally:
+                env.db.upgrade()  # restore head for the dispatcher and the module's shared database
+    finally:
+        # Settle even when an assertion above fails, so later module tests cannot discover this due row.
+        assert env.dispatcher().dispatch_once()[0].state == "succeeded"
+        assert env.row(execution)["state"] == "succeeded"
 
 
 # -- E04 development harness (seeded, small; the >=100-trial comparative study is T30) ----------------------------

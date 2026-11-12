@@ -35,6 +35,9 @@ ATTEMPT_SETTLEMENT = {"state", "provider_request_id", "usage", "usage_sha256", "
 # role -> table -> (table-level privileges, columns updatable through column grants)
 EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
     APP_RUNTIME: {
+        "checkpoints.threads": (SI, set()),
+        "checkpoints.snapshots": (SI, set()),
+        "checkpoints.writes": (SI, {"value"}),
         "identity.workspaces": ({"SELECT"}, set()),
         "identity.memberships": (SI, {"revoked_at", "version"}),
         "app.cases": (SI, {"status", "updated_at", "version"}),
@@ -166,6 +169,9 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
     assert acl["app.refuse_legacy_usage_attempt()"] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}"
     for guard in guards:
         assert acl[guard] == f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}", guard
+    assert _rows(shared_db, "SELECT p.oid::regprocedure::text, p.proacl::text FROM pg_proc p "
+                 "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'checkpoints'") == [
+                     ("checkpoints.guard_write_update()", f"{{{APP_MIGRATOR}=X/{APP_MIGRATOR}}}")]
 
 
 def test_schema_usage_and_no_runtime_create_anywhere(shared_db: AppDatabase) -> None:
@@ -184,7 +190,7 @@ def test_schema_usage_and_no_runtime_create_anywhere(shared_db: AppDatabase) -> 
 
 def test_every_application_table_has_forced_row_level_security(shared_db: AppDatabase) -> None:
     rows = _rows(shared_db, "SELECT c.oid::regclass::text, relrowsecurity, relforcerowsecurity FROM pg_class c "
-                 "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('identity', 'app') "
+                 "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('identity', 'app', 'checkpoints') "
                  "AND relkind = 'r'")
     assert rows and all(enabled and forced for _, enabled, forced in rows), [r for r in rows if not (r[1] and r[2])]
     # Evaluation tables are not tenant data; isolation there is by schema/role (the app runtime has no access).

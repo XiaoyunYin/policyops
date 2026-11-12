@@ -264,21 +264,27 @@ def append_run_event(connection: Connection, *, event_id: UUID, workspace_id: UU
 
 # -- proposals, consent, decisions, executions ----------------------------------------------------------------
 
-def insert_proposal(connection: Connection, row_id: UUID, proposal: ActionProposal) -> None:
+def insert_proposal(connection: Connection, row_id: UUID, proposal: ActionProposal, *,
+                    creation_step: int | None = None, creation_request_sha256: str | None = None) -> None:
     """Store the complete validated proposal (body) with its binding keys as relational columns."""
     scope = proposal.scope
+    creation_columns = ", creation_step, creation_request_sha256" if creation_step is not None else ""
+    creation_values = ", :step, :seal" if creation_step is not None else ""
     with _mapped(IdempotencyConflict):
         connection.execute(text(
-            "INSERT INTO app.action_proposals (id, workspace_id, case_id, run_id, proposal_id, proposal_version, "
+            "INSERT INTO app.action_proposals (id, workspace_id, case_id, run_id, proposal_id, proposal_version, "  # noqa: S608
             "tool_name, arguments, action_digest, intent_digest, presentation_sha256, body, policy_sha256, status, "
-            "created_at, expires_at) VALUES (:id, :w, :c, :r, :pid, :pv, :tool, CAST(:arguments AS jsonb), :digest, "
-            ":intent, :presentation, CAST(:body AS jsonb), :policy, 'created', :created_at, :expires_at)"),
+            f"created_at, expires_at{creation_columns}) "
+            "VALUES (:id, :w, :c, :r, :pid, :pv, :tool, CAST(:arguments AS jsonb), :digest, "
+            ":intent, :presentation, CAST(:body AS jsonb), :policy, 'created', :created_at, :expires_at"
+            f"{creation_values})"),
             {"id": row_id, "w": scope.workspace_id, "c": scope.case_id, "r": scope.run_id,
              "pid": proposal.proposal_id, "pv": proposal.proposal_version, "tool": str(proposal.action.tool),
              "arguments": proposal.action.model_dump_json(), "digest": proposal.action_digest,
              "intent": proposal.intent_digest, "presentation": proposal.presentation.text_sha256,
              "body": proposal.model_dump_json(), "policy": proposal.policy.sha256,
-             "created_at": proposal.created_at, "expires_at": proposal.expires_at})
+             "created_at": proposal.created_at, "expires_at": proposal.expires_at,
+             "step": creation_step, "seal": creation_request_sha256})
 
 
 def get_proposal(connection: Connection, proposal_id: UUID, proposal_version: int) -> ActionProposal | None:
@@ -422,14 +428,25 @@ class ProposalRow:
     created_at: datetime
     expires_at: datetime
     presented_at: datetime | None
+    creation_step: int | None = None
+    creation_request_sha256: str | None = None
 
 
 PROPOSAL_ROW_COLUMNS = ("id AS row_id, workspace_id, case_id, run_id, proposal_id, proposal_version, action_digest, "
-                        "intent_digest, status, created_at, expires_at, presented_at")
+                        "intent_digest, status, created_at, expires_at, presented_at, "
+                        "creation_step, creation_request_sha256")
 
 
 def _proposal_row(row: Any) -> ProposalRow:  # a dict or a SQLAlchemy RowMapping
     return ProposalRow(**{name: row[name] for name in ProposalRow.__dataclass_fields__})
+
+
+def proposal_creation(connection: Connection, run_id: UUID, step: int) -> ProposalRow | None:
+    """Read under the case lock; the later run/fence lock precedes proposal mutation."""
+    row = _one(connection, f"SELECT {PROPOSAL_ROW_COLUMNS} FROM app.action_proposals "  # noqa: S608
+               "WHERE workspace_id = app.current_workspace() AND run_id = :r AND creation_step = :step",
+               {"r": run_id, "step": step})
+    return _proposal_row(row) if row is not None else None
 
 
 def proposal_row(connection: Connection, proposal_id: UUID, proposal_version: int, *,
@@ -526,7 +543,8 @@ def inbox_page(connection: Connection, *, now: datetime, after: tuple[datetime, 
                               "ai": after[1] if after else None}
     rows = connection.execute(text(
         "SELECT p.id AS row_id, p.workspace_id, p.case_id, p.run_id, p.proposal_id, p.proposal_version, "
-        "p.action_digest, p.intent_digest, p.status, p.created_at, p.expires_at, p.presented_at "
+        "p.action_digest, p.intent_digest, p.status, p.created_at, p.expires_at, p.presented_at, "
+        "p.creation_step, p.creation_request_sha256 "
         "FROM app.action_proposals p JOIN app.customer_consents c ON c.workspace_id = p.workspace_id "
         "AND c.proposal_id = p.proposal_id AND c.proposal_version = p.proposal_version "
         "LEFT JOIN app.approval_decisions d ON d.workspace_id = p.workspace_id AND d.proposal_id = p.proposal_id "

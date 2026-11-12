@@ -478,8 +478,13 @@ def test_runtime_and_discovery_roles_cannot_bypass_the_ledger(env: Env) -> None:
 def test_a_populated_ledger_refuses_the_downgrade(env: Env) -> None:
     execution = env.reserve(env.approve())
     for allow in (False, True):  # allow_data_loss does not apply: the row may be an unresolved remote operation
-        with pytest.raises(DataLossRefused):
-            env.db.downgrade("0011", allow_data_loss=allow)
+        try:
+            with pytest.raises(DataLossRefused):
+                env.db.downgrade("0011", allow_data_loss=allow)
+            # Each revision commits separately: empty 0013 downgrades before populated 0012 refuses.
+            assert env.db.current() == "0012"
+        finally:
+            env.db.upgrade()  # restore head for the dispatcher and the module's shared database
     assert env.dispatcher().dispatch_once()[0].state == "succeeded"  # leave no due row for later tests
     assert env.row(execution)["state"] == "succeeded"
 

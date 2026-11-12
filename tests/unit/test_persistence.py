@@ -81,8 +81,8 @@ def test_migrations_avoid_forbidden_constructs(pattern: str) -> None:
 
 def test_revisions_are_sequential_and_documented() -> None:
     assert migrate.revisions() == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010",
-                                   "0011", "0012"]
-    assert migrate.head() == "0012"
+                                   "0011", "0012", "0013"]
+    assert migrate.head() == "0013"
     for path in sorted((migrate.MIGRATIONS / "versions").glob("*.py")):
         text = path.read_text(encoding="utf-8")
         assert text.startswith('"""') and "def downgrade() -> None:" in text and "refuse_data_loss" in text, path.name

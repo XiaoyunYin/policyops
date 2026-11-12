@@ -165,8 +165,11 @@ def test_a_workspace_rotated_in_another_tab_refuses_every_operation_without_effe
     key = new_key()
     select(api, w.tab, w.w2)  # tab B; the jar now carries a live W2 session, tab A still expects W1
     before = snapshot(api)
+    # The inventory discovers all tables; require the checkpoint tables explicitly so their rows also
+    # participate in the full before/after no-effect comparison, without pinning the total table count.
     assert {"app.request_idempotency", "app.outbox_events", "app.jobs", "app.approval_decisions", "app.usage_events",
-            "app.audit_events", "identity.memberships"} <= set(before) and len(before) == 40
+            "app.audit_events", "identity.memberships", "checkpoints.threads", "checkpoints.snapshots",
+            "checkpoints.writes"} <= set(before)
     for operation in OPERATIONS:
         assert_refused(send(w, operation, key=key), 409, "context_changed", "auth.workspace_changed")
     assert snapshot(api) == before

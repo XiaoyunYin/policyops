@@ -8,7 +8,7 @@ import pytest
 
 from policyops.domain.examples import build_examples
 from policyops.persistence.importer import import_synthetic_world
-from policyops.persistence.migrate import MigrationPreconditionError
+from policyops.persistence.migrate import MigrationPreconditionError, head
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops_contracts.consent import ApprovalDecision
 from policyops_testing.app_database import NewDatabase
@@ -43,4 +43,4 @@ def test_an_empty_ledger_downgrades_and_upgrades_again(new_app_database: NewData
     database.downgrade("0011")
     assert database.current() == "0011"
     database.upgrade()
-    assert database.current() == "0012"
+    assert database.current() == head()

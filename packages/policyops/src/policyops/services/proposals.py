@@ -32,7 +32,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from uuid import UUID, uuid4
+import hashlib
+from uuid import UUID, uuid4, uuid5
 
 from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
@@ -52,11 +53,11 @@ from policyops.domain.session import CustomerSession
 from policyops.gateway.facts import Collected
 from policyops.gateway.ports import GatewayScope
 from policyops.gateway.stores import evidence_status
-from policyops.persistence import customer_authentications
+from policyops.persistence import checkpoint_json, customer_authentications
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs as run_store
 from policyops.persistence.customer_authentications import AuthenticationConflict
-from policyops.persistence.database import ImmutableRecord, workspace_transaction
+from policyops.persistence.database import IdempotencyConflict, ImmutableRecord, workspace_transaction
 from policyops.persistence.records import AuditEvent
 from policyops.persistence.repositories import ProposalRow
 from policyops.runtime.clock import LeaseClock
@@ -94,6 +95,7 @@ from policyops_contracts.scalars import CaseScope, RunScope
 
 WRITE_CALLS = (CancelPendingOrder, ModifyPendingOrderAddress, ModifyPendingOrderPayment, ModifyPendingOrderItems,
                ReturnDeliveredOrderItems, ExchangeDeliveredOrderItems, ModifyUserAddress)
+PROPOSAL_NAMESPACE = UUID("d20b1653-e26e-5c37-85df-d0947e92010c")
 MAX_EVIDENCE = 32
 MAX_RATIONALE = 1000  # ProposalBody.rationale
 
@@ -115,6 +117,15 @@ class Created:
 
 @dataclass(frozen=True)
 class Presented:
+    record: ProposalPresentationRecord
+    message: CaseMessage
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """One immutable proposal and its original presentation, including on replay."""
+
+    proposal: ActionProposal
     record: ProposalPresentationRecord
     message: CaseMessage
 
@@ -191,6 +202,40 @@ class ProposalService:
 
     # -- internal writes ----------------------------------------------------------------------------------------
 
+    def create_once(self, scope: GatewayScope, call: WriteToolCall, collected: Collected, *,
+                    token: run_store.ClaimToken, step: int, evidence: Sequence[EvidenceRef] = (),
+                    rationale: str) -> Prepared | ProposalRefused | Denied | Escalated:
+        """Prepare and present atomically under the worker fence; reconcile the SAME run/step after uncertainty.
+
+        Equality binds the request, not mutable facts or a new expiry. An original
+        superseded/expired proposal is returned as-is and gains no authority.
+        """
+        checked_call, checked_evidence = _revalidated_call(call), _revalidated_evidence(evidence)
+        rationale_text = checked_rationale(rationale)
+        if checked_call is None or checked_evidence is None or rationale_text is None or (
+                type(step) is not int or not 0 <= step <= 64):
+            return _refused(ErrorCode.INVALID_INPUT, "proposal.input_invalid", "invalid preparation request")
+        if (token.workspace_id, token.run_id) != (scope.run.workspace_id, scope.run.run_id):
+            raise ValueError("proposal claim does not match scope")
+        with workspace_transaction(self.app_engine, scope.run.workspace_id) as connection:
+            created = self._create_tx(connection, scope, checked_call, collected, checked_evidence, rationale_text,
+                                      creation_step=step, token=token)
+            if not isinstance(created, Created):
+                return created
+            proposal = created.proposal
+            record = repo.get_presentation(connection, proposal.proposal_id, proposal.proposal_version)
+            if record is not None:
+                message = repo.message_by_id(connection, CaseScope(workspace_id=scope.run.workspace_id,
+                                                                   case_id=scope.run.case_id), record.message_id)
+                if message is None or message.text != proposal.presentation.text:
+                    raise ImmutableRecord("proposal replay presentation is invalid")
+                return Prepared(proposal, record, message)
+            presented = self._present_tx(connection, scope.run, proposal.proposal_id, proposal.proposal_version)
+            if not isinstance(presented, Presented):
+                # Fail the whole transaction: never commit a half-prepared intent.
+                raise ImmutableRecord("proposal preparation could not present atomically")
+            return Prepared(proposal, presented.record, presented.message)
+
     def create(self, scope: GatewayScope, call: WriteToolCall, collected: Collected, *,
                evidence: Sequence[EvidenceRef] = (), rationale: str) -> Created | ProposalRefused | Denied | Escalated:
         # Typed intake, before any transaction work: nothing invalid reaches the locks, a supersede or an insert.
@@ -200,102 +245,145 @@ class ProposalService:
         if checked_call is None or checked_evidence is None or rationale_text is None:
             return _refused(ErrorCode.INVALID_INPUT, "proposal.input_invalid",
                             "the proposed call, evidence or rationale is invalid")
+        with workspace_transaction(self.app_engine, scope.run.workspace_id) as connection:
+            return self._create_tx(connection, scope, checked_call, collected, checked_evidence, rationale_text)
+
+    def _create_tx(self, connection: Connection, scope: GatewayScope, checked_call: WriteToolCall,
+                   collected: Collected, checked_evidence: tuple[EvidenceRef, ...], rationale_text: str, *,
+                   creation_step: int | None = None, token: run_store.ClaimToken | None = None
+                   ) -> Created | ProposalRefused | Denied | Escalated:
         run_scope = scope.run
-        with workspace_transaction(self.app_engine, run_scope.workspace_id) as connection:
-            case = repo.lock_case(connection, run_scope.case_id)
-            if case is None:
-                return _refused(ErrorCode.NOT_FOUND, "proposal.case_not_found", "no such case")
-            if case.customer_user_id is None or case.customer_user_id != scope.customer_user_id:
-                return _refused(ErrorCode.CUSTOMER_MISMATCH, "scope.single_customer",
-                                "the case is not bound to this customer")
+        case = repo.lock_case(connection, run_scope.case_id)
+        if case is None:
+            return _refused(ErrorCode.NOT_FOUND, "proposal.case_not_found", "no such case")
+        if case.customer_user_id is None or case.customer_user_id != scope.customer_user_id:
+            return _refused(ErrorCode.CUSTOMER_MISMATCH, "scope.single_customer",
+                            "the case is not bound to this customer")
+        replay = (repo.proposal_creation(connection, run_scope.run_id, creation_step)
+                  if creation_step is not None else None)
+        if replay is None:
             status = evidence_status(connection, checked_evidence, run_id=run_scope.run_id)
             if status != "current":
                 return _refused(ErrorCode.STALE_VERSION, f"evidence.{status}", "the cited evidence is not current")
-            run = run_store.get_run(connection, run_scope.run_id, lock=True)
-            if run is None or run.case_id != run_scope.case_id:
-                return _refused(ErrorCode.NOT_FOUND, "proposal.run_not_found", "no such run in this case")
-            if run.terminal:
-                return _refused(ErrorCode.CONFLICT, "proposal.run_terminal", "the run has ended")
-            try:
-                authentication = customer_authentications.load(connection, run_scope)
-                session = CustomerSession(binding=scope.binding, run=run_scope, authentication=authentication)
-            except (AuthenticationConflict, ValueError):
-                return _refused(ErrorCode.CUSTOMER_MISMATCH, "scope.single_customer",
-                                "the stored authentication does not match the bound customer")
-            if authentication is None:
-                return _refused(ErrorCode.CUSTOMER_NOT_AUTHENTICATED, "auth.lookup_required",
-                                "the customer is not authenticated in this run")
-            intent = intent_digest(run_scope, scope.customer_user_id, checked_call)
-            active = repo.active_intent_rows(connection, case.id, intent)
-            same_run = [row for row in active if row.run_id == run.id]
-            if same_run:
-                proposal_id = same_run[-1].proposal_id
-                version = (repo.latest_proposal_version(connection, proposal_id) or 0) + 1
-            else:
-                proposal_id, version = uuid4(), 1
-            now = self.clock.now(connection)  # after every lock this decision depends on
-            try:
-                sealed = propose(proposal_id=proposal_id, proposal_version=version, session=session,
-                                 call=checked_call, facts=collected.facts, evidence=checked_evidence,
-                                 rationale=rationale_text, now=now)
-            except ValidationError:  # any remaining contract refusal: a fixed refusal, no raw data, nothing written
-                return _refused(ErrorCode.INVALID_INPUT, "proposal.input_invalid",
-                                "the proposal does not satisfy its contract")
-            if not isinstance(sealed, ActionProposal):
-                return sealed  # denied or escalated: nothing written
-            if not presentable(sealed.presentation.text):  # before any supersede or insert
-                return _refused(ErrorCode.POLICY_UNSUPPORTED, "presentation.message_limit",
-                                "the exact confirmation text does not fit one case message")
-            for row in active:
-                repo.set_proposal_status(connection, row.workspace_id, row.proposal_id, row.proposal_version,
-                                         "superseded")
-                _audit(connection, workspace_id=row.workspace_id, actor_kind="worker", action="proposal.supersede",
-                       target_id=row.row_id, before=row.action_digest, after=sealed.action_digest, now=now)
-            row_id = uuid4()
+        run = run_store.get_run(connection, run_scope.run_id, lock=True)
+        if run is None or run.case_id != run_scope.case_id:
+            return _refused(ErrorCode.NOT_FOUND, "proposal.run_not_found", "no such run in this case")
+        if run.terminal:
+            return _refused(ErrorCode.CONFLICT, "proposal.run_terminal", "the run has ended")
+        request_sha256 = None
+        if token is not None:
+            fenced_run, job, _ = run_store.check_fence(connection, token, self.clock)
+            if fenced_run.scope != scope.run or job.run_id != fenced_run.id:
+                raise ValueError("proposal job does not match run")
+            request_sha256 = hashlib.sha256(checkpoint_json.json_bytes({
+                "scope": scope.run.model_dump(mode="json"), "binding": scope.binding.model_dump(mode="json"),
+                "fixture_sha256": scope.fixture_sha256, "graph_sha256": run.graph_sha256,
+                "prompt_sha256": run.prompt_sha256, "config_sha256": run.config_sha256,
+                "action": checked_call.model_dump(mode="json"),
+                "evidence": [ref.model_dump(mode="json") for ref in sorted(
+                    checked_evidence, key=lambda ref: str(ref.evidence_id))],
+                "rationale": rationale_text, "step": creation_step,
+            })).hexdigest()
+            if replay is not None:
+                if replay.creation_request_sha256 != request_sha256:
+                    raise IdempotencyConflict("proposal preparation request changed")
+                original = _load_body(connection, replay)
+                if original is None:
+                    raise ImmutableRecord("proposal replay body is invalid")
+                if repo.get_presentation(connection, original.proposal_id, original.proposal_version) is None:
+                    raise ImmutableRecord("proposal replay has no atomic presentation")
+                return Created(original, ())
+        try:
+            authentication = customer_authentications.load(connection, run_scope)
+            session = CustomerSession(binding=scope.binding, run=run_scope, authentication=authentication)
+        except (AuthenticationConflict, ValueError):
+            return _refused(ErrorCode.CUSTOMER_MISMATCH, "scope.single_customer",
+                            "the stored authentication does not match the bound customer")
+        if authentication is None:
+            return _refused(ErrorCode.CUSTOMER_NOT_AUTHENTICATED, "auth.lookup_required",
+                            "the customer is not authenticated in this run")
+        intent = intent_digest(run_scope, scope.customer_user_id, checked_call)
+        active = repo.active_intent_rows(connection, case.id, intent)
+        same_run = [row for row in active if row.run_id == run.id]
+        if creation_step is not None:
+            proposal_id = uuid5(PROPOSAL_NAMESPACE, f"{run_scope.workspace_id}:{run_scope.run_id}:{creation_step}")
+            version = 1
+        elif same_run:
+            proposal_id = same_run[-1].proposal_id
+            version = (repo.latest_proposal_version(connection, proposal_id) or 0) + 1
+        else:
+            proposal_id, version = uuid4(), 1
+        now = self.clock.now(connection)  # after every lock this decision depends on
+        try:
+            sealed = propose(proposal_id=proposal_id, proposal_version=version, session=session,
+                             call=checked_call, facts=collected.facts, evidence=checked_evidence,
+                             rationale=rationale_text, now=now)
+        except ValidationError:  # any remaining contract refusal: a fixed refusal, no raw data, nothing written
+            return _refused(ErrorCode.INVALID_INPUT, "proposal.input_invalid",
+                            "the proposal does not satisfy its contract")
+        if not isinstance(sealed, ActionProposal):
+            return sealed  # denied or escalated: nothing written
+        if not presentable(sealed.presentation.text):  # before any supersede or insert
+            return _refused(ErrorCode.POLICY_UNSUPPORTED, "presentation.message_limit",
+                            "the exact confirmation text does not fit one case message")
+        for row in active:
+            repo.set_proposal_status(connection, row.workspace_id, row.proposal_id, row.proposal_version,
+                                     "superseded")
+            _audit(connection, workspace_id=row.workspace_id, actor_kind="worker", action="proposal.supersede",
+                   target_id=row.row_id, before=row.action_digest, after=sealed.action_digest, now=now)
+        row_id = uuid4()
+        if creation_step is None:
             repo.insert_proposal(connection, row_id, sealed)
-            _audit(connection, workspace_id=run_scope.workspace_id, actor_kind="worker", action="proposal.create",
-                   target_id=row_id, before=None, after=sealed.action_digest, now=now)
+        else:
+            repo.insert_proposal(connection, row_id, sealed, creation_step=creation_step,
+                                 creation_request_sha256=request_sha256)
+        _audit(connection, workspace_id=run_scope.workspace_id, actor_kind="worker", action="proposal.create",
+               target_id=row_id, before=None, after=sealed.action_digest, now=now)
         return Created(sealed, tuple((row.proposal_id, row.proposal_version) for row in active))
 
     def present(self, run_scope: RunScope, proposal_id: UUID, proposal_version: int) -> Presented | ProposalRefused:
         with workspace_transaction(self.app_engine, run_scope.workspace_id) as connection:
-            case = repo.lock_case(connection, run_scope.case_id)
-            run = run_store.get_run(connection, run_scope.run_id, lock=True)
-            row = repo.proposal_row(connection, proposal_id, proposal_version, lock=True)
-            if case is None or run is None or run.case_id != case.id or row is None or (
-                    row.case_id, row.run_id) != (case.id, run.id):
-                return _refused(ErrorCode.NOT_FOUND, "proposal.not_found", "no such proposal in this run")
-            if run.terminal:
-                return _refused(ErrorCode.CONFLICT, "proposal.run_terminal", "the run has ended")
-            if row.status != "created":
-                return _refused(ErrorCode.CONFLICT, "proposal.not_presentable", "the proposal is not awaiting display")
-            proposal = _load_body(connection, row)
-            if proposal is None or proposal.scope != run_scope:
-                return _refused(ErrorCode.INTERNAL, "proposal.record_invalid", "the stored proposal is not valid")
-            now = self.clock.now(connection)
-            if now >= proposal.expires_at:
-                return _refused(ErrorCode.EXPIRED, "proposal.expired", "the proposal has expired")
-            if not presentable(proposal.presentation.text):  # older or directly seeded bodies
-                return _refused(ErrorCode.POLICY_UNSUPPORTED, "presentation.message_limit",
-                                "the exact confirmation text does not fit one case message")
-            message = repo.append_message(connection, message_id=uuid4(),
-                                          scope=CaseScope(workspace_id=case.workspace_id, case_id=case.id),
-                                          source="agent", entered_by=None, text_value=proposal.presentation.text,
-                                          created_at=now)
-            repo.bump_case_version(connection, case.id, now)
-            record = ProposalPresentationRecord(
-                scope=run_scope, proposal_id=proposal.proposal_id, proposal_version=proposal.proposal_version,
-                action_digest=proposal.action_digest, presentation_sha256=proposal.presentation.text_sha256,
-                message_id=message.message_id, message_sequence=message.sequence, presented_at=now)
-            repo.mark_presented(connection, record)
-            run_store.append_event(connection, run, MessagePosted(message_id=message.message_id,
-                                                                  message_sequence=message.sequence, source="agent"),
-                                   now)
-            run_store.append_event(connection, run, ProposalPresented(
-                proposal_id=proposal.proposal_id, proposal_version=proposal.proposal_version,
-                action_digest=proposal.action_digest, expires_at=proposal.expires_at), now)
-            _audit(connection, workspace_id=run_scope.workspace_id, actor_kind="worker", action="proposal.present",
-                   target_id=row.row_id, before=None, after=proposal.presentation.text_sha256, now=now)
+            return self._present_tx(connection, run_scope, proposal_id, proposal_version)
+
+    def _present_tx(self, connection: Connection, run_scope: RunScope, proposal_id: UUID,
+                    proposal_version: int) -> Presented | ProposalRefused:
+        case = repo.lock_case(connection, run_scope.case_id)
+        run = run_store.get_run(connection, run_scope.run_id, lock=True)
+        row = repo.proposal_row(connection, proposal_id, proposal_version, lock=True)
+        if case is None or run is None or run.case_id != case.id or row is None or (
+                row.case_id, row.run_id) != (case.id, run.id):
+            return _refused(ErrorCode.NOT_FOUND, "proposal.not_found", "no such proposal in this run")
+        if run.terminal:
+            return _refused(ErrorCode.CONFLICT, "proposal.run_terminal", "the run has ended")
+        if row.status != "created":
+            return _refused(ErrorCode.CONFLICT, "proposal.not_presentable", "the proposal is not awaiting display")
+        proposal = _load_body(connection, row)
+        if proposal is None or proposal.scope != run_scope:
+            return _refused(ErrorCode.INTERNAL, "proposal.record_invalid", "the stored proposal is not valid")
+        now = self.clock.now(connection)
+        if now >= proposal.expires_at:
+            return _refused(ErrorCode.EXPIRED, "proposal.expired", "the proposal has expired")
+        if not presentable(proposal.presentation.text):  # older or directly seeded bodies
+            return _refused(ErrorCode.POLICY_UNSUPPORTED, "presentation.message_limit",
+                            "the exact confirmation text does not fit one case message")
+        message = repo.append_message(connection, message_id=uuid4(),
+                                      scope=CaseScope(workspace_id=case.workspace_id, case_id=case.id),
+                                      source="agent", entered_by=None, text_value=proposal.presentation.text,
+                                      created_at=now)
+        repo.bump_case_version(connection, case.id, now)
+        record = ProposalPresentationRecord(
+            scope=run_scope, proposal_id=proposal.proposal_id, proposal_version=proposal.proposal_version,
+            action_digest=proposal.action_digest, presentation_sha256=proposal.presentation.text_sha256,
+            message_id=message.message_id, message_sequence=message.sequence, presented_at=now)
+        repo.mark_presented(connection, record)
+        run_store.append_event(connection, run, MessagePosted(message_id=message.message_id,
+                                                              message_sequence=message.sequence, source="agent"),
+                               now)
+        run_store.append_event(connection, run, ProposalPresented(
+            proposal_id=proposal.proposal_id, proposal_version=proposal.proposal_version,
+            action_digest=proposal.action_digest, expires_at=proposal.expires_at), now)
+        _audit(connection, workspace_id=run_scope.workspace_id, actor_kind="worker", action="proposal.present",
+               target_id=row.row_id, before=None, after=proposal.presentation.text_sha256, now=now)
         return Presented(record, message)
 
     def record_customer_reply(self, run_scope: RunScope, message_id: UUID, *,

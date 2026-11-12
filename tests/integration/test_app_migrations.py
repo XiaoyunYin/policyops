@@ -93,7 +93,7 @@ def test_empty_database_upgrades_to_head_idempotently(new_app_database: NewDatab
         checkpoint_tables = conn.execute("SELECT count(*) FROM pg_tables WHERE schemaname = 'checkpoints'").fetchone()
         retail = conn.execute("SELECT count(*) FROM pg_namespace WHERE nspname = 'retail'").fetchone()
     assert schemas == dict.fromkeys(APP_SCHEMAS, APP_MIGRATOR)
-    assert checkpoint_tables == (0,) and retail == (0,)  # T21 and T16 own those
+    assert checkpoint_tables == (3,) and retail == (0,)  # T21 owns checkpoint DDL; T16 owns retail
 
 
 def test_populated_previous_revision_upgrades_with_data_intact(new_app_database: NewDatabase) -> None:

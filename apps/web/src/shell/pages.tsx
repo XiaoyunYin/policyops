@@ -11,6 +11,7 @@ import { capabilities, ROLE_LABELS, type Capability } from "../session/permissio
 import { useSessionResource } from "../session/SessionProvider";
 import { EmptyState, ErrorPanel, Status, useDocumentTitle } from "../ui/feedback";
 import { PAGE_HEADING_ID } from "./AppShell";
+import { uuid } from "../runs/contracts";
 
 function PageHeader({ title, description }: { title: string; description?: string }) {
   useDocumentTitle(title);
@@ -61,12 +62,15 @@ export function CasesPage({ me }: { me: MeOut }) {
 }
 
 export function CaseDetailPage({ me }: { me: MeOut }) {
-  const { caseId = "" } = useParams();
+  const { caseId = "", runId, citationId } = useParams();
+  if (!uuid(caseId) || (runId !== undefined && !uuid(runId)) || (citationId !== undefined && !uuid(citationId))) {
+    return <NotFoundPage />;
+  }
   return (
     <Gate me={me} need="readCases" title="Case">
       <PageHeader title="Case" />
       {/* Keyed by case: nothing from one case's view survives into another's. */}
-      <CaseDetail key={caseId} caseId={caseId} me={me} />
+      <CaseDetail key={caseId} caseId={caseId} runId={runId} citationId={citationId} me={me} />
     </Gate>
   );
 }

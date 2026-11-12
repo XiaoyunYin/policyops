@@ -100,6 +100,13 @@ export class FakeApi {
     return this;
   }
 
+  /** A fresh stream per request: never clone/tee a live body into an unread backlog. */
+  stream(path: string, factory: (call: RecordedCall) => ReadableStream<Uint8Array>): this {
+    return this.on("GET", path, (call) => new Response(factory(call), {
+      headers: { "Content-Type": "text/event-stream" },
+    }));
+  }
+
   /** One-shot reply the test resolves later; the fake does not react to the request's abort signal. */
   defer(method: string, path: string): Deferred {
     const deferred = new DeferredReply();

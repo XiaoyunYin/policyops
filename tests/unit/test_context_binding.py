@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parents[2]
 GLOBAL = frozenset({"live", "login", "callback", "me", "select_workspace", "logout"})
 BOUND = frozenset({"list_cases", "create_case", "get_case", "change_status", "list_messages", "post_message",
                    "start_run", "get_run", "cancel_run", "run_events", "list_approvals", "list_case_proposals",
-                   "get_proposal", "decide", "members", "revoke_member"})
+                   "get_proposal", "decide", "members", "revoke_member", "list_case_runs", "run_snapshot",
+                   "list_run_citations", "historical_evidence"})
 P, W = uuid4(), uuid4()
 
 

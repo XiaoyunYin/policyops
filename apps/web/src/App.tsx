@@ -44,6 +44,8 @@ function SessionGate() {
             <Route path="/" element={<Navigate to="/cases" replace />} />
             <Route path="/cases" element={<CasesPage me={state.me} />} />
             <Route path="/cases/:caseId" element={<CaseDetailPage me={state.me} />} />
+            <Route path="/cases/:caseId/runs/:runId" element={<CaseDetailPage me={state.me} />} />
+            <Route path="/cases/:caseId/runs/:runId/evidence/:citationId" element={<CaseDetailPage me={state.me} />} />
             <Route path="/approvals" element={<ApprovalsPage me={state.me} />} />
             <Route path="/members" element={<MembersPage me={state.me} />} />
             <Route path="*" element={<NotFoundPage />} />

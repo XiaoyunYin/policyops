@@ -165,10 +165,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Case Runs */
+        get: operations["list_case_runs"];
         put?: never;
         /** Start Run */
         post: operations["start_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evidence/{citation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Historical Evidence */
+        get: operations["historical_evidence"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -277,6 +295,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/citations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Run Citations */
+        get: operations["list_run_citations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/events": {
         parameters: {
             query?: never;
@@ -286,6 +321,23 @@ export interface paths {
         };
         /** Run Events */
         get: operations["run_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run Snapshot */
+        get: operations["run_snapshot"];
         put?: never;
         post?: never;
         delete?: never;
@@ -396,6 +448,30 @@ export interface components {
             state: string;
             /** Zip */
             zip: string;
+        };
+        /** ApprovalDecided */
+        ApprovalDecided: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject";
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /**
+             * Type
+             * @default approval.decided
+             * @constant
+             */
+            type: "approval.decided";
         };
         /** ApprovalDecision */
         ApprovalDecision: {
@@ -534,6 +610,80 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** CitationPage */
+        CitationPage: {
+            /** Items */
+            items: components["schemas"]["CitationSummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** CitationSummary */
+        CitationSummary: {
+            /**
+             * Citation Id
+             * Format: uuid
+             */
+            citation_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Document Version Id
+             * Format: uuid
+             */
+            document_version_id: string;
+            scope: components["schemas"]["RunScope"];
+            /** Source Uri */
+            source_uri: string;
+            /** Span End */
+            span_end: number;
+            /** Span Start */
+            span_start: number;
+            /** Version Sha256 */
+            version_sha256: string;
+        };
+        /** ClarificationRequested */
+        ClarificationRequested: {
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "ambiguous_reply" | "declined" | "stale_presentation" | "expired";
+            /**
+             * Type
+             * @default consent.clarification_requested
+             * @constant
+             */
+            type: "consent.clarification_requested";
+        };
+        /** ConsentRecorded */
+        ConsentRecorded: {
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Consent Id
+             * Format: uuid
+             */
+            consent_id: string;
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /**
+             * Type
+             * @default consent.recorded
+             * @constant
+             */
+            type: "consent.recorded";
+        };
         /** ConsentView */
         ConsentView: {
             /**
@@ -625,6 +775,39 @@ export interface components {
              */
             schema_version: "policyops.error/v1";
         };
+        /**
+         * ErrorRaised
+         * @description Replayable error marker: code and identifiers only (the free-form detail stays in the response).
+         */
+        ErrorRaised: {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Correlation Id
+             * Format: uuid
+             */
+            correlation_id: string;
+            /** Retryable */
+            retryable: boolean;
+            /** Rule Id */
+            rule_id?: string | null;
+            /**
+             * Type
+             * @default error.raised
+             * @constant
+             */
+            type: "error.raised";
+        };
+        /** EscalationRequested */
+        EscalationRequested: {
+            /** Rule Id */
+            rule_id: string;
+            /**
+             * Type
+             * @default escalation.requested
+             * @constant
+             */
+            type: "escalation.requested";
+        };
         /** EventEnvelope */
         EventEnvelope: {
             /**
@@ -670,6 +853,43 @@ export interface components {
              */
             evidence_id: string;
         };
+        /** EvidenceView */
+        EvidenceView: {
+            /**
+             * Citation Id
+             * Format: uuid
+             */
+            citation_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Document Version Id
+             * Format: uuid
+             */
+            document_version_id: string;
+            /** Excerpt End */
+            excerpt_end: number;
+            /** Excerpt Start */
+            excerpt_start: number;
+            /** Quote Sha256 */
+            quote_sha256: string;
+            scope: components["schemas"]["RunScope"];
+            /** Source Uri */
+            source_uri: string;
+            /** Span End */
+            span_end: number;
+            /** Span Start */
+            span_start: number;
+            /** Text */
+            text: string;
+            /** Version */
+            version: string;
+            /** Version Sha256 */
+            version_sha256: string;
+        };
         /** ExchangeDeliveredOrderItems */
         ExchangeDeliveredOrderItems: {
             /** Item Ids */
@@ -685,6 +905,43 @@ export interface components {
              * @enum {string}
              */
             tool: "exchange_delivered_order_items";
+        };
+        /**
+         * ExecutionChanged
+         * @description A state change of one approved execution (T19), correlated by execution and operation ID. Carries no
+         *     request, address or customer data: the receipt is referenced by its SHA-256 only.
+         */
+        ExecutionChanged: {
+            /** Attempt */
+            attempt: number;
+            /** Code */
+            code?: string | null;
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Outcome */
+            outcome?: ("committed" | "upstream_rejected" | "effect_mismatch" | "money_unrepresentable" | "version_conflict" | "fenced" | "precheck_refused" | "cancelled_before_dispatch") | null;
+            /** Receipt Sha256 */
+            receipt_sha256?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "dispatched" | "succeeded" | "failed" | "unknown" | "reconciled";
+            tool: components["schemas"]["ToolName"];
+            /**
+             * Type
+             * @default execution.changed
+             * @constant
+             */
+            type: "execution.changed";
         };
         /** ItemChangeLine */
         ItemChangeLine: {
@@ -782,11 +1039,6 @@ export interface components {
             items: components["schemas"]["MessageView"][];
             /** Next After Sequence */
             next_after_sequence: number | null;
-        };
-        /** MessagePosted */
-        MessagePosted: {
-            case: components["schemas"]["CaseView"];
-            message: components["schemas"]["MessageView"];
         };
         /** MessageView */
         MessageView: {
@@ -1010,6 +1262,39 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
+        /** ProposalPresented */
+        ProposalPresented: {
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+            /**
+             * Type
+             * @default proposal.presented
+             * @constant
+             */
+            type: "proposal.presented";
+        };
+        /** ProposalRef */
+        ProposalRef: {
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+        };
         /** ProposalSummaryView */
         ProposalSummaryView: {
             /** Action Digest */
@@ -1119,6 +1404,51 @@ export interface components {
             item_id: string;
             price: components["schemas"]["Money"];
         };
+        /**
+         * ReviewOutcome
+         * @description Factual review projection; identifiers and closed reasons only, never arguments or customer text.
+         */
+        ReviewOutcome: {
+            /** Decision Id */
+            decision_id?: string | null;
+            /** Execution Id */
+            execution_id?: string | null;
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Observed Ledger Version */
+            observed_ledger_version?: number | null;
+            /** Operation Id */
+            operation_id?: string | null;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "succeeded" | "reconciled" | "refused" | "unknown";
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+            reason: components["schemas"]["ReviewReason"];
+            /** Receipt Sha256 */
+            receipt_sha256?: string | null;
+            /**
+             * Type
+             * @default review.outcome
+             * @constant
+             */
+            type: "review.outcome";
+        };
+        /**
+         * ReviewReason
+         * @enum {string}
+         */
+        ReviewReason: "review_rejected" | "proposal_expired" | "proposal_stale" | "run_deadline_exceeded" | "run_terminal" | "initiator_not_authorized" | "precheck_refused" | "review_record_invalid" | "review_retries_exhausted" | "committed" | "fenced" | "upstream_rejected" | "effect_mismatch" | "money_unrepresentable" | "version_conflict" | "cancelled_before_dispatch" | "outcome_unconfirmed";
         /**
          * Role
          * @enum {string}
@@ -1477,6 +1807,13 @@ export interface components {
          * @enum {string}
          */
         RunEventToolName: "find_user_id_by_email" | "find_user_id_by_name_zip" | "get_user_details" | "get_order_details" | "get_product_details" | "get_item_details" | "list_all_product_types" | "calculate" | "transfer_to_human_agents" | "cancel_pending_order" | "modify_pending_order_address" | "modify_pending_order_payment" | "modify_pending_order_items" | "return_delivered_order_items" | "exchange_delivered_order_items" | "modify_user_address";
+        /** RunPage */
+        RunPage: {
+            /** Items */
+            items: components["schemas"]["RunView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** RunScope */
         RunScope: {
             /**
@@ -1494,6 +1831,58 @@ export interface components {
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /** RunSnapshot */
+        RunSnapshot: {
+            /** Events */
+            events: (components["schemas"]["EventEnvelope"] | components["schemas"]["UnsupportedEventView"])[];
+            /** Highwater */
+            highwater: number;
+            latest_execution: components["schemas"]["EventEnvelope"] | null;
+            latest_review: components["schemas"]["EventEnvelope"] | null;
+            latest_stop: components["schemas"]["EventEnvelope"] | null;
+            /** Projections Complete */
+            projections_complete: boolean;
+            proposal_ref: components["schemas"]["ProposalRef"] | null;
+            /** Retention Floor */
+            retention_floor: number;
+            run: components["schemas"]["RunView"];
+            /**
+             * Server Time
+             * Format: date-time
+             */
+            server_time: string;
+        };
+        /** RunStateChanged */
+        RunStateChanged: {
+            /**
+             * Current
+             * @enum {string}
+             */
+            current: "queued" | "running" | "waiting_input" | "waiting_approval" | "reconciling" | "succeeded" | "failed" | "cancelled" | "budget_exceeded";
+            /** Previous */
+            previous: ("queued" | "running" | "waiting_input" | "waiting_approval" | "reconciling" | "succeeded" | "failed" | "cancelled" | "budget_exceeded") | null;
+            /**
+             * Type
+             * @default run.state_changed
+             * @constant
+             */
+            type: "run.state_changed";
+        };
+        /** RunStopped */
+        RunStopped: {
+            details: components["schemas"]["StopDetails"];
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /**
+             * Type
+             * @default run.stopped
+             * @constant
+             */
+            type: "run.stopped";
         };
         /** RunView */
         RunView: {
@@ -1568,6 +1957,79 @@ export interface components {
              */
             status: "open" | "in_progress" | "resolved" | "closed";
         };
+        /** StopDetails */
+        StopDetails: {
+            /**
+             * Cleanup Unconfirmed
+             * @default false
+             */
+            cleanup_unconfirmed: boolean;
+            reason: components["schemas"]["StopReason"];
+            /**
+             * Usage Unconfirmed
+             * @default false
+             */
+            usage_unconfirmed: boolean;
+        };
+        /**
+         * StopReason
+         * @enum {string}
+         */
+        StopReason: "usd_cap" | "call_cap" | "count_cap" | "input_tokens" | "active_time" | "tool_cap" | "context_limit" | "overrun" | "contract_block" | "usage_unconfirmed";
+        /** ToolCallFinished */
+        ToolCallFinished: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "ok" | "denied" | "escalated" | "error" | "unknown";
+            /** Rule Id */
+            rule_id?: string | null;
+            tool: components["schemas"]["ToolName"];
+            /**
+             * Type
+             * @default tool.finished
+             * @constant
+             */
+            type: "tool.finished";
+        };
+        /** ToolCallRequested */
+        ToolCallRequested: {
+            /** Call Sha256 */
+            call_sha256: string;
+            kind: components["schemas"]["ToolKind"];
+            tool: components["schemas"]["ToolName"];
+            /**
+             * Type
+             * @default tool.requested
+             * @constant
+             */
+            type: "tool.requested";
+        };
+        /**
+         * ToolKind
+         * @enum {string}
+         */
+        ToolKind: "read" | "write" | "generic";
+        /**
+         * ToolName
+         * @enum {string}
+         */
+        ToolName: "find_user_id_by_email" | "find_user_id_by_name_zip" | "get_user_details" | "get_order_details" | "get_product_details" | "get_item_details" | "list_all_product_types" | "calculate" | "transfer_to_human_agents" | "cancel_pending_order" | "modify_pending_order_address" | "modify_pending_order_payment" | "modify_pending_order_items" | "return_delivered_order_items" | "exchange_delivered_order_items" | "modify_user_address";
+        /** UnsupportedEventView */
+        UnsupportedEventView: {
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /** Event Type */
+            event_type: string;
+            /** Schema Version */
+            schema_version: string;
+            /** Sequence */
+            sequence: number;
+        };
         /** UserAddressEffect */
         UserAddressEffect: {
             address_after: components["schemas"]["Address"];
@@ -1593,6 +2055,32 @@ export interface components {
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /** MessagePosted */
+        policyops__services__cases__MessagePosted: {
+            case: components["schemas"]["CaseView"];
+            message: components["schemas"]["MessageView"];
+        };
+        /** MessagePosted */
+        policyops_contracts__events__MessagePosted: {
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Message Sequence */
+            message_sequence: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent";
+            /**
+             * Type
+             * @default case.message_posted
+             * @constant
+             */
+            type: "case.message_posted";
         };
     };
     responses: never;
@@ -2548,7 +3036,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MessagePosted"];
+                    "application/json": components["schemas"]["policyops__services__cases__MessagePosted"];
                 };
             };
             /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header. */
@@ -2660,6 +3148,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProposalPage"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_case_runs: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header: {
+                /** @description The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Principal": string;
+                /** @description The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Workspace": string;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPage"];
                 };
             };
             /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header. */
@@ -2858,6 +3448,107 @@ export interface operations {
             };
             /** @description A required service is unavailable: the identity provider, or (run start) no run runtime is installed. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    historical_evidence: {
+        parameters: {
+            query: {
+                run_id: string;
+            };
+            header: {
+                /** @description The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Principal": string;
+                /** @description The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Workspace": string;
+            };
+            path: {
+                citation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceView"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3400,6 +4091,108 @@ export interface operations {
             };
         };
     };
+    list_run_citations: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header: {
+                /** @description The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Principal": string;
+                /** @description The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Workspace": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationPage"];
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     run_events: {
         parameters: {
             query?: {
@@ -3428,6 +4221,107 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No valid session (sign in again). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found in the selected workspace. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request body is larger than 64 KiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unexpected failure (no internals are disclosed). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    run_snapshot: {
+        parameters: {
+            query?: {
+                tail?: number;
+            };
+            header: {
+                /** @description The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Principal": string;
+                /** @description The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied. */
+                "PolicyOps-Expected-Workspace": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSnapshot"];
                 };
             };
             /** @description Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header. */

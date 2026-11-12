@@ -9,16 +9,16 @@
 // full it stays capped, and later posts, including ones contiguous with it, go to the suffix. Case snapshots are applied only when their version is not older than the one shown: an idempotent
 // replay returns the original (older) snapshot and a slow read may arrive after a newer one.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "react-aria-components/Button";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 
 import {
   expectedContextOf,
+  ApiError,
   getCase,
   listMessages,
   sameContext,
-  type ApiError,
   type CaseView,
   type MeOut,
   type MessagePage,
@@ -32,6 +32,8 @@ import { useWriteEntries, useWriteLedger } from "../session/SessionProvider";
 import { EmptyState, ErrorPanel, Status } from "../ui/feedback";
 import { CAPACITY_NOTICE, STATUS_LABELS, Timestamp, WriteStatus, useScopedLoader } from "./common";
 import { Composer } from "./Composer";
+import { RunWorkspace } from "../runs/RunWorkspace";
+import type { Payload } from "../runs/contracts";
 
 /** Messages held for one case in total: the fetched prefix plus this tab's newest posts beyond it. */
 export const MAX_MESSAGES = 1000;
@@ -108,8 +110,10 @@ export interface Draft {
 
 const EMPTY_DRAFT: Draft = { source: null, text: "", confirming: false };
 
-export function CaseDetail({ caseId, me }: { caseId: string; me: MeOut }) {
+export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; runId?: string | undefined; citationId?: string | undefined; me: MeOut }) {
   const load = useScopedLoader();
+  const messageLoad = useScopedLoader();
+  const navigate = useNavigate();
   const ledger = useWriteLedger();
   const entries = useWriteEntries();
   const context = expectedContextOf(me);
@@ -120,6 +124,29 @@ export function CaseDetail({ caseId, me }: { caseId: string; me: MeOut }) {
   const [announcement, setAnnouncement] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [focusComposer, setFocusComposer] = useState(0);
+  const onMessages = useCallback((events: Extract<Payload, { type: "case.message_posted" }>[]): void => {
+    const wanted = events.slice(-50).sort((a, b) => a.message_sequence - b.message_sequence);
+    const first = wanted[0];
+    if (first === undefined) return;
+    messageLoad(`case-live-messages:${caseId}`, async (options) => {
+      const page = await listMessages(caseId, first.message_sequence - 1, options);
+      const found: MessageView[] = [];
+      for (const event of wanted) {
+        let message = page.items.find((m) => m.sequence === event.message_sequence);
+        if (message === undefined) message = (await listMessages(caseId, event.message_sequence - 1, options)).items[0];
+        if (message === undefined || message.sequence !== event.message_sequence || message.message_id !== event.message_id
+            || message.source !== event.source) throw new ApiError("malformed");
+        found.push(message);
+      }
+      return found;
+    }, (messages) => {
+      setDetail((previous) => ({ ...previous, history: messages.reduce(addPosted, previous.history) }));
+    }, (error) => {
+      setDetail((previous) => error.status === 403 || error.status === 404
+        ? { ...previous, phase: "failed", caseView: null, history: EMPTY_HISTORY, error }
+        : { ...previous, readError: error });
+    });
+  }, [messageLoad, caseId]);
 
   useEffect(() => {
     load(`case:${caseId}`, async (options) => {
@@ -147,7 +174,17 @@ export function CaseDetail({ caseId, me }: { caseId: string; me: MeOut }) {
         : `Posted as ${posted.message.source === "staff_note" ? "a staff note" : "a customer message entered by staff"}.`);
       ledger.consume(entry.id);
     }
-  }), [ledger, caseId]);
+    if (entry.kind === "startRun" && entry.result?.kind === "startRun") {
+      const run = entry.result.value;
+      setAnnouncement(entry.replayed ? "The investigation had already been requested. Attached to its recorded run."
+        : "Investigation requested. Attached to its recorded run.");
+      void navigate(`/cases/${caseId}/runs/${run.run_id}`);
+      load(`case:${caseId}`, (options) => getCase(caseId, options), (view) => {
+        setDetail((previous) => ({ ...previous, caseView: newerCase(previous.caseView, view) }));
+      }, (error) => { setDetail((previous) => ({ ...previous, readError: error })); });
+      ledger.consume(entry.id);
+    }
+  }), [ledger, caseId, navigate, load]);
 
   const refresh = (): void => {
     if (detail.phase !== "ready") {
@@ -272,6 +309,7 @@ export function CaseDetail({ caseId, me }: { caseId: string; me: MeOut }) {
       ) : (
         <p className="muted">Your role can read this case but not add to it or start an investigation.</p>
       )}
+      <RunWorkspace caseId={caseId} runId={runId} citationId={citationId} me={me} onMessages={onMessages} />
     </>
   );
 }
@@ -281,7 +319,7 @@ function RunStatus({ entry, onRefresh }: { entry: WriteEntry; onRefresh: () => v
     return (
       <p className="panel" role="status">
         {entry.replayed ? "The investigation had already been requested." : "Investigation requested."} Its
-        progress isn't shown on this page yet.
+        activity is shown in the workbench below.
       </p>
     );
   }
@@ -344,11 +382,11 @@ function MessageList({ history, me, busy, onMore }: {
       ) : null}
       {history.suffix.length > 0 ? (
         <>
-          {gap ? <p className="muted table-note">Some earlier messages aren't loaded yet; your latest posts are shown
+          {gap ? <p className="muted table-note">Some earlier messages aren't loaded yet; the latest recorded messages are shown
             below them.</p> : null}
-          {history.suffix.length >= MAX_SUFFIX ? <p className="muted table-note">Only your latest
-            {" "}{String(MAX_SUFFIX)} posts are kept here.</p> : null}
-          <ol className="messages" aria-label="Your latest posts">
+          {history.suffix.length >= MAX_SUFFIX ? <p className="muted table-note">Only the latest
+            {" "}{String(MAX_SUFFIX)} messages are kept here.</p> : null}
+          <ol className="messages" aria-label="Latest messages">
             {history.suffix.map((message) => <MessageItem key={message.message_id} message={message} me={me} />)}
           </ol>
         </>

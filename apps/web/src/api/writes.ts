@@ -28,6 +28,7 @@ import {
   ApiError,
   REQUEST_TIMEOUT_MS,
   createCase,
+  cancelRun,
   expectedContextOf,
   postMessage,
   sameContext,
@@ -43,7 +44,7 @@ import type { Scope, SessionState } from "../session/controller";
 
 export const MAX_WRITES = 8;
 
-export type WriteKind = "createCase" | "postMessage" | "startRun";
+export type WriteKind = "createCase" | "postMessage" | "startRun" | "cancelRun";
 export type WritePhase = "inFlight" | "unknown" | "applied" | "notApplied";
 
 export interface MessageDraft {
@@ -54,7 +55,7 @@ export interface MessageDraft {
 export type WriteResult =
   | { readonly kind: "createCase"; readonly value: CaseView }
   | { readonly kind: "postMessage"; readonly value: MessagePosted }
-  | { readonly kind: "startRun"; readonly value: RunView };
+  | { readonly kind: "startRun" | "cancelRun"; readonly value: RunView };
 
 export interface WriteEntry {
   readonly id: number;
@@ -64,6 +65,7 @@ export interface WriteEntry {
   /** The session generation the entry's text and results belong to. */
   readonly generation: number;
   readonly caseId: string | null;
+  readonly runId?: string | null;
   readonly ifMatch: number | null;
   /** The message text, only while the original ready view is still shown. */
   readonly payload: MessageDraft | null;
@@ -87,6 +89,7 @@ export type BeginRefusal = "duplicate" | "capacity" | "noContext";
 export interface WriteSpec {
   readonly kind: WriteKind;
   readonly caseId: string | null;
+  readonly runId?: string | null;
   readonly ifMatch: number | null;
   readonly payload: MessageDraft | null;
 }
@@ -190,7 +193,7 @@ export class WriteLedger {
       return { refused: "noContext" };
     }
     const same = this.entries.filter((entry) => sameContext(entry.context, context) && entry.kind === spec.kind
-      && entry.caseId === spec.caseId);
+      && entry.caseId === spec.caseId && (entry.runId ?? null) === (spec.runId ?? null));
     if (same.some(isUnresolved)) {
       return { refused: "duplicate" };
     }
@@ -204,6 +207,7 @@ export class WriteLedger {
     }
     const entry: WriteEntry = {
       id: this.nextId, key: newKey(), kind: spec.kind, context, generation: state.generation, caseId: spec.caseId,
+      runId: spec.runId ?? null,
       ifMatch: spec.ifMatch, payload: spec.kind === "postMessage" ? spec.payload : null, phase: "inFlight",
       uncertain: false, attempts: 1, result: null, failure: null, replayed: false,
     };
@@ -279,6 +283,10 @@ export class WriteLedger {
     if (entry.kind === "createCase") {
       return createCase(key, options).then((written) => ({
         result: { kind: "createCase", value: written.value }, replayed: written.replayed }));
+    }
+    if (entry.kind === "cancelRun" && caseId !== null && entry.runId != null) {
+      return cancelRun(entry.runId, caseId, key, options).then((written) => ({
+        result: { kind: "cancelRun", value: written.value }, replayed: written.replayed }));
     }
     if (caseId === null || ifMatch === null) {
       return Promise.reject(new ApiError("malformed"));

@@ -253,10 +253,10 @@ def events_after(connection: Connection, run: Run, after: int, limit: int) -> li
         "SELECT id, sequence, event_type, schema_version, payload::text AS payload, occurred_at FROM app.run_events "
         "WHERE run_id = :r AND sequence > :after ORDER BY sequence LIMIT :limit"),
         {"r": run.id, "after": after, "limit": limit}).all()
-    return [_decode(run, row) for row in rows]
+    return [decode_event(run, row) for row in rows]
 
 
-def _decode(run: Run, row: Any) -> StoredEvent:
+def decode_event(run: Run, row: Any) -> StoredEvent:
     unsupported = UnsupportedEvent(event_id=row.id, sequence=row.sequence, event_type=row.event_type,
                                    schema_version=row.schema_version)
     if row.schema_version != SUPPORTED_EVENT_SCHEMA:

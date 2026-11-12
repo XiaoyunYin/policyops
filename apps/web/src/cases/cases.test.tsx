@@ -183,7 +183,7 @@ describe("conversation and composer", () => {
     await user.type(screen.getByRole("textbox", { name: "Message" }), "Where is my refund?");
     await user.click(screen.getByRole("button", { name: "Post customer message…" }));
     expect(api.callsTo("POST", MESSAGES)).toHaveLength(0);
-    expect(screen.getByRole("group").textContent).toContain("not customer consent");
+    expect(screen.getByRole("group").textContent).toContain("posting alone does not establish consent");
     await user.click(screen.getByRole("button", { name: "Confirm post" }));
     expect(await screen.findByText("Where is my refund?", { selector: ".message-text" })).toBeTruthy();
     expect(api.callsTo("POST", MESSAGES)[0]?.body).toEqual({ source: "operator_entered_customer",
@@ -312,7 +312,7 @@ describe("conversation and composer", () => {
       new URL(call.url, "http://app.test").searchParams.get("after_sequence"));
     expect(after).toEqual(["0", "200"]);
     expect(within(screen.getByRole("list", { name: "Messages" })).getAllByRole("listitem")).toHaveLength(400);
-    expect(within(screen.getByRole("list", { name: "Your latest posts" })).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(screen.getByRole("list", { name: "Latest messages" })).getAllByRole("listitem")).toHaveLength(1);
   });
 });
 

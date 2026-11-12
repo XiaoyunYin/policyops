@@ -76,7 +76,7 @@ export function Composer({ draft, locked, focusSignal, onChange, onSend }: {
         <RadioField value="operator_entered_customer">
           <RadioButton className="source-choice">Customer message, entered by me</RadioButton>
           <Text slot="description" className="muted choice-help">A simulation: you type what the customer said.
-            It's labeled as entered by staff and is not customer consent.</Text>
+            Staff-entered demo customer reply; the server checks whether it confirms the presented action.</Text>
         </RadioField>
         <RadioField value={UNAVAILABLE} isDisabled>
           <RadioButton className="source-choice">Simulated customer (model)</RadioButton>
@@ -103,7 +103,7 @@ export function Composer({ draft, locked, focusSignal, onChange, onSend }: {
           }
         }}>
           <p id={confirmId}>Post this as a <strong>customer message entered by you</strong>? It's labeled as a
-            staff-entered simulation and is not customer consent.</p>
+            staff-entered simulation. The server checks whether it confirms the presented action; posting alone does not establish consent.</p>
           <div className="actions">
             <Button className="button button-primary" type="submit" autoFocus>Confirm post</Button>
             <Button className="button" onPress={backToEditing}>Back to editing</Button>

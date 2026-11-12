@@ -239,6 +239,42 @@
         "title": "Address",
         "type": "object"
       },
+      "ApprovalDecided": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "approval.decided",
+            "default": "approval.decided",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "proposal_id",
+          "decision"
+        ],
+        "title": "ApprovalDecided",
+        "type": "object"
+      },
       "ApprovalDecision": {
         "additionalProperties": false,
         "properties": {
@@ -499,6 +535,159 @@
         "title": "CaseView",
         "type": "object"
       },
+      "CitationPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CitationSummary"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "CitationPage",
+        "type": "object"
+      },
+      "CitationSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "citation_id": {
+            "format": "uuid",
+            "title": "Citation Id",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_version_id": {
+            "format": "uuid",
+            "title": "Document Version Id",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RunScope"
+          },
+          "source_uri": {
+            "maxLength": 2000,
+            "title": "Source Uri",
+            "type": "string"
+          },
+          "span_end": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Span End",
+            "type": "integer"
+          },
+          "span_start": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Span Start",
+            "type": "integer"
+          },
+          "version_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Version Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citation_id",
+          "scope",
+          "document_id",
+          "document_version_id",
+          "version_sha256",
+          "source_uri",
+          "span_start",
+          "span_end"
+        ],
+        "title": "CitationSummary",
+        "type": "object"
+      },
+      "ClarificationRequested": {
+        "additionalProperties": false,
+        "properties": {
+          "proposal_id": {
+            "format": "uuid",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "ambiguous_reply",
+              "declined",
+              "stale_presentation",
+              "expired"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "type": {
+            "const": "consent.clarification_requested",
+            "default": "consent.clarification_requested",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "reason"
+        ],
+        "title": "ClarificationRequested",
+        "type": "object"
+      },
+      "ConsentRecorded": {
+        "additionalProperties": false,
+        "properties": {
+          "action_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Action Digest",
+            "type": "string"
+          },
+          "consent_id": {
+            "format": "uuid",
+            "title": "Consent Id",
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "consent.recorded",
+            "default": "consent.recorded",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "consent_id",
+          "proposal_id",
+          "action_digest"
+        ],
+        "title": "ConsentRecorded",
+        "type": "object"
+      },
       "ConsentView": {
         "additionalProperties": false,
         "properties": {
@@ -707,6 +896,70 @@
         "title": "ErrorEnvelope",
         "type": "object"
       },
+      "ErrorRaised": {
+        "additionalProperties": false,
+        "description": "Replayable error marker: code and identifiers only (the free-form detail stays in the response).",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "correlation_id": {
+            "format": "uuid",
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "type": {
+            "const": "error.raised",
+            "default": "error.raised",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "correlation_id",
+          "retryable"
+        ],
+        "title": "ErrorRaised",
+        "type": "object"
+      },
+      "EscalationRequested": {
+        "additionalProperties": false,
+        "properties": {
+          "rule_id": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "escalation.requested",
+            "default": "escalation.requested",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id"
+        ],
+        "title": "EscalationRequested",
+        "type": "object"
+      },
       "EventEnvelope": {
         "additionalProperties": false,
         "properties": {
@@ -841,6 +1094,95 @@
         "title": "EvidenceRef",
         "type": "object"
       },
+      "EvidenceView": {
+        "additionalProperties": false,
+        "properties": {
+          "citation_id": {
+            "format": "uuid",
+            "title": "Citation Id",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_version_id": {
+            "format": "uuid",
+            "title": "Document Version Id",
+            "type": "string"
+          },
+          "excerpt_end": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Excerpt End",
+            "type": "integer"
+          },
+          "excerpt_start": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Excerpt Start",
+            "type": "integer"
+          },
+          "quote_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Quote Sha256",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/RunScope"
+          },
+          "source_uri": {
+            "maxLength": 2000,
+            "title": "Source Uri",
+            "type": "string"
+          },
+          "span_end": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Span End",
+            "type": "integer"
+          },
+          "span_start": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Span Start",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 20512,
+            "title": "Text",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 200,
+            "title": "Version",
+            "type": "string"
+          },
+          "version_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Version Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citation_id",
+          "scope",
+          "document_id",
+          "document_version_id",
+          "version_sha256",
+          "source_uri",
+          "span_start",
+          "span_end",
+          "version",
+          "excerpt_start",
+          "excerpt_end",
+          "text",
+          "quote_sha256"
+        ],
+        "title": "EvidenceView",
+        "type": "object"
+      },
       "ExchangeDeliveredOrderItems": {
         "additionalProperties": false,
         "properties": {
@@ -888,6 +1230,103 @@
           "payment_method_id"
         ],
         "title": "ExchangeDeliveredOrderItems",
+        "type": "object"
+      },
+      "ExecutionChanged": {
+        "additionalProperties": false,
+        "description": "A state change of one approved execution (T19), correlated by execution and operation ID. Carries no\nrequest, address or customer data: the receipt is referenced by its SHA-256 only.",
+        "properties": {
+          "attempt": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "execution_id": {
+            "format": "uuid",
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "committed",
+                  "upstream_rejected",
+                  "effect_mismatch",
+                  "money_unrepresentable",
+                  "version_conflict",
+                  "fenced",
+                  "precheck_refused",
+                  "cancelled_before_dispatch"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "receipt_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Sha256"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "dispatched",
+              "succeeded",
+              "failed",
+              "unknown",
+              "reconciled"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/ToolName"
+          },
+          "type": {
+            "const": "execution.changed",
+            "default": "execution.changed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "execution_id",
+          "operation_id",
+          "tool",
+          "state",
+          "attempt"
+        ],
+        "title": "ExecutionChanged",
         "type": "object"
       },
       "ItemChangeLine": {
@@ -1136,23 +1575,6 @@
           "next_after_sequence"
         ],
         "title": "MessagePage",
-        "type": "object"
-      },
-      "MessagePosted": {
-        "additionalProperties": false,
-        "properties": {
-          "case": {
-            "$ref": "#/components/schemas/CaseView"
-          },
-          "message": {
-            "$ref": "#/components/schemas/MessageView"
-          }
-        },
-        "required": [
-          "message",
-          "case"
-        ],
-        "title": "MessagePosted",
         "type": "object"
       },
       "MessageView": {
@@ -1733,6 +2155,68 @@
         "title": "ProposalPage",
         "type": "object"
       },
+      "ProposalPresented": {
+        "additionalProperties": false,
+        "properties": {
+          "action_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Action Digest",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "proposal_version": {
+            "maximum": 9007199254740992.0,
+            "minimum": 1.0,
+            "title": "Proposal Version",
+            "type": "integer"
+          },
+          "type": {
+            "const": "proposal.presented",
+            "default": "proposal.presented",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "proposal_version",
+          "action_digest",
+          "expires_at"
+        ],
+        "title": "ProposalPresented",
+        "type": "object"
+      },
+      "ProposalRef": {
+        "additionalProperties": false,
+        "properties": {
+          "proposal_id": {
+            "format": "uuid",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "proposal_version": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Proposal Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "proposal_version"
+        ],
+        "title": "ProposalRef",
+        "type": "object"
+      },
       "ProposalSummaryView": {
         "additionalProperties": false,
         "properties": {
@@ -1975,6 +2459,140 @@
         ],
         "title": "ReturnLine",
         "type": "object"
+      },
+      "ReviewOutcome": {
+        "additionalProperties": false,
+        "description": "Factual review projection; identifiers and closed reasons only, never arguments or customer text.",
+        "properties": {
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Id"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "observed_ledger_version": {
+            "anyOf": [
+              {
+                "maximum": 9.223372036854776e+18,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Ledger Version"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
+          "outcome": {
+            "enum": [
+              "succeeded",
+              "reconciled",
+              "refused",
+              "unknown"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "format": "uuid",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "proposal_version": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Proposal Version",
+            "type": "integer"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReviewReason"
+          },
+          "receipt_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Sha256"
+          },
+          "type": {
+            "const": "review.outcome",
+            "default": "review.outcome",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "proposal_version",
+          "outcome",
+          "reason",
+          "message_id"
+        ],
+        "title": "ReviewOutcome",
+        "type": "object"
+      },
+      "ReviewReason": {
+        "enum": [
+          "review_rejected",
+          "proposal_expired",
+          "proposal_stale",
+          "run_deadline_exceeded",
+          "run_terminal",
+          "initiator_not_authorized",
+          "precheck_refused",
+          "review_record_invalid",
+          "review_retries_exhausted",
+          "committed",
+          "fenced",
+          "upstream_rejected",
+          "effect_mismatch",
+          "money_unrepresentable",
+          "version_conflict",
+          "cancelled_before_dispatch",
+          "outcome_unconfirmed"
+        ],
+        "title": "ReviewReason",
+        "type": "string"
       },
       "Role": {
         "enum": [
@@ -2747,6 +3365,37 @@
         "title": "ToolName",
         "type": "string"
       },
+      "RunPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RunView"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "RunPage",
+        "type": "object"
+      },
       "RunScope": {
         "additionalProperties": false,
         "properties": {
@@ -2772,6 +3421,183 @@
           "run_id"
         ],
         "title": "RunScope",
+        "type": "object"
+      },
+      "RunSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EventEnvelope"
+                },
+                {
+                  "$ref": "#/components/schemas/UnsupportedEventView"
+                }
+              ]
+            },
+            "maxItems": 100,
+            "title": "Events",
+            "type": "array"
+          },
+          "highwater": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Highwater",
+            "type": "integer"
+          },
+          "latest_execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_stop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projections_complete": {
+            "title": "Projections Complete",
+            "type": "boolean"
+          },
+          "proposal_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProposalRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retention_floor": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Retention Floor",
+            "type": "integer"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunView"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run",
+          "retention_floor",
+          "highwater",
+          "proposal_ref",
+          "events",
+          "latest_review",
+          "latest_stop",
+          "latest_execution",
+          "projections_complete",
+          "server_time"
+        ],
+        "title": "RunSnapshot",
+        "type": "object"
+      },
+      "RunStateChanged": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_input",
+              "waiting_approval",
+              "reconciling",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "budget_exceeded"
+            ],
+            "title": "Current",
+            "type": "string"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waiting_input",
+                  "waiting_approval",
+                  "reconciling",
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "budget_exceeded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          },
+          "type": {
+            "const": "run.state_changed",
+            "default": "run.state_changed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "previous",
+          "current"
+        ],
+        "title": "RunStateChanged",
+        "type": "object"
+      },
+      "RunStopped": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/StopDetails"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "run.stopped",
+            "default": "run.stopped",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "details"
+        ],
+        "title": "RunStopped",
         "type": "object"
       },
       "RunView": {
@@ -2945,6 +3771,182 @@
         "title": "StatusIn",
         "type": "object"
       },
+      "StopDetails": {
+        "additionalProperties": false,
+        "properties": {
+          "cleanup_unconfirmed": {
+            "default": false,
+            "title": "Cleanup Unconfirmed",
+            "type": "boolean"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/StopReason"
+          },
+          "usage_unconfirmed": {
+            "default": false,
+            "title": "Usage Unconfirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "StopDetails",
+        "type": "object"
+      },
+      "StopReason": {
+        "enum": [
+          "usd_cap",
+          "call_cap",
+          "count_cap",
+          "input_tokens",
+          "active_time",
+          "tool_cap",
+          "context_limit",
+          "overrun",
+          "contract_block",
+          "usage_unconfirmed"
+        ],
+        "title": "StopReason",
+        "type": "string"
+      },
+      "ToolCallFinished": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "enum": [
+              "ok",
+              "denied",
+              "escalated",
+              "error",
+              "unknown"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/ToolName"
+          },
+          "type": {
+            "const": "tool.finished",
+            "default": "tool.finished",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "outcome"
+        ],
+        "title": "ToolCallFinished",
+        "type": "object"
+      },
+      "ToolCallRequested": {
+        "additionalProperties": false,
+        "properties": {
+          "call_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Call Sha256",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ToolKind"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/ToolName"
+          },
+          "type": {
+            "const": "tool.requested",
+            "default": "tool.requested",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "kind",
+          "call_sha256"
+        ],
+        "title": "ToolCallRequested",
+        "type": "object"
+      },
+      "ToolKind": {
+        "enum": [
+          "read",
+          "write",
+          "generic"
+        ],
+        "title": "ToolKind",
+        "type": "string"
+      },
+      "ToolName": {
+        "enum": [
+          "find_user_id_by_email",
+          "find_user_id_by_name_zip",
+          "get_user_details",
+          "get_order_details",
+          "get_product_details",
+          "get_item_details",
+          "list_all_product_types",
+          "calculate",
+          "transfer_to_human_agents",
+          "cancel_pending_order",
+          "modify_pending_order_address",
+          "modify_pending_order_payment",
+          "modify_pending_order_items",
+          "return_delivered_order_items",
+          "exchange_delivered_order_items",
+          "modify_user_address"
+        ],
+        "title": "ToolName",
+        "type": "string"
+      },
+      "UnsupportedEventView": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "format": "uuid",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_type": {
+            "maxLength": 256,
+            "title": "Event Type",
+            "type": "string"
+          },
+          "schema_version": {
+            "maxLength": 256,
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "sequence": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_id",
+          "sequence",
+          "event_type",
+          "schema_version"
+        ],
+        "title": "UnsupportedEventView",
+        "type": "object"
+      },
       "UserAddressEffect": {
         "additionalProperties": false,
         "properties": {
@@ -3006,6 +4008,63 @@
           "roles"
         ],
         "title": "WorkspaceOut",
+        "type": "object"
+      },
+      "policyops__services__cases__MessagePosted": {
+        "additionalProperties": false,
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/CaseView"
+          },
+          "message": {
+            "$ref": "#/components/schemas/MessageView"
+          }
+        },
+        "required": [
+          "message",
+          "case"
+        ],
+        "title": "MessagePosted",
+        "type": "object"
+      },
+      "policyops_contracts__events__MessagePosted": {
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "message_sequence": {
+            "maximum": 9007199254740992.0,
+            "minimum": 1.0,
+            "title": "Message Sequence",
+            "type": "integer"
+          },
+          "source": {
+            "enum": [
+              "seeded",
+              "simulated_customer",
+              "operator_entered_customer",
+              "staff_note",
+              "agent"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "case.message_posted",
+            "default": "case.message_posted",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "message_sequence",
+          "source"
+        ],
+        "title": "MessagePosted",
         "type": "object"
       }
     },
@@ -4486,7 +5545,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MessagePosted"
+                  "$ref": "#/components/schemas/policyops__services__cases__MessagePosted"
                 }
               }
             },
@@ -4777,6 +5836,170 @@
       }
     },
     "/api/v1/cases/{case_id}/runs": {
+      "get": {
+        "operationId": "list_case_runs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 400,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "List Case Runs"
+      },
       "post": {
         "operationId": "start_run",
         "parameters": [
@@ -4985,6 +6208,153 @@
           }
         ],
         "summary": "Start Run"
+      }
+    },
+    "/api/v1/evidence/{citation_id}": {
+      "get": {
+        "operationId": "historical_evidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "citation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Citation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Historical Evidence"
       }
     },
     "/api/v1/health/live": {
@@ -5742,6 +7112,172 @@
         "summary": "Cancel Run"
       }
     },
+    "/api/v1/runs/{run_id}/citations": {
+      "get": {
+        "operationId": "list_run_citations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 400,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "List Run Citations"
+      }
+    },
     "/api/v1/runs/{run_id}/events": {
       "get": {
         "operationId": "run_events",
@@ -5908,6 +7444,155 @@
           }
         ],
         "summary": "Run Events"
+      }
+    },
+    "/api/v1/runs/{run_id}/snapshot": {
+      "get": {
+        "operationId": "run_snapshot",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tail",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 0,
+              "title": "Tail",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The principal_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session now belongs to another principal, the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Principal",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace_id from this client's GET /me, as one lowercase UUID. A refusal precondition, never a selector: if the session's selected workspace is now another one (or none), the request is refused with 409 context_changed and not applied.",
+            "in": "header",
+            "name": "PolicyOps-Expected-Workspace",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed or duplicate Content-Length, a request body that is not valid UTF-8, (on workspace routes) a missing PolicyOps-Expected-Principal or PolicyOps-Expected-Workspace header, or (on writes) a missing Idempotency-Key header."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "No valid session (sign in again)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden: workspace not selected, no membership, role, CSRF token or Origin refused."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not found in the selected workspace."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict: the session is no longer the expected principal or workspace (code context_changed: the request was not applied), stale version, refused status transition, Idempotency-Key reused for another request, an already active run, or an event position that is no longer retained."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request body is larger than 64 KiB."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "The request is not valid: malformed JSON, or a body, path, query or header value that fails validation (no input is echoed)."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unexpected failure (no internals are disclosed)."
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Run Snapshot"
       }
     },
     "/api/v1/workspace/members": {

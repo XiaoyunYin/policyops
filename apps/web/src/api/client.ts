@@ -28,7 +28,7 @@ export type ErrorCode = Schemas["ErrorCode"];
 export type ErrorEnvelope = Schemas["ErrorEnvelope"];
 export type MessageView = Schemas["MessageView"];
 export type MessagePage = Schemas["MessagePage"];
-export type MessagePosted = Schemas["MessagePosted"];
+export type MessagePosted = operations["post_message"]["responses"][201]["content"]["application/json"];
 export type MessageIn = Schemas["MessageIn"];
 export type StaffMessageSource = MessageIn["source"];
 export type MessageSource = MessageView["source"];
@@ -187,7 +187,7 @@ function plainText(value: string): string {
   return cleaned.length > MAX_DETAIL_CHARS ? `${cleaned.slice(0, MAX_DETAIL_CHARS - 1)}…` : cleaned;
 }
 
-function httpError(status: number, text: string): ApiError {
+export function httpError(status: number, text: string): ApiError {
   let parsed: unknown = null;
   try {
     parsed = JSON.parse(text);
@@ -503,12 +503,13 @@ function messagePage(value: unknown, caseId: string, after: number): MessagePage
   return { items, next_after_sequence: next };
 }
 
-function runView(value: unknown, caseId: string): RunView {
+export function runView(value: unknown, caseId: string): RunView {
   if (!isRecord(value) || !caseIdOk(value["run_id"]) || value["case_id"] !== caseId
       || !isVersion(value["case_version"]) || !isVersion(value["version"]) || value["mode"] !== "workbench"
       || typeof value["state"] !== "string" || !Object.hasOwn(RUN_STATES, value["state"])
       || (value["initiated_by"] !== null && !caseIdOk(value["initiated_by"]))
       || typeof value["event_highwater"] !== "number" || !Number.isSafeInteger(value["event_highwater"])
+      || value["event_highwater"] < 0
       || typeof value["config_sha256"] !== "string" || typeof value["graph_sha256"] !== "string"
       || typeof value["prompt_sha256"] !== "string" || typeof value["created_at"] !== "string"
       || typeof value["updated_at"] !== "string"
@@ -622,6 +623,24 @@ export async function startRun(caseId: string, idempotencyKey: string, ifMatch: 
   const result = await exchangeWith("POST", path, body, options, options.context,
                                     writeHeaders(idempotencyKey, ifMatch));
   return written(result, 202, (value) => runView(value, caseId), (value) => value.version);
+}
+
+/** Shared bounded JSON transport for workspace reads. Resource decoders validate the returned bytes. */
+export async function getBoundJson(path: string, options: BoundRequestOptions): Promise<unknown> {
+  return parseJson(await send("GET", path, undefined, options, options.context));
+}
+
+export async function cancelRun(runId: string, caseId: string, idempotencyKey: string,
+                                options: BoundRequestOptions): Promise<Written<RunView>> {
+  if (!caseIdOk(runId) || !caseIdOk(caseId)) {
+    throw new ApiError("malformed");
+  }
+  const result = await exchangeWith("POST", `/api/v1/runs/${runId}/cancel`, undefined, options, options.context,
+                                    writeHeaders(idempotencyKey, null));
+  return written(result, 200, (value) => {
+    const run = runView(value, caseId);
+    return run.run_id === runId ? run : malformed();
+  }, (value) => value.version);
 }
 
 /** Full-page sign-in navigation; `returnTo` must already be a safe local path (see safeReturnTo). */

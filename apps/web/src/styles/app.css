@@ -735,3 +735,40 @@ a {
 .field-error { color: var(--color-danger, #b42318); }
 .confirm { border: 2px solid currentColor; border-radius: 0.5rem; padding: 0.75rem; }
 .write-status { margin-bottom: 1rem; }
+/* Investigation workbench: quiet surfaces, a clear reading column and an independent source pane. */
+.run-workspace { margin-block: var(--space-7); border-top: 1px solid var(--border); padding-top: var(--space-6); }
+.section-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.section-bar h2, .section-bar h3 { margin-block: 0 var(--space-3); }
+.eyebrow { margin: 0 0 var(--space-1); color: var(--text-muted); font-size: var(--text-xs); font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
+.run-selector { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-2); margin-block: var(--space-4) var(--space-5); }
+.run-selector > .actions { grid-column: 1 / -1; }
+.run-option { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); text-decoration: none; color: var(--text); }
+.run-option span { font-weight: 650; text-transform: capitalize; }
+.run-option time, .run-option code { color: var(--text-muted); font-size: var(--text-xs); }
+.run-option:hover { border-color: var(--accent); background: var(--surface-hover); }
+.run-option.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); background: var(--accent-soft); }
+.run-banner { padding: var(--space-5); border-radius: var(--radius-lg); background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.run-banner p { margin-block: var(--space-1); overflow-wrap: anywhere; }
+.run-state { font-size: var(--text-lg); font-weight: 650; text-transform: capitalize; }
+.workbench-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(19rem, 1fr); align-items: start; gap: var(--space-5); margin-top: var(--space-5); }
+.workbench-main, .workbench-sources { display: grid; gap: var(--space-5); min-width: 0; }
+.activity-panel, .sources-panel, .evidence-viewer, .proposal-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-5); min-width: 0; box-shadow: var(--shadow-sm); }
+.activity-list { list-style: none; margin: var(--space-4) 0; padding: 0; }
+.activity-item { display: flex; gap: var(--space-4); align-items: baseline; padding-block: var(--space-3); border-bottom: 1px solid var(--border); }
+.activity-item:last-child { border-bottom: 0; }
+.activity-item p { margin: 0 0 var(--space-1); }
+.activity-item time { color: var(--text-muted); font-size: var(--text-xs); }
+.activity-sequence { min-width: 2.5rem; color: var(--text-muted); font-size: var(--text-xs); font-family: var(--font-mono); }
+.activity-paging { border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.notice { padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning-text); }
+.source-list { list-style: none; padding: 0; margin-block: var(--space-4); }
+.source-list li { padding-block: var(--space-3); border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.source-list a { display: flex; flex-direction: column; gap: var(--space-1); }
+.source-list .muted, .source-list small { font-size: var(--text-xs); }
+.evidence-excerpt { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; padding: var(--space-4); background: var(--surface-sunken); border-radius: var(--radius-sm); }
+.evidence-excerpt mark { background: var(--warning-soft); color: var(--warning-text); box-decoration-break: clone; }
+.evidence-metadata { display: grid; gap: var(--space-3); font-size: var(--text-sm); }
+.evidence-metadata dt { font-weight: 650; color: var(--text-muted); margin-bottom: var(--space-1); }
+.evidence-metadata dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 1050px) { .workbench-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .activity-panel, .sources-panel, .evidence-viewer, .proposal-panel, .run-banner { padding: var(--space-4); } .activity-item { gap: var(--space-2); } .run-selector { grid-template-columns: minmax(0, 1fr); } }

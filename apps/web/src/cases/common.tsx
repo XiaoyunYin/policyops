@@ -86,18 +86,21 @@ const PENDING_LABEL: Readonly<Record<WriteKind, string>> = {
   createCase: "Creating a case…",
   postMessage: "Posting…",
   startRun: "Starting an investigation…",
+  cancelRun: "Requesting cancellation…",
 };
 
 const UNCONFIRMED: Readonly<Record<WriteKind, string>> = {
   createCase: "We couldn't confirm whether the case was created",
   postMessage: "We couldn't confirm whether your message was posted",
   startRun: "We couldn't confirm whether the investigation was started",
+  cancelRun: "Cancellation request unconfirmed",
 };
 
 const NOT_APPLIED: Readonly<Record<WriteKind, string>> = {
   createCase: "The case wasn't created",
   postMessage: "Your message wasn't posted",
   startRun: "No investigation was started",
+  cancelRun: "Cancellation was refused",
 };
 
 function refusalBody(entry: WriteEntry, failure: ApiError): string {

@@ -1,4 +1,4 @@
-import { createContext, use, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, use, useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import { ApiError, toApiError, type BoundRequestOptions } from "../api/client";
@@ -106,6 +106,7 @@ export function useSessionResource<T>(load: (options: BoundRequestOptions) => Pr
 ): { resource: Resource<T>; reload: () => void } {
   const controller = useSessionController();
   const [attempt, setAttempt] = useState(0);
+  const reload = useCallback(() => { setAttempt((value) => value + 1); }, []);
   const [settled, setSettled] = useState<{ token: string; result: Resource<T> } | null>(null);
   const token = `${key}\n${String(attempt)}`;
 
@@ -154,8 +155,6 @@ export function useSessionResource<T>(load: (options: BoundRequestOptions) => Pr
   const resource: Resource<T> = settled !== null && settled.token === token ? settled.result : LOADING;
   return {
     resource,
-    reload: () => {
-      setAttempt((value) => value + 1);
-    },
+    reload,
   };
 }

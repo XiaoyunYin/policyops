@@ -10,7 +10,7 @@ from sqlalchemy import Engine
 from policyops import __version__
 from policyops.api import auth as auth_api
 from policyops.api import cases as cases_api
-from policyops.api import docs
+from policyops.api import docs, run_reads
 from policyops.api import proposals as proposals_api
 from policyops.api import runs as runs_api
 from policyops.api.body_limit import BodyLimit
@@ -63,6 +63,7 @@ def include_api_routes(app: FastAPI) -> None:
     app.include_router(auth_api.build_router(), prefix=API_PREFIX)
     app.include_router(cases_api.build_router(), prefix=API_PREFIX)
     app.include_router(runs_api.build_router(), prefix=API_PREFIX)
+    app.include_router(run_reads.build_router(), prefix=API_PREFIX)
     app.include_router(proposals_api.build_router(), prefix=API_PREFIX)
 
 

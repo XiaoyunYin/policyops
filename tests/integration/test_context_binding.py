@@ -46,6 +46,8 @@ SHAPES: dict[str, tuple[Any, bool, bool]] = {
     "cancel_run": (None, True, False), "run_events": (None, False, False), "list_approvals": (None, False, False),
     "list_case_proposals": (None, False, False), "get_proposal": (None, False, False),
     "decide": (DECISION, False, False), "members": (None, False, False), "revoke_member": (None, False, False),
+    "list_case_runs": (None, False, False), "run_snapshot": (None, False, False),
+    "list_run_citations": (None, False, False), "historical_evidence": (None, False, False),
 }
 
 
@@ -65,7 +67,7 @@ OPERATIONS = bound_operations()
 
 
 def test_the_table_covers_every_bound_operation() -> None:
-    assert set(SHAPES) == set(OPERATIONS) and len(OPERATIONS) == 16
+    assert set(SHAPES) == set(OPERATIONS) and len(OPERATIONS) == 20
 
 
 @pytest.fixture
@@ -101,7 +103,8 @@ def world(api: CaseApi) -> World:
     other = subject()
     api.signed_in(other)
     membership = api.grant(other, w1, "analyst")
-    ids = {"case_id": case, "run_id": run, "proposal_id": str(uuid4()), "membership_id": str(membership)}
+    ids = {"case_id": case, "run_id": run, "proposal_id": str(uuid4()), "membership_id": str(membership),
+           "citation_id": str(uuid4())}
     return World(api, who, api.principal(who), w1, w2, tab, ids)
 
 
@@ -110,6 +113,8 @@ def send(w: World, operation: str, browser: TestClient | None = None, *, key: st
     method, template = OPERATIONS[operation]
     body, needs_key, needs_version = SHAPES[operation]
     path = template.format(**(ids or w.ids))
+    if operation == "historical_evidence":
+        path += f"?run_id={w.ids['run_id']}"
     if_match = None
     if needs_version:
         if_match = w.api.rows("SELECT version FROM app.cases WHERE id = %s", UUID(w.ids["case_id"]))[0][0]
@@ -198,6 +203,7 @@ def test_the_same_context_proceeds_to_the_usual_checks(api: CaseApi) -> None:
     expected = {"list_cases": 200, "create_case": 201, "get_case": 200, "change_status": 200, "list_messages": 200,
                 "post_message": 201, "start_run": 409, "get_run": 200, "cancel_run": 200, "run_events": 404,
                 "list_approvals": 200, "list_case_proposals": 200, "get_proposal": 404, "decide": 404,
+                "list_case_runs": 200, "run_snapshot": 200, "list_run_citations": 200, "historical_evidence": 404,
                 "members": 200, "revoke_member": 204}
     unknown_run = dict(w.ids, run_id=str(uuid4()))  # a stream of an unknown run: refused after the binding
     for operation, status in expected.items():

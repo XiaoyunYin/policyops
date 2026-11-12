@@ -130,9 +130,12 @@ export function AppShell({ me, notice, children }: { me: MeOut; notice: SessionN
     // (e.g. after a workspace switch removed the focused control).
     if (shownPath.current !== location.pathname) {
       shownPath.current = location.pathname;
-      focusPageHeading();
+      const state = location.state as { focusCitation?: unknown } | null;
+      const target = typeof state?.focusCitation === "string"
+        ? document.getElementById(`citation-${state.focusCitation}`) : null;
+      if (target !== null) target.focus(); else focusPageHeading();
     }
-  }, [location.pathname]);
+  }, [location.pathname, location.state]);
 
   useEffect(() => {
     if (document.activeElement === null || document.activeElement === document.body) {

@@ -151,7 +151,7 @@ def row(*, schema: str = "policyops.run-event/v1", event_type: str = "escalation
     row(payload={"type": "escalation.requested"}),                           # an invalid typed payload
 ])
 def test_undecodable_stored_events_are_marked_unsupported(stored: Any) -> None:
-    decoded = store._decode(run_record(), stored)
+    decoded = store.decode_event(run_record(), stored)
     assert isinstance(decoded, store.UnsupportedEvent)
     assert (decoded.sequence, decoded.event_type, decoded.schema_version) == (
         2, stored.event_type, stored.schema_version)
@@ -159,7 +159,7 @@ def test_undecodable_stored_events_are_marked_unsupported(stored: Any) -> None:
 
 def test_a_valid_stored_event_decodes_as_its_envelope() -> None:
     run = run_record()
-    decoded = store._decode(run, row())
+    decoded = store.decode_event(run, row())
     assert isinstance(decoded, EventEnvelope) and decoded.scope == run.scope
     assert decoded.payload == EscalationRequested(rule_id="x")
 

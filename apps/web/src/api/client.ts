@@ -630,6 +630,17 @@ export async function getBoundJson(path: string, options: BoundRequestOptions): 
   return parseJson(await send("GET", path, undefined, options, options.context));
 }
 
+/** Natural-key decisions share the bound CSRF transport, but have no case ETag or invented write key. */
+export async function postDecisionJson(proposalId: string, body: Schemas["DecisionRequest"],
+  options: BoundRequestOptions): Promise<Written<unknown>> {
+  const result = await exchangeWith("POST", `/api/v1/proposals/${proposalId}/decision`, body, options, options.context, null);
+  const replay = result.headers.get("Idempotent-Replayed");
+  if (!((result.status === 201 && replay === null) || (result.status === 200 && replay === "true"))) {
+    throw new ApiError("malformed", result.status);
+  }
+  return { value: parseJson(result.text), replayed: replay === "true" };
+}
+
 export async function cancelRun(runId: string, caseId: string, idempotencyKey: string,
                                 options: BoundRequestOptions): Promise<Written<RunView>> {
   if (!caseIdOk(runId) || !caseIdOk(caseId)) {

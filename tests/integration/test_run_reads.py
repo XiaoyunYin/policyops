@@ -174,7 +174,8 @@ def test_snapshot_has_one_database_snapshot_during_a_concurrent_append(reads: Re
 
 def test_snapshot_unsupported_positions_are_identifier_only_and_holes_refuse(reads: Reads) -> None:
     with reads.api.db.superuser() as conn:  # corrupt/forward-version row, never emitted by this app
-        conn.execute("UPDATE app.run_events SET schema_version='policyops.run-event/v99',payload='{}' WHERE run_id=%s", (reads.run,))
+        conn.execute("UPDATE app.run_events SET schema_version='policyops.run-event/v99',payload='{}' WHERE run_id=%s",
+                     (reads.run,))
     s = reads.snapshot().json()
     assert set(s["events"][0]) == {"event_id", "sequence", "event_type", "schema_version"}
     assert not s["projections_complete"]

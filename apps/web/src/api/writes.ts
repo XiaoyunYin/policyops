@@ -1,4 +1,7 @@
-// In-memory ledger of this tab's case writes (new case, message, investigation start), independent of React.
+// In-memory ledger of this tab's case/run writes and staff decisions, independent of React.
+// Decisions freeze their proposal/version/digest/decision/reason and consent binding together. Their replay identity
+// is the exact payload under (context, proposal ID, version), shared by approve and reject; the internal `key` is
+// not sent. They reuse capacity, uncertainty, context stripping and unload protection, without case ETag semantics.
 //
 // Each entry is one operation: its Idempotency-Key, the principal and workspace it was composed for, the case
 // version it is based on and, for a message, the text. They are fixed synchronously when the user sends, before the
@@ -40,11 +43,12 @@ import {
   type RunView,
   type StaffMessageSource,
 } from "./client";
+import { decide, sameDecision, type Decision, type DecisionPayload } from "../approvals/api";
 import type { Scope, SessionState } from "../session/controller";
 
 export const MAX_WRITES = 8;
 
-export type WriteKind = "createCase" | "postMessage" | "startRun" | "cancelRun";
+export type WriteKind = "createCase" | "postMessage" | "startRun" | "cancelRun" | "decision";
 export type WritePhase = "inFlight" | "unknown" | "applied" | "notApplied";
 
 export interface MessageDraft {
@@ -53,6 +57,7 @@ export interface MessageDraft {
 }
 
 export type WriteResult =
+  | { readonly kind: "decision"; readonly value: Decision }
   | { readonly kind: "createCase"; readonly value: CaseView }
   | { readonly kind: "postMessage"; readonly value: MessagePosted }
   | { readonly kind: "startRun" | "cancelRun"; readonly value: RunView };
@@ -66,6 +71,9 @@ export interface WriteEntry {
   readonly generation: number;
   readonly caseId: string | null;
   readonly runId?: string | null;
+  readonly decision?: { readonly proposalId: string; readonly payload: DecisionPayload; readonly consentId: string } | null;
+  readonly proposalId?: string | null;
+  readonly proposalVersion?: number | null;
   readonly ifMatch: number | null;
   /** The message text, only while the original ready view is still shown. */
   readonly payload: MessageDraft | null;
@@ -86,13 +94,16 @@ interface Sent {
 
 export type BeginRefusal = "duplicate" | "capacity" | "noContext";
 
-export interface WriteSpec {
-  readonly kind: WriteKind;
+interface WriteBase {
   readonly caseId: string | null;
   readonly runId?: string | null;
   readonly ifMatch: number | null;
   readonly payload: MessageDraft | null;
 }
+export type WriteSpec = WriteBase & (
+  | { readonly kind: "decision"; readonly decision: { readonly proposalId: string; readonly payload: DecisionPayload; readonly consentId: string } }
+  | { readonly kind: Exclude<WriteKind, "decision">; readonly decision?: never }
+);
 
 /** What the ledger needs from the session: its scope and state, and where to report refusals. */
 export interface LedgerSession {
@@ -193,7 +204,9 @@ export class WriteLedger {
       return { refused: "noContext" };
     }
     const same = this.entries.filter((entry) => sameContext(entry.context, context) && entry.kind === spec.kind
-      && entry.caseId === spec.caseId && (entry.runId ?? null) === (spec.runId ?? null));
+      && (spec.kind === "decision" ? entry.proposalId === spec.decision.proposalId
+        && entry.proposalVersion === spec.decision.payload.proposal_version
+        : entry.caseId === spec.caseId && (entry.runId ?? null) === (spec.runId ?? null)));
     if (same.some(isUnresolved)) {
       return { refused: "duplicate" };
     }
@@ -205,9 +218,12 @@ export class WriteLedger {
       }
       kept = kept.filter((entry) => entry !== oldestSettled);
     }
+    const decision = spec.decision == null ? null : Object.freeze({ proposalId: spec.decision.proposalId,
+      consentId: spec.decision.consentId, payload: Object.freeze({ ...spec.decision.payload }) });
     const entry: WriteEntry = {
       id: this.nextId, key: newKey(), kind: spec.kind, context, generation: state.generation, caseId: spec.caseId,
-      runId: spec.runId ?? null,
+      runId: spec.runId ?? null, decision, proposalId: decision?.proposalId ?? null,
+      proposalVersion: decision?.payload.proposal_version ?? null,
       ifMatch: spec.ifMatch, payload: spec.kind === "postMessage" ? spec.payload : null, phase: "inFlight",
       uncertain: false, attempts: 1, result: null, failure: null, replayed: false,
     };
@@ -222,7 +238,8 @@ export class WriteLedger {
   canRetry(entry: WriteEntry): boolean {
     const scope = this.session.scope();
     return entry.phase === "unknown" && sameContext(entry.context, scope.context)
-      && (entry.kind !== "postMessage" || entry.payload !== null);
+      && (entry.kind !== "postMessage" || entry.payload !== null)
+      && (entry.kind !== "decision" || entry.decision != null);
   }
 
   /** Explicitly send the identical request again (same key, body and If-Match). It may apply the operation now. */
@@ -253,6 +270,19 @@ export class WriteLedger {
     }
   }
 
+  /** A canonical read can confirm the identical natural-key decision after a lost response. */
+  confirmDecision(value: Decision): void {
+    const scope = this.session.scope();
+    for (const entry of this.entries) {
+      if (entry.phase !== "unknown" || entry.decision == null || !this.session.isCurrent(scope)
+          || entry.generation !== scope.generation || !sameContext(entry.context, scope.context)) continue;
+      if (sameDecision(value, entry.decision.proposalId, entry.decision.payload, entry.context)
+          && value.scope.case_id === entry.caseId && value.scope.run_id === entry.runId && value.consent_id === entry.decision.consentId) {
+        this.replace({ ...entry, phase: "applied", result: { kind: "decision", value }, decision: null, failure: null });
+      }
+    }
+  }
+
   dispose(): void {
     this.unsubscribe();
   }
@@ -280,6 +310,14 @@ export class WriteLedger {
   private send(entry: WriteEntry, options: { signal: AbortSignal; timeoutMs: number; context: ExpectedContext },
   ): Promise<Sent> {
     const { key, caseId, ifMatch } = entry;
+    if (entry.kind === "decision" && entry.decision != null) {
+      const binding = entry.decision;
+      return decide(binding.proposalId, binding.payload, options).then((written) => {
+        if (written.value.scope.case_id !== entry.caseId || written.value.scope.run_id !== entry.runId
+            || written.value.consent_id !== binding.consentId) throw new ApiError("malformed");
+        return { result: { kind: "decision", value: written.value }, replayed: written.replayed };
+      });
+    }
     if (entry.kind === "createCase") {
       return createCase(key, options).then((written) => ({
         result: { kind: "createCase", value: written.value }, replayed: written.replayed }));
@@ -315,12 +353,13 @@ export class WriteLedger {
     let next: WriteEntry;
     if ("result" in outcome) {
       next = { ...entry, phase: "applied", replayed: outcome.replayed, result: current ? outcome.result : null, failure: null,
-               payload: null };
+               payload: null, decision: null };
     } else {
       const phase = failedAttemptOutcome(entry.kind, entry.uncertain, outcome.error);
       next = { ...entry, phase, uncertain: entry.uncertain || phase === "unknown", result: null,
                failure: current ? outcome.error : null,
-               payload: current && phase === "unknown" ? entry.payload : null };
+               payload: current && phase === "unknown" ? entry.payload : null,
+               decision: current && phase === "unknown" ? entry.decision ?? null : null };
     }
     this.replace(next);
     if (!current) {
@@ -344,10 +383,10 @@ export class WriteLedger {
     const entries = this.entries.map((entry) => {
       const keep = state.status === "ready" && state.generation === entry.generation
         && sameContext(entry.context, visible);
-      if (keep || (entry.payload === null && entry.result === null && entry.failure === null)) {
+      if (keep || (entry.payload === null && entry.decision == null && entry.result === null && entry.failure === null)) {
         return entry;
       }
-      return { ...entry, payload: null, result: null, failure: null };
+      return { ...entry, payload: null, decision: null, result: null, failure: null };
     });
     if (entries.some((entry, index) => entry !== this.entries[index])) {
       this.entries = entries;

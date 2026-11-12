@@ -159,14 +159,11 @@ describe("role union presentation", () => {
     expect(api.calls.map((call) => call.path)).toEqual(["/api/v1/me"]);
   });
 
-  test("a reviewer reaches the decision area, which says plainly it is not available", async () => {
-    signedIn(["reviewer"]);
+  test("a reviewer reaches the approval inbox", async () => {
+    signedIn(["reviewer"]).on("GET", "/api/v1/approvals", json(200, { items: [], next_cursor: null }));
     renderApp("/approvals");
-    expect(await screen.findByRole("heading", { name: "Not available yet" })).toBeTruthy();
-    const main = screen.getByRole("main");
-    expect(within(main).queryByRole("button")).toBeNull();
-    expect(within(main).queryByRole("textbox")).toBeNull();
-    expect(within(main).getAllByRole("link").map((link) => link.textContent)).toEqual(["Back to cases"]);
+    expect(await screen.findByRole("heading", { name: "No approvals waiting" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh inbox" })).toBeTruthy();
   });
 
   test("an analyst is refused the member list", async () => {

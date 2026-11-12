@@ -87,6 +87,7 @@ const PENDING_LABEL: Readonly<Record<WriteKind, string>> = {
   postMessage: "Posting…",
   startRun: "Starting an investigation…",
   cancelRun: "Requesting cancellation…",
+  decision: "Recording decision…",
 };
 
 const UNCONFIRMED: Readonly<Record<WriteKind, string>> = {
@@ -94,6 +95,7 @@ const UNCONFIRMED: Readonly<Record<WriteKind, string>> = {
   postMessage: "We couldn't confirm whether your message was posted",
   startRun: "We couldn't confirm whether the investigation was started",
   cancelRun: "Cancellation request unconfirmed",
+  decision: "Decision unconfirmed",
 };
 
 const NOT_APPLIED: Readonly<Record<WriteKind, string>> = {
@@ -101,6 +103,7 @@ const NOT_APPLIED: Readonly<Record<WriteKind, string>> = {
   postMessage: "Your message wasn't posted",
   startRun: "No investigation was started",
   cancelRun: "Cancellation was refused",
+  decision: "Decision refused",
 };
 
 function refusalBody(entry: WriteEntry, failure: ApiError): string {

@@ -4,6 +4,8 @@
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router";
 
+import { ApprovalInbox } from "../approvals/ApprovalInbox";
+import { ApprovalDetail } from "../approvals/ApprovalDetail";
 import { listMembers, type MeOut } from "../api/client";
 import { CaseDetail } from "../cases/CaseDetail";
 import { CaseQueue } from "../cases/CaseQueue";
@@ -40,18 +42,6 @@ function Gate({ me, need, title, children }: { me: MeOut; need: Capability; titl
   return capabilities(me.roles).has(need) ? children : <Forbidden title={title} />;
 }
 
-function NotAvailable({ title }: { title: string }) {
-  return (
-    <>
-      <PageHeader title={title} />
-      <EmptyState title="Not available yet">
-        <p className="muted">This area isn't ready in this version.</p>
-        <Link className="button" to="/cases">Back to cases</Link>
-      </EmptyState>
-    </>
-  );
-}
-
 export function CasesPage({ me }: { me: MeOut }) {
   return (
     <Gate me={me} need="readCases" title="Cases">
@@ -78,9 +68,18 @@ export function CaseDetailPage({ me }: { me: MeOut }) {
 export function ApprovalsPage({ me }: { me: MeOut }) {
   return (
     <Gate me={me} need="decideProposals" title="Approvals">
-      <NotAvailable title="Approvals" />
+      <PageHeader title="Approvals" description="Review exact proposals with current customer consent." />
+      <ApprovalInbox />
     </Gate>
   );
+}
+
+export function ApprovalDetailPage({ me }: { me: MeOut }) {
+  const { proposalId = "", version = "" } = useParams();
+  const parsed = Number(version);
+  if (!uuid(proposalId) || !/^[1-9][0-9]*$/.test(version) || !Number.isSafeInteger(parsed)) return <NotFoundPage />;
+  return <Gate me={me} need="readCases" title="Proposal review"><PageHeader title="Proposal review" />
+    <ApprovalDetail key={`${proposalId}:${version}`} id={proposalId} version={parsed} me={me} /></Gate>;
 }
 
 function MemberList() {

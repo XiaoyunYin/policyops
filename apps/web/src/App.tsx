@@ -2,7 +2,7 @@ import { Navigate, Route, Routes } from "react-router";
 
 import { SessionProvider, useSessionState } from "./session/SessionProvider";
 import { AppShell } from "./shell/AppShell";
-import { ApprovalsPage, CaseDetailPage, CasesPage, MembersPage, NotFoundPage } from "./shell/pages";
+import { ApprovalDetailPage, ApprovalsPage, CaseDetailPage, CasesPage, MembersPage, NotFoundPage } from "./shell/pages";
 import {
   BootFailedScreen,
   ChooseWorkspaceScreen,
@@ -47,6 +47,7 @@ function SessionGate() {
             <Route path="/cases/:caseId/runs/:runId" element={<CaseDetailPage me={state.me} />} />
             <Route path="/cases/:caseId/runs/:runId/evidence/:citationId" element={<CaseDetailPage me={state.me} />} />
             <Route path="/approvals" element={<ApprovalsPage me={state.me} />} />
+            <Route path="/approvals/:proposalId/versions/:version" element={<ApprovalDetailPage me={state.me} />} />
             <Route path="/members" element={<MembersPage me={state.me} />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>

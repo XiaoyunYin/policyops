@@ -5,12 +5,13 @@ import { expectedContextOf, sameContext, type BoundRequestOptions, type MeOut } 
 import { CAPACITY_NOTICE, Timestamp, WriteStatus } from "../cases/common";
 import { EvidenceViewer } from "../evidence/EvidenceViewer";
 import { capabilities } from "../session/permissions";
-import { useSessionController, useSessionResource, useWriteEntries, useWriteLedger } from "../session/SessionProvider";
+import { useSessionResource, useWriteEntries, useWriteLedger } from "../session/SessionProvider";
 import { ErrorPanel, Status } from "../ui/feedback";
 import { getProposal, listCitations, listRuns, type InspectedProposal } from "./api";
 import { ActivityTimeline } from "./ActivityTimeline";
 import type { EventEnvelope, Payload } from "./contracts";
-import { observeRun, type Observation } from "./observer";
+import { useRunObservation } from "./useRunObservation";
+import { RunOutcomeCard } from "./RunOutcomeCard";
 import { isTerminal } from "./reducer";
 
 type Posted = Extract<Payload, { type: "case.message_posted" }>;
@@ -43,44 +44,13 @@ export function RunWorkspace({ caseId, runId, citationId, me, onMessages }: {
 function SelectedRun({ caseId, runId, citationId, me, onMessages }: {
   caseId: string; runId: string; citationId?: string | undefined; me: MeOut; onMessages: (messages: Posted[]) => void;
 }) {
-  const controller = useSessionController();
   const ledger = useWriteLedger();
   const entries = useWriteEntries();
   const [attempt, setAttempt] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const [observation, setObservation] = useState<Observation>({ activity: null, phase: "hydrating", error: null });
+  const observation = useRunObservation(caseId, runId, attempt);
   const seen = useRef(0);
   const reload = useCallback(() => { setAttempt((v) => v + 1); }, []);
-  useEffect(() => {
-    const captured = controller.scope();
-    let local = new AbortController();
-    const resource = `activity:${runId}`;
-    const start = (): void => {
-      if (captured.context === null || !controller.isCurrent(captured)) return;
-      void observeRun(caseId, runId, { context: captured.context, signal: local.signal }, (next) => {
-        if (local.signal.aborted || !controller.isCurrent(captured)) return;
-        if (next.error?.unauthenticated === true) controller.reportUnauthenticated(captured, resource);
-        else if (next.error?.contextChanged === true) controller.reportContextChanged(captured, next.error, resource);
-        else {
-          if (next.error === null && next.activity !== null) controller.reportSuccess(captured, resource);
-          setObservation(next);
-        }
-      });
-    };
-    const abort = (): void => { local.abort(); };
-    const visibility = (): void => {
-      local.abort();
-      if (document.visibilityState === "visible") { local = new AbortController(); start(); }
-      else setObservation((v) => ({ ...v, phase: "paused" }));
-    };
-    captured.signal.addEventListener("abort", abort, { once: true });
-    document.addEventListener("visibilitychange", visibility);
-    if (!captured.signal.aborted && document.visibilityState !== "hidden") start();
-    return () => {
-      local.abort(); captured.signal.removeEventListener("abort", abort);
-      document.removeEventListener("visibilitychange", visibility);
-    };
-  }, [controller, caseId, runId, attempt]);
   useEffect(() => ledger.onSettled((entry) => {
     if (entry.kind === "cancelRun" && entry.runId === runId && entry.phase === "applied") reload();
   }), [ledger, runId, reload]);
@@ -119,6 +89,7 @@ function SelectedRun({ caseId, runId, citationId, me, onMessages }: {
       {entry.phase === "applied" ? <p role="status">Cancellation request recorded. Current facts are being refreshed.</p> : null}</div>)}
     {observation.error !== null ? <ErrorPanel error={observation.error} onRetry={reload} /> : null}
     {activity === null && observation.error === null ? <Status label="Loading investigation activity…" /> : null}
+    {activity !== null ? <RunOutcomeCard integrityError={observation.error?.kind === "malformed"} activity={activity} /> : null}
     {activity !== null ? <div className="workbench-grid"><div className="workbench-main">
       <ActivityTimeline activity={activity} />
       {proposalRef !== null ? <ProposalPanel key={`${proposalRef.proposal_id}:${String(proposalRef.proposal_version)}`}
@@ -149,6 +120,7 @@ function ProposalInspection({ caseId, runId, proposal: p }: { caseId: string; ru
       <p className="message-text">{p.consent.text}</p><p className="muted">{p.consent.source === "operator_entered_customer" ? "Entered by staff (simulation)" : "Simulated customer"}
         {p.consent.enteredBy !== null ? ` · ${p.consent.enteredBy}` : ""}. Expires <Timestamp value={p.consent.expires} />.</p></>}
     <p className="muted">Customer consent is separate from staff approval. Neither establishes execution success.</p>
+    <p><Link className="button" to={`/approvals/${p.id}/versions/${String(p.version)}`}>Inspect exact proposal and staff review</Link></p>
     <h4>Proposal sources</h4>{p.evidence.length === 0 ? <p>No cited sources recorded.</p> : <ul>{p.evidence.map((e) => <li key={e.id}>
       <Link to={`/cases/${caseId}/runs/${runId}/evidence/${e.id}`} state={{ versionId: e.versionId, versionDigest: e.digest }}>Inspect source {e.id.slice(0, 8)}</Link></li>)}</ul>}
   </>;

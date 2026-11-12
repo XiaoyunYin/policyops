@@ -523,6 +523,22 @@ deadline guarantee. The run-bound ledger checks the investigation claim at reser
 a post-lock-wait recheck. A previously admitted in-flight provider call cannot be unsent by a later fence. Checkpoints do not supply provider-result
 replay, remote exactly-once execution, customer consent or staff approval.
 
+## Operator workbench
+
+The case workspace discovers and starts investigations, streams bounded ordered activity, inspects exact
+proposal versions and opens historical evidence with verified quote highlighting. Reviewers use `/approvals`
+for a paged inbox and an exact-version review with action arguments, recorded effects, verbatim terms,
+customer consent, policy/resource bindings and server-clock expiry. Analysts can inspect; only reviewers decide.
+Staff approval and customer consent remain separate. A confirmation binds the displayed version, digest and
+reason; uncertain decisions offer only an explicit identical-payload replay. Canonical reloads expose stale
+reviews and decisions recorded by another reviewer.
+
+Both workspaces separate investigation lifecycle from factual action outcomes: pending, refused, fenced
+noncommit, unconfirmed or committed with a receipt reference. A late receipt after cancellation is shown as a
+correction. These screens are tested in jsdom, including two independent clients; there is no real-browser,
+OIDC/proxy SSE, screen-reader or responsive-layout proof yet (T38/T39). Receipt downloads, raw fact inspection
+and model-generated customer replies remain outside this slice. A configured runtime is required for execution.
+
 ## Data and licensing
 
 No upstream dataset or implementation has been copied into this repository. The evaluator environment installs tau2-bench at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062` as a pinned dependency, and `policyops-evals data fetch` acquires that commit's public data into a directory outside the checkout:

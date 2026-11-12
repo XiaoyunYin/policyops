@@ -772,3 +772,50 @@ a {
 .evidence-metadata dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 1050px) { .workbench-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .activity-panel, .sources-panel, .evidence-viewer, .proposal-panel, .run-banner { padding: var(--space-4); } .activity-item { gap: var(--space-2); } .run-selector { grid-template-columns: minmax(0, 1fr); } }
+
+/* Approval review: exact bindings lead; consent and the staff decision occupy distinct surfaces. */
+.approval-inbox, .approval-detail { margin-block: var(--space-5); }
+.approval-list { list-style: none; padding: 0; display: grid; gap: var(--space-3); }
+.approval-list > li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); padding: var(--space-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.approval-list h3 { margin-block: var(--space-1); text-transform: capitalize; }
+.approval-list p { margin-block: var(--space-2); }
+.approval-list > li > div { min-width: 0; }
+.approval-list > li > .button { flex: none; }
+.approval-identity { padding: var(--space-5); background: var(--accent-soft); border-radius: var(--radius-lg); border: 1px solid var(--border); }
+.approval-identity h2 { text-transform: capitalize; margin-block: var(--space-2); }
+.approval-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--space-5); }
+.approval-column { display: grid; align-content: start; gap: var(--space-5); min-width: 0; }
+.inspection-panel { padding: var(--space-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); min-width: 0; overflow-wrap: anywhere; }
+.inspection-panel h2 { font-size: var(--text-lg); margin-top: 0; }
+.inspection-panel h3 { font-size: var(--text-md); }
+.consent-panel { border-top: 3px solid var(--accent); }
+.decision-panel { border-top: 3px solid var(--border-strong); }
+.exact-fields { margin: 0; display: grid; gap: var(--space-3); }
+.exact-fields > div { display: grid; grid-template-columns: minmax(7rem, .75fr) minmax(0, 1.25fr); gap: var(--space-3); border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+.exact-fields dt { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); overflow-wrap: anywhere; }
+.exact-fields dd { margin: 0; min-width: 0; }
+.exact-fields .exact-fields > div { display: block; }
+.exact-values { padding-left: var(--space-5); display: grid; gap: var(--space-3); }
+.effect-table { font-size: var(--text-sm); }
+.effect-table td { vertical-align: top; }
+.expiry-panel { margin-block: var(--space-4); padding: var(--space-4) var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.expiry-panel p { margin-block: var(--space-1); }
+.expiry-value { font-size: var(--text-lg); font-weight: 650; font-variant-numeric: tabular-nums; }
+.outcome-card { margin-block: var(--space-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); overflow: hidden; box-shadow: var(--shadow-sm); }
+.outcome-card > section { padding: var(--space-5); min-width: 0; }
+.outcome-card > section + section { border-left: 1px solid var(--border); background: var(--neutral-soft); }
+.outcome-card h3 { font-size: var(--text-lg); margin-block: var(--space-2) var(--space-3); }
+.outcome-success > section + section { background: var(--success-soft); }
+.outcome-success [aria-label="Action outcome"] h3 { color: var(--success-text); }
+.outcome-warning > section + section { background: var(--warning-soft); }
+.outcome-warning [aria-label="Action outcome"] h3 { color: var(--warning-text); }
+.outcome-refused > section + section { background: var(--danger-soft); }
+.outcome-refused [aria-label="Action outcome"] h3 { color: var(--danger); }
+@media (max-width: 1050px) { .approval-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) {
+  .approval-list > li { align-items: stretch; flex-direction: column; gap: var(--space-2); }
+  .inspection-panel, .approval-identity, .approval-list > li { padding: var(--space-4); }
+  .outcome-card { grid-template-columns: minmax(0, 1fr); }
+  .outcome-card > section + section { border-left: 0; border-top: 1px solid var(--border); }
+  .exact-fields > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+}

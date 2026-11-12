@@ -56,6 +56,22 @@ class ToolCallFinished(WireModel):
     rule_id: Slug | None = None
 
 
+class ExecutionChanged(WireModel):
+    """A state change of one approved execution (T19), correlated by execution and operation ID. Carries no
+    request, address or customer data: the receipt is referenced by its SHA-256 only."""
+
+    type: Literal["execution.changed"] = "execution.changed"
+    execution_id: UUID
+    operation_id: UUID
+    tool: ToolName
+    state: Literal["pending", "dispatched", "succeeded", "failed", "unknown", "reconciled"]
+    attempt: Annotated[int, Field(ge=0, le=100)]
+    outcome: Literal["committed", "upstream_rejected", "effect_mismatch", "money_unrepresentable", "version_conflict",
+                     "fenced", "precheck_refused", "cancelled_before_dispatch"] | None = None
+    code: Slug | None = None
+    receipt_sha256: Sha256Hex | None = None
+
+
 class ProposalPresented(WireModel):
     type: Literal["proposal.presented"] = "proposal.presented"
     proposal_id: UUID
@@ -101,7 +117,7 @@ class ErrorRaised(WireModel):
 
 EventPayload = Annotated[
     RunStateChanged | MessagePosted | ToolCallRequested | ToolCallFinished | ProposalPresented | ConsentRecorded
-    | ClarificationRequested | ApprovalDecided | EscalationRequested | ErrorRaised,
+    | ClarificationRequested | ApprovalDecided | EscalationRequested | ErrorRaised | ExecutionChanged,
     Field(discriminator="type"),
 ]
 

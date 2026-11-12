@@ -48,7 +48,9 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.proposal_presentations": (SI, set()),
         "app.customer_consents": (SI, set()),
         "app.approval_decisions": (SI, set()),
-        "app.tool_executions": (SI, {"state", "attempts", "receipt", "updated_at", "version"}),
+        "app.tool_executions": (SI, {"state", "attempts", "receipt", "updated_at", "version", "claim_id", "lease_owner",
+                                     "lease_expires_at", "outcome", "resolved_by", "last_code", "dispatched_at",
+                                     "next_attempt_at", "reconcile_attempts"}),
         "app.jobs": (SI, {"state", "lease_owner", "lease_expires_at", "attempts", "available_at", "updated_at",
                           "version", "claim_id", "last_error_code"}),
         "app.outbox_events": (SI, {"delivered_at"}),
@@ -97,6 +99,7 @@ COLUMN_SELECT: dict[str, dict[str, set[str]]] = {
     WORKER_DISCOVERY: {
         "app.jobs": {"id", "workspace_id", "state", "available_at", "lease_expires_at", "deadline_at"},
         "app.outbox_events": {"id", "workspace_id", "topic", "created_at", "delivered_at"},
+        "app.tool_executions": {"id", "workspace_id", "state", "next_attempt_at", "lease_expires_at"},  # T19
     },
 }
 SCHEMA_USAGE = {APP_RUNTIME: {"identity", "app", "checkpoints", "public"}, AUTH_RUNTIME: {"identity", "public"},
@@ -153,7 +156,8 @@ def test_no_public_or_default_privileges_and_owner_is_the_migrator(shared_db: Ap
                       "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' ORDER BY 1")
     acl = dict(functions)
     guards = {"app.guard_generation_member()", "app.guard_generation_insert()", "app.guard_generation_transition()",
-              "app.check_generation_publication()", "app.guard_citation_insert()"}  # 0010 trigger functions
+              "app.check_generation_publication()", "app.guard_citation_insert()",  # 0010 trigger functions
+              "app.tool_executions_guard()", "app.tool_executions_refuse_delete()"}  # 0012
     assert set(acl) == {"app.current_workspace()", "app.guard_action_proposal_update()",
                         "app.refuse_legacy_usage_attempt()"} | guards
     # Owner plus the app runtime only; a PUBLIC entry would appear as "=X/...".

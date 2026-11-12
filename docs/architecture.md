@@ -1099,8 +1099,8 @@ Dispatch is a closed match on the validated call. A step object that skipped val
    persisted and `actionable: false`. It carries no proposal ID, digest, consent or approval authority. The durable,
    actionable pending proposal is T18's.
 
-**Once-per-order tools.** The default operation history is incomplete until T19's receipt ledger exists, so every
-once-per-order tool escalates (`orders.modify_exchange_once`). Complete histories exist only as labelled test fakes.
+**Once-per-order tools.** The default operation history (`IncompleteHistory`) is incomplete, so every once-per-order
+tool escalates (`orders.modify_exchange_once`). The T19 executor passes `LedgerHistory` (below).
 
 **Transfer.** A transfer returns the handoff observation; the next step must be the exact handoff message.
 
@@ -1155,3 +1155,46 @@ requires byte equality.
 
 **What the map does and does not prove.** It records a mapping. The evidence is the parametrized test that
 executes every case.
+
+## Approved execution and reconciliation (T19)
+
+Implemented in `services/execution.py` (`Executor`, `LedgerHistory`), `runtime/executions.py`
+(`ExecutionDispatcher`), `persistence/executions.py` and revision `0012`; verified by
+`tests/integration/test_execution_retail.py` against the real `RetailClient`, the owned T16 simulator process and
+PostgreSQL as the runtime and discovery roles.
+
+- **Identity.** One execution per approval. The operation ID is a `uuid4` chosen once at reservation and stored with
+  the immutable `MutationRequest` and its operation fingerprint; every retry, lookup and fence reuses them. A second
+  approval for the same order (or user) cannot be reserved while an execution on that target is unresolved. A
+  repeated reservation returns the stored operation only when it names the same run, proposal, consent and approval
+  (otherwise `IdempotencyConflict`); it is not re-prechecked, so it neither renews an expired approval nor mints an ID.
+  Every transition re-reads the locked row and refuses a caller snapshot whose binding differs; a stored outcome (and
+  its receipt) must be of that row's operation and fingerprint.
+- **Authority.** Only persisted T18 records (read by `PgDecisionStore`, `PgMembership`, `PgSessionStore`,
+  `PgEvidencePort`) authorize. The dispatch checkpoint locks evidence corpora, run, proposal, the approver's
+  memberships and the execution, then rechecks the claim, the run, the proposal status, the reviewer role, the
+  evidence and `now < authorization_not_after - margin` before `dispatched` commits; only then is the request sent.
+  The HMAC token is transport identity, not approval. Checks are immediately before the hand-off; revocation after
+  the request begins is not atomic with it.
+- **Recording.** Any validated stored outcome (`mutate`, `lookup`, `fence`, or a late original) is routed alike:
+  committed -> `succeeded` with the receipt, fenced -> `reconciled`, other stored outcomes -> `failed`; an equal
+  terminal observation is a no-op, a contradiction is an audited alert and never overwrites. `Unknown` and refusals
+  leave `unknown`, written only by the current claim. Local settling (`precheck_refused`,
+  `cancelled_before_dispatch`) is possible only before any checkpoint. Each transition commits its
+  `execution.changed` run event, outbox intent and audit row together; events stay durable after a cancelled run
+  (the run is not reopened; a live SSE stream that has already closed does not see them).
+- **Reconciliation.** Lookup absence is never proof. While authority is current and the dispatch cap allows, a fresh
+  precheck may resend the same operation; otherwise the operation is fenced (allowed after expiry or cancellation:
+  no business effect, the original fingerprint). A fence is sent only under a live claim re-read after any lookup,
+  with its service token capped at that claim's lease end; a worker whose claim lapsed sends nothing and the next
+  claimant fences. Once-per-order tools with their own
+  unresolved execution are fenced rather than resent. Past the reconciliation cap a row stays `unknown`,
+  unscheduled and holding its target: explicitly unresolved, never guessed.
+- **Limits.** PostgreSQL lock waits and COMMIT are synchronous and not interrupted; an in-flight request cannot be
+  cancelled; the token's lease cap narrows a stale worker's window but is no COMMIT deadline. The component assumes
+  one coherent retail database and ledger lifetime with no independent ledger deletion and no retail reset while
+  operations are unresolved: such a reset is not detected (T38). `LedgerHistory` is complete only for a simulator
+  case written exclusively through this ledger. Production `ScopeResolver`/retail-client wiring is T22's.
+- **E04 development harness.** `tests/support/policyops_testing/execution_faults.py` (seeded fault plan, crash hooks,
+  raw trial records, derived summary) drives the real dispatcher in a small seeded test; the >=100-trial
+  comparative study is T30.

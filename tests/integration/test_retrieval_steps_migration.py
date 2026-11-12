@@ -77,9 +77,9 @@ def test_a_populated_0010_database_upgrades_to_0011_intact(new_app_database: New
     assert "app.retrieval_steps" not in before and set(rows_before) == set(before)
     populated = ("app.corpora", "app.index_generations", "app.document_versions", "app.chunks")
     assert all(before[t] > 0 for t in populated)  # a populated fixture, not empty tables
-    database.upgrade()
+    database.upgrade("0011")
     after, rows_after = counts(database), inventory(database)
-    assert database.current() == migrate.head() == "0011"
+    assert database.current() == "0011" and migrate.revisions().index("0011") >= 0
     assert {t: after[t] for t in before} == before and after["app.retrieval_steps"] == 0
     assert {t: rows_after[t] for t in rows_before} == rows_before  # every old row's full content unchanged
     assert set(rows_after) - set(rows_before) == {"app.retrieval_steps"}
@@ -97,7 +97,7 @@ def test_a_populated_0010_database_upgrades_to_0011_intact(new_app_database: New
 
 def test_a_populated_downgrade_is_refused_unless_explicitly_destructive(new_app_database: NewDatabase,
                                                                         tmp_path: Path) -> None:
-    database = new_app_database("ret_down")
+    database = new_app_database("ret_down", revision="0011")
     world = World(database, tmp_path)
     world.publish(documents(DOCS), key=KEY)
     one_step(world)
@@ -112,7 +112,7 @@ def test_a_populated_downgrade_is_refused_unless_explicitly_destructive(new_app_
     assert set(after) == set(kept) - {"app.retrieval_steps"}  # only the intent table is dropped
     assert {t: after[t] for t in after} == {t: kept[t] for t in after}  # traces and everything else remain
     assert after_rows == {t: kept_rows[t] for t in after_rows}  # with their full content
-    database.upgrade()
+    database.upgrade("0011")
     assert database.current() == "0011"
     again, again_rows = counts(database), inventory(database)
     assert again == after | {"app.retrieval_steps": 0}  # the dropped intents are not restored
@@ -120,10 +120,10 @@ def test_a_populated_downgrade_is_refused_unless_explicitly_destructive(new_app_
 
 
 def test_an_empty_0011_downgrades_and_upgrades_again_cleanly(new_app_database: NewDatabase) -> None:
-    database = new_app_database("ret_empty")
+    database = new_app_database("ret_empty", revision="0011")
     database.downgrade("0010")
     assert database.current() == "0010" and "app.retrieval_steps" not in counts(database)
-    database.upgrade()
+    database.upgrade("0011")
     assert database.current() == "0011"
 
 

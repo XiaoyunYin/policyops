@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import Field, StringConstraints, model_validator
 
 from policyops_contracts.base import WireModel
+from policyops_contracts.retail_service import MutationRequest, Receipt
 from policyops_contracts.scalars import PositiveVersion, Sha256Hex, ShortText, Slug, UserId, UtcDatetime
 
 
@@ -92,15 +93,51 @@ class NewRun(WireModel):
         return self
 
 
+ExecutionState = Literal["pending", "dispatched", "succeeded", "failed", "unknown", "reconciled"]
+OPEN_EXECUTION_STATES = frozenset({"pending", "dispatched", "unknown"})
+ExecutionOutcome = Literal["committed", "upstream_rejected", "effect_mismatch", "money_unrepresentable",
+                           "version_conflict", "fenced", "precheck_refused", "cancelled_before_dispatch"]
+
+
 class ExecutionRecord(WireModel):
+    """One `app.tool_executions` row (T19). `request` is the stored, immutable `MutationRequest`."""
+
     id: UUID
     workspace_id: UUID
+    case_id: UUID
+    run_id: UUID
     operation_id: UUID
+    proposal_id: UUID
+    proposal_version: PositiveVersion
+    action_digest: Sha256Hex
     approval_id: UUID
+    consent_id: UUID
     argument_digest: Sha256Hex
-    state: Literal["pending", "dispatched", "succeeded", "failed", "unknown", "reconciled"]
+    tool: str
+    target_kind: Literal["order", "user"]
+    target_id: str
+    operation_sha256: Sha256Hex
+    request: MutationRequest
+    authorization_not_after: UtcDatetime
+    state: ExecutionState
     attempts: Annotated[int, Field(ge=0, le=100)]
+    reconcile_attempts: Annotated[int, Field(ge=0, le=100)]
+    outcome: ExecutionOutcome | None
+    resolved_by: Literal["response", "lookup", "fence", "precheck", "cancel"] | None
+    last_code: Slug | None
+    receipt: Receipt | None
+    claim_id: UUID | None
+    lease_owner: UUID | None
+    lease_expires_at: UtcDatetime | None
+    dispatched_at: UtcDatetime | None
+    next_attempt_at: UtcDatetime | None
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
     version: PositiveVersion
+
+    @property
+    def terminal(self) -> bool:
+        return self.state not in OPEN_EXECUTION_STATES
 
 
 class NewJob(WireModel):

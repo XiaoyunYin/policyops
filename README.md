@@ -274,9 +274,20 @@ It re-evaluates current facts, so approval never overrides the policy. It checks
 the proposal's evidence after the reads, and the expiry last. It returns the exact mutation request and its
 authorization deadline, and dispatches nothing.
 
-**Defaults that refuse until later tasks.** Until T19 exists:
-- the precheck refuses unless a caller supplies a decision store (the T18 `PgDecisionStore` is one such store);
-- the operation history is incomplete, so once-per-order tools escalate.
+**Defaults that refuse.** The precheck refuses unless a caller supplies a decision store (the T18 `PgDecisionStore`
+is one such store), and its default operation history is incomplete, so once-per-order tools escalate. The T19
+executor supplies `LedgerHistory` instead.
+
+**Approved execution (T19).** `policyops.services.execution.Executor` reserves one execution per approval (operation
+ID chosen once, stored request and fingerprint) after a clearing precheck; `policyops.runtime.executions`
+`ExecutionDispatcher.dispatch_once()` advances due executions one bounded step each: claim, a fresh precheck, a
+dispatch checkpoint (run, proposal, reviewer role, evidence and time rechecked under locks), one `mutate`, and the
+record; unknown outcomes are reconciled by lookup, a same-ID resend while authority is current, or a fence. Tests:
+`tests/integration/test_execution_retail.py` (real `RetailClient`, owned simulator, real PostgreSQL),
+`tests/integration/test_execution_ledger.py`, `tests/unit/test_execution_states.py`. Run the PostgreSQL tests with
+`python -B scripts/devenv.py uv run --frozen pytest -m postgres tests/integration/test_execution_retail.py`
+(Docker and the synced evals environment are required). See
+[docs/architecture.md](docs/architecture.md#approved-execution-and-reconciliation-t19).
 
 [docs/policy-coverage.json](docs/policy-coverage.json) maps every policy rule to its executed cases. See
 [docs/architecture.md](docs/architecture.md#policy-and-tool-gateway).

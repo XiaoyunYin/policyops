@@ -142,6 +142,15 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
       structure; it does not authorize the citing run or show that the span supports a claim.
   - The repository's publish transaction, historical citation read and their exact checks are described in
     [architecture.md](architecture.md#corpus-ingestion). Retired and `building` chunks stay hidden from the runtime.
+- **Execution ledger (`0012`).** `app.tool_executions` gains the immutable binding (case, run, consent, tool, target,
+  stored request jsonb, operation fingerprint, authorization `not_after`) with a composite foreign key to the exact
+  approval, `UNIQUE (workspace_id, approval_id)`, a partial unique index allowing one unresolved execution per case
+  target, claim/lease, counters, backoff and typed outcome columns with one NULL-safe CHECK of the allowed
+  state/outcome/resolver/receipt/dispatch combinations (a NULL terminal outcome never passes), and triggers that keep the
+  binding immutable, terminal rows final, counters monotonic, transitions to the T19 state machine and refuse every
+  DELETE. The runtime may update only the mutable columns; `policyops_worker_discovery` reads only scheduling
+  columns. The upgrade refuses a populated legacy table (nothing is backfilled by guessing); the downgrade refuses
+  any row even with `allow_data_loss`.
 - **Retrieval step intents (`0011`).** One table, `app.retrieval_steps`, written only by the retrieval component:
   - primary key `(workspace_id, run_id, step)` with `step` between 0 and 9999 (flat CHECKs); the composite foreign key `(workspace_id, run_id)` references `app.runs`; the deterministic `trace_id` is unique per workspace;
   - `request_sha256` and its three components `query_sha256`, `scope_sha256` and `config_sha256` are SHA-256 text with format CHECKs; this table stores no query text, scope or configuration plaintext (the query embedding job's input text is stored separately, in `app.embedding_job_inputs`, under the embedding foundation's safeguards);

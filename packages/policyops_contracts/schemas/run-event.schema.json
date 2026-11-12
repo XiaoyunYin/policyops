@@ -194,6 +194,106 @@
       "title": "EscalationRequested",
       "type": "object"
     },
+    "ExecutionChanged": {
+      "additionalProperties": false,
+      "description": "A state change of one approved execution (T19), correlated by execution and operation ID. Carries no\nrequest, address or customer data: the receipt is referenced by its SHA-256 only.",
+      "properties": {
+        "attempt": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "execution_id": {
+          "format": "uuid",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "operation_id": {
+          "format": "uuid",
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "committed",
+                "upstream_rejected",
+                "effect_mismatch",
+                "money_unrepresentable",
+                "version_conflict",
+                "fenced",
+                "precheck_refused",
+                "cancelled_before_dispatch"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "receipt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Receipt Sha256"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "dispatched",
+            "succeeded",
+            "failed",
+            "unknown",
+            "reconciled"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "type": {
+          "const": "execution.changed",
+          "default": "execution.changed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "operation_id",
+        "tool",
+        "state",
+        "attempt"
+      ],
+      "title": "ExecutionChanged",
+      "type": "object"
+    },
     "MessagePosted": {
       "additionalProperties": false,
       "properties": {
@@ -487,6 +587,7 @@
           "consent.recorded": "#/$defs/ConsentRecorded",
           "error.raised": "#/$defs/ErrorRaised",
           "escalation.requested": "#/$defs/EscalationRequested",
+          "execution.changed": "#/$defs/ExecutionChanged",
           "proposal.presented": "#/$defs/ProposalPresented",
           "run.state_changed": "#/$defs/RunStateChanged",
           "tool.finished": "#/$defs/ToolCallFinished",
@@ -524,6 +625,9 @@
         },
         {
           "$ref": "#/$defs/ErrorRaised"
+        },
+        {
+          "$ref": "#/$defs/ExecutionChanged"
         }
       ],
       "title": "Payload"

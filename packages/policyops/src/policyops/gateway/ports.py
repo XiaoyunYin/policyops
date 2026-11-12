@@ -10,7 +10,7 @@ Ports and their implementations:
 |---|---|---|
 | `RetailPort` | typed retail reads | `policyops.adapters.retail_client.RetailClient`, one per (tenant, case) |
 | `SessionStore` | the run's durable lookup authentication | `PgSessionStore` (`app.customer_authentications`) |
-| `HistoryPort` | the order's recorded operation history | `IncompleteHistory` until T19's receipt ledger |
+| `HistoryPort` | the order's recorded operation history | `IncompleteHistory` by default; T19 `LedgerHistory` |
 | `MembershipPort` | the principal's *current* workspace roles | `PgMembership` (memberships) |
 | `DecisionStore` | persisted proposal, consent and approval records | none before T18 (the precheck refuses) |
 | `EvidencePort` | whether a proposal's evidence reference is current | none yet: a proposal with evidence is refused |
@@ -121,8 +121,8 @@ class HistoryPort(Protocol):
 
 
 class IncompleteHistory:
-    """No authoritative operation ledger exists before T19, so every once-per-order tool escalates
-    (`orders.modify_exchange_once`). `case_version` is accepted so the T19 ledger can bind its answer to it."""
+    """The default: no ledger is consulted, so every once-per-order tool escalates (`orders.modify_exchange_once`).
+    The T19 executor passes `policyops.services.execution.LedgerHistory`, which binds its answer to `case_version`."""
 
     def history(self, order_id: str, *, case_version: int) -> OrderOperationHistory:
         del case_version

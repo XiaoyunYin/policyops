@@ -34,7 +34,6 @@ from policyops.persistence.records import (
     CaseStatus,
     EvaluationRun,
     EvaluationTrial,
-    ExecutionRecord,
     Membership,
     NewCase,
     NewJob,
@@ -597,32 +596,6 @@ def lock_corpora(connection: Connection, corpus_keys: list[str]) -> dict[str, UU
                                    "app.current_workspace() AND corpus_key = ANY(:keys) ORDER BY corpus_key "
                                    "FOR SHARE"), {"keys": keys}).mappings()
     return {row["corpus_key"]: row["active_generation_id"] for row in rows}
-
-
-def begin_execution(connection: Connection, *, execution_id: UUID, operation_id: UUID, decision: ApprovalDecision,
-                    argument_digest: str, now: datetime) -> tuple[ExecutionRecord, bool]:
-    """Create the execution for `operation_id`, or return the existing one if it carries the same approval and
-    argument digest (`created` is False). Reuse with different content raises IdempotencyConflict."""
-    params = {"id": execution_id, "w": decision.scope.workspace_id, "op": operation_id, "pid": decision.proposal_id,
-              "pv": decision.proposal_version, "digest": decision.action_digest, "approval": decision.approval_id,
-              "args": argument_digest, "now": now}
-    row = _one(connection, "INSERT INTO app.tool_executions (id, workspace_id, operation_id, proposal_id, "
-               "proposal_version, action_digest, approval_id, argument_digest, state, created_at, updated_at) VALUES "
-               "(:id, :w, :op, :pid, :pv, :digest, :approval, :args, 'pending', :now, :now) "
-               "ON CONFLICT (workspace_id, operation_id) DO NOTHING "
-               "RETURNING id, workspace_id, operation_id, approval_id, argument_digest, state, "
-               "attempts, version", params)
-    if row is not None:
-        return ExecutionRecord.model_validate(row, strict=False), True
-    existing = _one(connection, "SELECT id, workspace_id, operation_id, approval_id, argument_digest, state, "
-               "attempts, version "
-                    "FROM app.tool_executions WHERE workspace_id = :w AND operation_id = :op", params)
-    if existing is None:  # pragma: no cover - the conflicting row is committed and visible under READ COMMITTED
-        raise IdempotencyConflict(f"operation {operation_id} conflicted but is not visible")
-    record = ExecutionRecord.model_validate(existing, strict=False)
-    if record.argument_digest != argument_digest or record.approval_id != decision.approval_id:
-        raise IdempotencyConflict(f"operation {operation_id} was already used with a different payload")
-    return record, False
 
 
 # -- jobs, outbox, audit, usage --------------------------------------------------------------------------------

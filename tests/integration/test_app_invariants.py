@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
 from functools import partial
+import hashlib
 import threading
 from typing import Any
 from uuid import UUID, uuid4
@@ -19,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, ProgrammingError
 
 from policyops.domain.examples import World, build_examples
+from policyops.persistence import executions
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import (
     DecisionConflict,
@@ -38,6 +40,7 @@ from policyops_contracts.consent import (
     ProposalPresentationRecord,
 )
 from policyops_contracts.proposal import ActionProposal
+from policyops_contracts.retail_service import MutationRequest
 from policyops_testing.app_database import AppDatabase, NewDatabase
 
 
@@ -160,26 +163,28 @@ def test_concurrent_message_appends_get_unique_gapless_sequences(world_db: AppDa
     assert [m.sequence for m in stored] == [1, 2, 3, 4, 5, 6]
 
 
-def test_execution_dedupe_race_same_payload_and_conflicting_payload(world_db: AppDatabase) -> None:
-    decision = ApprovalDecision.model_validate_json(build_examples()["approval-decision.json"])
-    operation = uuid4()
-    same = race(world_db, 4, lambda conn, i: repo.begin_execution(
-        conn, execution_id=uuid4(), operation_id=operation, decision=decision, argument_digest="a" * 64, now=NOW))
+def test_execution_reservation_race_same_payload_and_conflicting_payload(world_db: AppDatabase) -> None:
+    """T19: one execution per approval; its operation ID is chosen once, and a different request is a conflict."""
+    examples = build_examples()
+    decision = ApprovalDecision.model_validate_json(examples["approval-decision.json"])
+    request = MutationRequest.model_validate_json(examples["retail-service-mutation-request.modify-items.json"]
+                                                  ).model_copy(update={"intent_sha256": decision.action_digest})
+    changed = request.model_copy(update={"expected_versions": tuple(
+        version.model_copy(update={"version": version.version + 1}) for version in request.expected_versions)})
+
+    def reserve(conn: Any, chosen: MutationRequest) -> Any:
+        return executions.reserve(
+            conn, run=decision.scope, approval_id=decision.approval_id, consent_id=decision.consent_id,
+            proposal_id=decision.proposal_id, proposal_version=decision.proposal_version, request=chosen,
+            operation_sha256_of=lambda operation: hashlib.sha256(str(operation).encode()).hexdigest(),
+            authorization_not_after=decision.expires_at, now=NOW)
+
+    same = race(world_db, 4, lambda conn, i: reserve(conn, request))
     assert not [r for r in same if isinstance(r, Exception)]
-    assert len({r[0].id for r in same}) == 1 and sorted(r[1] for r in same) == [False, False, False, True]  # type: ignore[index]
-    other = uuid4()
-    mixed = race(world_db, 4, lambda conn, i: repo.begin_execution(
-        conn, execution_id=uuid4(), operation_id=other, decision=decision,
-        argument_digest="a" * 64 if i == 0 else "b" * 64, now=NOW))
-    created = [r for r in mixed if not isinstance(r, Exception) and r[1]]
-    assert len(created) == 1
-    winner_digest = created[0][0].argument_digest
-    for index, result in enumerate(mixed):
-        digest = "a" * 64 if index == 0 else "b" * 64
-        if digest == winner_digest:
-            assert not isinstance(result, Exception)
-        else:
-            assert isinstance(result, IdempotencyConflict)
+    assert len({r[0].operation_id for r in same}) == 1 and sorted(r[1] for r in same) == [False, False, False, True]  # type: ignore[index]
+    mixed = race(world_db, 4, lambda conn, i: reserve(conn, changed if i % 2 else request))
+    assert not [r for r in mixed if not isinstance(r, Exception) and r[1]]  # the stored reservation is kept
+    assert sum(isinstance(r, IdempotencyConflict) for r in mixed) == 2
 
 
 def test_concurrent_decisions_have_one_terminal_winner(new_app_database: NewDatabase) -> None:

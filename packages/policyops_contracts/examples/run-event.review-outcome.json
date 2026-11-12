@@ -1,0 +1,25 @@
+{
+  "event_id": "00000000-0000-0000-0000-0000000003e9",
+  "event_version": 1,
+  "occurred_at": "2026-01-01T12:03:00Z",
+  "payload": {
+    "decision_id": "00000000-0000-0000-0000-0000000003b6",
+    "execution_id": "00000000-0000-0000-0000-0000000004b1",
+    "message_id": "00000000-0000-0000-0000-0000000004b2",
+    "observed_ledger_version": 4,
+    "operation_id": "00000000-0000-0000-0000-0000000004b0",
+    "outcome": "unknown",
+    "proposal_id": "00000000-0000-0000-0000-0000000001f4",
+    "proposal_version": 1,
+    "reason": "outcome_unconfirmed",
+    "receipt_sha256": null,
+    "type": "review.outcome"
+  },
+  "schema_version": "policyops.run-event/v1",
+  "scope": {
+    "case_id": "00000000-0000-0000-0000-000000000002",
+    "run_id": "00000000-0000-0000-0000-000000000003",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "sequence": 22
+}

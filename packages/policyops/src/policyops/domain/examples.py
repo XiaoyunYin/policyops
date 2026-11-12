@@ -337,7 +337,7 @@ def build_examples() -> dict[str, bytes]:
     from policyops_contracts.consent import CaseMessage, ProposalPresentationRecord
     from policyops_contracts.digest import text_sha256
     from policyops_contracts.errors import ErrorCode, ErrorEnvelope
-    from policyops_contracts.events import EventEnvelope, ProposalPresented
+    from policyops_contracts.events import EventEnvelope, ProposalPresented, ReviewOutcome, ReviewReason
     from policyops_contracts.evidence import EvidenceManifest
     from policyops_contracts.proposal import ActionProposal
     from policyops_contracts.retail import HANDOFF_MESSAGE, ExchangeDeliveredOrderItems, TransferToHumanAgents
@@ -397,6 +397,11 @@ def build_examples() -> dict[str, bytes]:
         "action-proposal.exchange": proposal, "proposal-presentation": presentation,
         "case-message.operator-entered-yes": reply, "customer-consent": consented.consent,
         "approval-decision": decided.decision, "run-event.proposal-presented": event,
+        "run-event.review-outcome": EventEnvelope(event_id=UUID(int=1001), scope=world.run_scope, sequence=22,
+            occurred_at=world.now + timedelta(minutes=3), payload=ReviewOutcome(
+                proposal_id=proposal.proposal_id, proposal_version=1, decision_id=decided.decision.approval_id,
+                execution_id=UUID(int=1201), operation_id=UUID(int=1200), outcome="unknown",
+                reason=ReviewReason.UNCONFIRMED, message_id=UUID(int=1202), observed_ledger_version=4)),
         "error.consent-ambiguous": error, "evidence-manifest.failed-run": evidence,
         "case-customer-binding": world.binding(),
         "customer-authentication": session.authentication,

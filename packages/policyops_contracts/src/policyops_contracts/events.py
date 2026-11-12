@@ -8,6 +8,7 @@ still need authorization checks. `event_version` changes when a payload's
 meaning changes; consumers reject versions they do not know.
 """
 
+from enum import StrEnum
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
@@ -80,6 +81,60 @@ class ProposalPresented(WireModel):
     expires_at: UtcDatetime
 
 
+class ReviewReason(StrEnum):
+    REVIEW_REJECTED = "review_rejected"
+    PROPOSAL_EXPIRED = "proposal_expired"
+    PROPOSAL_STALE = "proposal_stale"
+    RUN_DEADLINE = "run_deadline_exceeded"
+    RUN_TERMINAL = "run_terminal"
+    INITIATOR_REVOKED = "initiator_not_authorized"
+    PRECHECK_REFUSED = "precheck_refused"
+    RECORD_INVALID = "review_record_invalid"
+    RETRIES_EXHAUSTED = "review_retries_exhausted"
+    COMMITTED = "committed"
+    FENCED = "fenced"
+    UPSTREAM_REJECTED = "upstream_rejected"
+    EFFECT_MISMATCH = "effect_mismatch"
+    MONEY_UNREPRESENTABLE = "money_unrepresentable"
+    VERSION_CONFLICT = "version_conflict"
+    CANCELLED_BEFORE_DISPATCH = "cancelled_before_dispatch"
+    UNCONFIRMED = "outcome_unconfirmed"
+
+
+class ReviewOutcome(WireModel):
+    """Factual review projection; identifiers and closed reasons only, never arguments or customer text."""
+
+    type: Literal["review.outcome"] = "review.outcome"
+    proposal_id: UUID
+    proposal_version: Annotated[int, Field(ge=1, le=2**63 - 1)]
+    decision_id: UUID | None = None
+    execution_id: UUID | None = None
+    operation_id: UUID | None = None
+    outcome: Literal["succeeded", "reconciled", "refused", "unknown"]
+    reason: ReviewReason
+    message_id: UUID
+    observed_ledger_version: Annotated[int, Field(ge=1, le=2**63 - 1)] | None = None
+    receipt_sha256: Sha256Hex | None = None
+
+    @model_validator(mode="after")
+    def _truth(self) -> Self:
+        execution = self.execution_id is not None
+        if any(value is not None for value in (self.operation_id, self.observed_ledger_version)) != execution or (
+                execution and any(value is None for value in (
+                    self.decision_id, self.operation_id, self.observed_ledger_version))):
+            raise ValueError("execution projections bind decision, operation and observed ledger version")
+        expected = {"succeeded": ReviewReason.COMMITTED, "reconciled": ReviewReason.FENCED,
+                    "unknown": ReviewReason.UNCONFIRMED}
+        if self.outcome in expected:
+            if not execution or self.reason != expected[self.outcome]:
+                raise ValueError("outcome does not match ledger reason")
+        elif self.reason in expected.values():
+            raise ValueError("refusal requires a noncommit reason")
+        if (self.receipt_sha256 is not None) != (self.outcome == "succeeded"):
+            raise ValueError("success requires a receipt hash; other outcomes have none")
+        return self
+
+
 class ConsentRecorded(WireModel):
     type: Literal["consent.recorded"] = "consent.recorded"
     consent_id: UUID
@@ -117,7 +172,7 @@ class ErrorRaised(WireModel):
 
 EventPayload = Annotated[
     RunStateChanged | MessagePosted | ToolCallRequested | ToolCallFinished | ProposalPresented | ConsentRecorded
-    | ClarificationRequested | ApprovalDecided | EscalationRequested | ErrorRaised | ExecutionChanged,
+    | ClarificationRequested | ApprovalDecided | EscalationRequested | ErrorRaised | ExecutionChanged | ReviewOutcome,
     Field(discriminator="type"),
 ]
 

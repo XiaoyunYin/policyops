@@ -15,7 +15,7 @@ from __future__ import annotations
 import base64
 import binascii
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
@@ -28,15 +28,27 @@ from policyops.domain.case_status import CaseStatus, TransitionRefused, plan_tra
 from policyops.domain.roles import Action
 from policyops.persistence import idempotency as idem
 from policyops.persistence import repositories as repo
+from policyops.persistence import runs as run_store
 from policyops.persistence.database import workspace_transaction
 from policyops.persistence.records import CaseRecord, NewCase
+from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock
+from policyops.services.proposals import _record_customer_reply_tx
 from policyops.services.writes import WriteResult, audit, idempotent_write, not_found, recheck
 from policyops_contracts.base import WireModel
 from policyops_contracts.clock import Clock
 from policyops_contracts.consent import CaseMessage, MessageSource
 from policyops_contracts.digest import text_sha256
 from policyops_contracts.errors import ErrorCode
-from policyops_contracts.scalars import CaseScope, MessageText, PositiveVersion, Sequence, Sha256Hex, Slug, UtcDatetime
+from policyops_contracts.scalars import (
+    CaseScope,
+    MessageText,
+    PositiveVersion,
+    RunScope,
+    Sequence,
+    Sha256Hex,
+    Slug,
+    UtcDatetime,
+)
 
 
 SCENARIO: Literal["retail"] = "retail"
@@ -141,6 +153,7 @@ def decode_cursor(value: str, workspace_id: UUID, status: CaseStatus | None) -> 
 class CaseService:
     app_engine: Engine
     clock: Clock
+    lease_clock: LeaseClock = field(default_factory=DatabaseLeaseClock)
 
     # -- reads -----------------------------------------------------------------------------------------------
 
@@ -254,6 +267,11 @@ class CaseService:
                                                                 case_id=case_id),
                 source=source, entered_by=authorized.session.principal_id, text_value=text_value, created_at=now)
             case = repo.bump_case_version(connection, case_id, now)
+            if source == "operator_entered_customer":
+                run_id = run_store.active_workbench_run(connection, case_id)
+                if run_id is not None:
+                    _record_customer_reply_tx(connection, RunScope(workspace_id=authorized.workspace_id,
+                        case_id=case_id, run_id=run_id), message.message_id, self.lease_clock)
             self._audit(connection, authorized, action="case.message_posted", target_type="case_message",
                         target_id=message.message_id, before=None, after=message.text_sha256)
             posted = MessagePosted(message=message_view(message), case=case_view(case))

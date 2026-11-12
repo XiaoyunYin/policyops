@@ -237,6 +237,8 @@ class Executor:
             after_sha256=hashlib.sha256(f"{execution.state}:{execution.outcome}:{execution.version}".encode()
                                         ).hexdigest(), reason=None, correlation_id=execution.operation_id,
             occurred_at=now))
+        if execution.terminal or (execution.state == "unknown" and execution.next_attempt_at is None):
+            review_jobs.enqueue_outcome(connection, execution)
 
     @contextmanager
     def _locked(self, execution: ExecutionRecord) -> Iterator[tuple[Connection, run_store.Run, ExecutionRecord,

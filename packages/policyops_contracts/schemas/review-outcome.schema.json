@@ -1,0 +1,142 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "ReviewReason": {
+      "enum": [
+        "review_rejected",
+        "proposal_expired",
+        "proposal_stale",
+        "run_deadline_exceeded",
+        "run_terminal",
+        "initiator_not_authorized",
+        "precheck_refused",
+        "review_record_invalid",
+        "review_retries_exhausted",
+        "committed",
+        "fenced",
+        "upstream_rejected",
+        "effect_mismatch",
+        "money_unrepresentable",
+        "version_conflict",
+        "cancelled_before_dispatch",
+        "outcome_unconfirmed"
+      ],
+      "title": "ReviewReason",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Factual review projection; identifiers and closed reasons only, never arguments or customer text.",
+  "properties": {
+    "decision_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision Id"
+    },
+    "execution_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Execution Id"
+    },
+    "message_id": {
+      "format": "uuid",
+      "title": "Message Id",
+      "type": "string"
+    },
+    "observed_ledger_version": {
+      "anyOf": [
+        {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observed Ledger Version"
+    },
+    "operation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Operation Id"
+    },
+    "outcome": {
+      "enum": [
+        "succeeded",
+        "reconciled",
+        "refused",
+        "unknown"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "proposal_id": {
+      "format": "uuid",
+      "title": "Proposal Id",
+      "type": "string"
+    },
+    "proposal_version": {
+      "maximum": 9223372036854775807,
+      "minimum": 1,
+      "title": "Proposal Version",
+      "type": "integer"
+    },
+    "reason": {
+      "$ref": "#/$defs/ReviewReason"
+    },
+    "receipt_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Receipt Sha256"
+    },
+    "type": {
+      "const": "review.outcome",
+      "default": "review.outcome",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "proposal_id",
+    "proposal_version",
+    "outcome",
+    "reason",
+    "message_id"
+  ],
+  "title": "ReviewOutcome",
+  "type": "object"
+}

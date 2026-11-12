@@ -13,6 +13,7 @@ from sqlalchemy import Connection, text
 
 from policyops.persistence import runs as store
 from policyops.persistence.database import IdempotencyConflict, ImmutableRecord
+from policyops.persistence.records import ExecutionRecord
 from policyops.runtime.clock import LeaseClock
 from policyops_contracts.base import WireModel
 from policyops_contracts.consent import ApprovalDecision
@@ -112,6 +113,28 @@ def enqueue_expiry(connection: Connection, run: store.Run, proposal: ActionPropo
     return enqueue(connection, NewReviewJob(workspace_id=run.workspace_id, run_id=run.id,
         binding=ExpiryBinding(proposal_id=proposal.proposal_id, proposal_version=proposal.proposal_version),
         available_at=min(proposal.expires_at, run.deadline_at), created_at=presented_at))
+
+
+def enqueue_outcome(connection: Connection, execution: ExecutionRecord) -> UUID:
+    if not execution.terminal and not (execution.state == "unknown" and execution.next_attempt_at is None):
+        raise ImmutableRecord("execution has no deliverable outcome")
+    return enqueue(connection, NewReviewJob(workspace_id=execution.workspace_id, run_id=execution.run_id,
+        binding=OutcomeBinding(proposal_id=execution.proposal_id, proposal_version=execution.proposal_version,
+            decision_id=execution.approval_id, execution_id=execution.id, execution_version=execution.version),
+        available_at=execution.updated_at, created_at=execution.updated_at))
+
+
+def check_projection(connection: Connection, token: store.ClaimToken, clock: LeaseClock
+                     ) -> tuple[store.Run, store.Job, datetime]:
+    """Projection-only capability: outcome binding, current claim and independent delivery deadline.
+
+    This permits terminal/expired runs. T19 reserve independently requires a DecisionBinding,
+    so even a live projection claim on a reconciling run cannot authorize a reservation.
+    """
+    run, job, now = check_claim(connection, token, clock)
+    if not isinstance(binding_of(job), OutcomeBinding):
+        raise store.Fenced("not_outcome_projection")
+    return run, job, now
 
 
 def check_claim(connection: Connection, token: store.ClaimToken, clock: LeaseClock

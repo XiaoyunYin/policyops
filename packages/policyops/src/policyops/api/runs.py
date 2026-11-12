@@ -253,7 +253,9 @@ def build_router() -> APIRouter:
                 **docs.operation(session=True, context=True, headers=[LAST_EVENT_ID], errors=(401, 403, 404, 409, 422),
                                  streaming=True,
                                  success={200: {"description": STREAM_DESCRIPTION,
-                                                "content": {"text/event-stream": {"schema": {"type": "string"}}}}}))
+                                                "content": {"text/event-stream": {"schema": {"type": "string"},
+                                                    "x-event-schema": {
+                                                        "$ref": "#/components/schemas/EventEnvelope"}}}}}))
     async def run_events(run_id: UUID, request: Request, viewer: Annotated[StreamViewer, Depends(stream_viewer)],
                          auth: Runtime, runs: Runs, after: Annotated[str | None, Query(
                              description="Initial position (digits; 0 = from the start). Ignored when Last-Event-ID "

@@ -1,9 +1,9 @@
 """Durable proposals: create, supersede, present and customer consent, plus the reviewer reads (T18).
 
-The write operations are **internal**: later workers call them (T21/T22) and tests call them directly. No HTTP route
-creates, presents or consents to a proposal, and nothing here accepts a decision, an effect, a role, a consent record
-or an approval from a caller. Each is one short workspace transaction with no retail, provider or human wait inside
-it; facts are collected by the gateway before `create` is called.
+Workers and tests call the create/present operations internally; the case API also classifies persisted customer
+replies for consent. No HTTP route creates or presents a proposal, and nothing here accepts a decision, an effect,
+a role, a consent record or an approval from a caller. Each operation is one short workspace transaction with no
+retail, provider or human wait inside it; facts are collected by the gateway before `create` is called.
 
 Every write re-checks the persisted context under its locks. The caller's `GatewayScope` (built by the server from the
 persisted run and case, `gateway.ports.load_scope`) and `Collected` facts are inputs, not authority: the case row must
@@ -12,8 +12,8 @@ lookup authentication must name the bound customer. Lock order (a subsequence of
 
 * `create`: case -> corpora FOR SHARE (evidence only) -> run -> same-intent active proposal rows -> insert;
 * `present`: case -> run -> proposal row -> agent message (case already held) -> presentation -> run events;
-* `record_customer_reply`: run -> the run's presented proposal row -> consent -> run events. The customer message was
-  appended earlier by the case API under the case lock.
+* `record_customer_reply`: run -> the run's presented proposal row -> consent -> run events. The case API also
+  invokes the same transaction helper after appending an operator-entered customer turn, with case -> run order.
 
 `create` picks the proposal ID and version under those locks, reads the clock after them and seals the proposal once
 (`domain.retail_rules.propose`). It then requires the exact presentation text to fit one case message
@@ -60,7 +60,7 @@ from policyops.persistence.customer_authentications import AuthenticationConflic
 from policyops.persistence.database import IdempotencyConflict, ImmutableRecord, workspace_transaction
 from policyops.persistence.records import AuditEvent
 from policyops.persistence.repositories import ProposalRow
-from policyops.runtime.clock import LeaseClock
+from policyops.runtime.clock import LeaseClock, UnsafeTestHook
 from policyops.services.proposal_views import (
     MAX_PROPOSAL_PAGE,
     ProposalCursor,
@@ -193,6 +193,50 @@ def _load_body(connection: Connection, row: ProposalRow) -> ActionProposal | Non
             row.workspace_id, row.case_id, row.run_id):
         return None
     return proposal
+
+
+def _record_customer_reply_tx(connection: Connection, run_scope: RunScope, message_id: UUID,
+                              clock: LeaseClock, *,
+                              simulator_event: SimulatorConfirmationEvent | None = None
+                              ) -> ConsentOutcome | ProposalRefused:
+    """Classify a persisted reply under the caller's transaction; lock the run before consent/events."""
+    run = run_store.get_run(connection, run_scope.run_id, lock=True)
+    if run is None or run.case_id != run_scope.case_id:
+        return _refused(ErrorCode.NOT_FOUND, "proposal.run_not_found", "no such run in this case")
+    if run.terminal:
+        return _refused(ErrorCode.CONFLICT, "proposal.run_terminal", "the run has ended")
+    rows = repo.presented_rows_of_run(connection, run.id)
+    if len(rows) != 1:
+        return NotConsent("there is no single presented proposal in this run")
+    row = rows[0]
+    proposal = _load_body(connection, row)
+    presentation = repo.get_presentation(connection, row.proposal_id, row.proposal_version)
+    message = repo.message_by_id(connection, CaseScope(workspace_id=run_scope.workspace_id,
+                                                       case_id=run_scope.case_id), message_id)
+    if proposal is None or presentation is None or proposal.scope != run_scope:
+        return _refused(ErrorCode.INTERNAL, "proposal.record_invalid", "the stored proposal is not valid")
+    if message is None:
+        return NotConsent("no such message in this case")
+    if repo.get_consent(connection, row.proposal_id, row.proposal_version) is not None:
+        return NotConsent("this proposal version already has a consent")
+    now = clock.now(connection)
+    if simulator_event is None:
+        outcome = record_reply(consent_id=uuid4(), proposal=proposal, presentation=presentation,
+                               message=message, now=now)
+    else:
+        outcome = record_simulator_event(consent_id=uuid4(), proposal=proposal, presentation=presentation,
+                                         message=message, event=simulator_event, now=now)
+    if isinstance(outcome, Consented):
+        repo.record_consent(connection, outcome.consent)
+        run_store.append_event(connection, run, ConsentRecorded(
+            consent_id=outcome.consent.consent_id, proposal_id=proposal.proposal_id,
+            action_digest=proposal.action_digest), now)
+        _audit(connection, workspace_id=run_scope.workspace_id, actor_kind="system", action="consent.record",
+               target_id=row.row_id, before=None, after=outcome.consent.customer_message_sha256, now=now)
+    elif isinstance(outcome, AskAgain):
+        run_store.append_event(connection, run, ClarificationRequested(
+            proposal_id=proposal.proposal_id, reason=outcome.reason), now)  # type: ignore[arg-type]
+    return outcome
 
 
 @dataclass
@@ -388,48 +432,14 @@ class ProposalService:
         return Presented(record, message)
 
     def record_customer_reply(self, run_scope: RunScope, message_id: UUID, *,
-                              simulator_event: SimulatorConfirmationEvent | None = None
-                              ) -> ConsentOutcome | ProposalRefused:
-        """Classify one persisted customer message against the run's single presented proposal. Only an explicit
-        affirmation (or the simulator's constrained confirmation for this exact version) becomes consent."""
+                              simulator_event: SimulatorConfirmationEvent | None = None,
+                              env: str | None = None) -> ConsentOutcome | ProposalRefused:
+        """Classify a persisted reply. Raw simulator confirmation injection requires explicit env=test."""
+        if simulator_event is not None and env != "test":
+            raise UnsafeTestHook("simulator confirmation injection requires explicit env=test")
         with workspace_transaction(self.app_engine, run_scope.workspace_id) as connection:
-            run = run_store.get_run(connection, run_scope.run_id, lock=True)
-            if run is None or run.case_id != run_scope.case_id:
-                return _refused(ErrorCode.NOT_FOUND, "proposal.run_not_found", "no such run in this case")
-            if run.terminal:
-                return _refused(ErrorCode.CONFLICT, "proposal.run_terminal", "the run has ended")
-            rows = repo.presented_rows_of_run(connection, run.id)
-            if len(rows) != 1:
-                return NotConsent("there is no single presented proposal in this run")
-            row = rows[0]
-            proposal = _load_body(connection, row)
-            presentation = repo.get_presentation(connection, row.proposal_id, row.proposal_version)
-            message = repo.message_by_id(connection, CaseScope(workspace_id=run_scope.workspace_id,
-                                                               case_id=run_scope.case_id), message_id)
-            if proposal is None or presentation is None or proposal.scope != run_scope:
-                return _refused(ErrorCode.INTERNAL, "proposal.record_invalid", "the stored proposal is not valid")
-            if message is None:
-                return NotConsent("no such message in this case")
-            if repo.get_consent(connection, row.proposal_id, row.proposal_version) is not None:
-                return NotConsent("this proposal version already has a consent")
-            now = self.clock.now(connection)
-            if simulator_event is None:
-                outcome = record_reply(consent_id=uuid4(), proposal=proposal, presentation=presentation,
-                                       message=message, now=now)
-            else:
-                outcome = record_simulator_event(consent_id=uuid4(), proposal=proposal, presentation=presentation,
-                                                 message=message, event=simulator_event, now=now)
-            if isinstance(outcome, Consented):
-                repo.record_consent(connection, outcome.consent)
-                run_store.append_event(connection, run, ConsentRecorded(
-                    consent_id=outcome.consent.consent_id, proposal_id=proposal.proposal_id,
-                    action_digest=proposal.action_digest), now)
-                _audit(connection, workspace_id=run_scope.workspace_id, actor_kind="system", action="consent.record",
-                       target_id=row.row_id, before=None, after=outcome.consent.customer_message_sha256, now=now)
-            elif isinstance(outcome, AskAgain):
-                run_store.append_event(connection, run, ClarificationRequested(
-                    proposal_id=proposal.proposal_id, reason=outcome.reason), now)  # type: ignore[arg-type]
-        return outcome
+            return _record_customer_reply_tx(connection, run_scope, message_id, self.clock,
+                                             simulator_event=simulator_event)
 
     # -- reviewer reads (callers authorize first: `require_action`) ---------------------------------------------
 

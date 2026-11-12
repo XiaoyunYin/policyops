@@ -289,12 +289,32 @@ record; unknown outcomes are reconciled by lookup, a same-ID resend while author
 (Docker and the synced evals environment are required). See
 [docs/architecture.md](docs/architecture.md#approved-execution-and-reconciliation-t19).
 
+### Approval and execution
+
+An investigation presents one durable proposal and waits for approval. An operator-entered customer reply is
+classified for consent in the message transaction; a staff note never gives consent. A separate staff decision
+enqueues a durable review job. Approval revalidates authority and reserves through T19; the dispatcher alone sends
+the mutation using its stable operation ID. Rejection, expiry or staleness ends with a typed refusal. Rejection
+does not automatically replan: it provides no new authorized intent, and replanning could re-propose the declined
+action or spend more model calls. A new investigation is a new run.
+
+Terminal ledger changes and capped unknowns enqueue outcome jobs. These only project durable truth into a bounded,
+deterministic summary and `review.outcome` event, atomically with the final run state. Committed success requires
+the actual bound receipt. A fenced operation resolves the workflow with no business effect. An unknown outcome
+stays unconfirmed and reconciling; it never means success. A late receipt produces a correction at its new ledger
+version. A cancelled run stays cancelled and still receives later execution truth; cancellation cannot undo a
+remote commit. Outcome delivery has a separate 24-hour deadline, ten attempts and 30-second leases.
+
+Limits: the absolute run deadline includes human wait (T23 owns active-time accounting); pre-T22 pending proposals
+are not migrated; dead-lettered summaries have no operational repair tooling; synchronous SQL waits are not hard
+interruptible. See `tests/integration/test_review_outcomes.py` for the approval-to-summary and recovery cases.
+
 [docs/policy-coverage.json](docs/policy-coverage.json) maps every policy rule to its executed cases. See
 [docs/architecture.md](docs/architecture.md#policy-and-tool-gateway).
 
 ## Application database
 
-`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; an eleven-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication; `0009` adds the embedding job/batch/evidence tables and the per-workspace vector cache; `0010` adds corpora, generation membership and provenance, and publication/citation guards; `0011` adds the append-only per-step retrieval request intent. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; the end-to-end worker workflow that invokes the proposal/consent services and executes approved changes remains later work.
+`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; an eleven-revision Alembic chain run as the migrator creates the `identity`, `app`, `evaluation` and empty `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication; `0009` adds the embedding job/batch/evidence tables and the per-workspace vector cache; `0010` adds corpora, generation membership and provenance, and publication/citation guards; `0011` adds the append-only per-step retrieval request intent. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; review continuation and outcome projection are described above.
 
 ## Development setup
 

@@ -85,8 +85,9 @@ class MessageIn(Model):
     text: Annotated[MessageText, AfterValidator(_utf8)]
 
 
-def case_service(auth: Runtime) -> CaseService:
-    return CaseService(app_engine=auth.app_engine, clock=auth.service.clock)
+def case_service(request: Request, auth: Runtime) -> CaseService:
+    return CaseService(app_engine=auth.app_engine, clock=auth.service.clock,
+                       lease_clock=request.app.state.runs.service.clock)
 
 
 Cases = Annotated[CaseService, Depends(case_service)]

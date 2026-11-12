@@ -26,6 +26,7 @@ from fastapi.openapi.utils import get_openapi
 
 from policyops.api import docs
 from policyops.api.app import create_app, include_api_routes
+from policyops_contracts.events import EventEnvelope
 
 
 DEFAULT_VALIDATION_SCHEMAS = ("HTTPValidationError", "ValidationError")
@@ -45,6 +46,15 @@ def document(app: FastAPI) -> dict[str, Any]:
     result = get_openapi(title=app.title, version=app.version, openapi_version=app.openapi_version,
                          routes=app.routes)
     result.setdefault("components", {})["securitySchemes"] = docs.SECURITY_SCHEMES
+    # SSE is a framed text stream, so FastAPI cannot discover its JSON data contract
+    # from a response_model. Export it explicitly for clients without mislabelling
+    # the whole stream as a JSON response. Prefix nested names to avoid collisions
+    # with FastAPI's input/output schemas.
+    events = EventEnvelope.model_json_schema(ref_template="#/components/schemas/RunEvent{model}")
+    schemas = result["components"].setdefault("schemas", {})
+    for name, definition in events.pop("$defs", {}).items():
+        schemas[f"RunEvent{name}"] = definition
+    schemas["EventEnvelope"] = events
     leaked = [name for name in DEFAULT_VALIDATION_SCHEMAS if name in result["components"].get("schemas", {})]
     if leaked:
         raise UndocumentedError(f"FastAPI default schemas {leaked} are documented; declare 422 via docs.operation")

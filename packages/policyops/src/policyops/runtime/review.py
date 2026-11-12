@@ -28,7 +28,7 @@ from policyops.persistence.database import ImmutableRecord, verify_runtime_role,
 from policyops.persistence.roles import APP_RUNTIME
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
 from policyops.services.execution import Executor, Reserved, RetailFactory, RetailOperations, ScopeResolver
-from policyops.services.review_outcomes import RefusalReason, finish_refusal
+from policyops.services.review_outcomes import RefusalReason, finish_outcome, finish_refusal
 from policyops_contracts.events import RunStateChanged
 from policyops_contracts.scalars import RunScope
 from policyops_contracts.seeds import CaseCustomerBinding
@@ -53,7 +53,12 @@ class Superseded:
     pass
 
 
-Result = Reserved | ReviewRefusal | ReviewRetry | Superseded
+@dataclass(frozen=True)
+class ProjectOutcome:
+    """No remote ports or authority checks: finish rereads ledger truth in its projection transaction."""
+
+
+Result = Reserved | ReviewRefusal | ReviewRetry | Superseded | ProjectOutcome
 
 
 @dataclass(frozen=True)
@@ -112,8 +117,16 @@ class ReviewRuntime:
         except Exception as exc:
             log.warning("review_error job=%s type=%s", token.job_id, type(exc).__name__)
             result = ReviewRetry()
-        with suppress(store.Fenced):
+        try:
             self.finish(token, result)
+        except store.Fenced:
+            pass
+        except Exception as exc:
+            log.warning("review_finish_error job=%s type=%s", token.job_id, type(exc).__name__)
+            # A failed projection transaction rolls back every message/event/state write.
+            # Retry only the delivery; never turn a projection failure into a no-effect refusal.
+            with suppress(store.Fenced):
+                self.finish(token, ReviewRetry())
         return True
 
     def _locked(self, connection: Connection, job_id: UUID) -> tuple[store.Run, store.Job] | None:
@@ -151,7 +164,10 @@ class ReviewRuntime:
                 return None
             binding = jobs.binding_of(job)
             if isinstance(binding, jobs.OutcomeBinding):
-                return None  # Slice B owns projection and its dedicated fence.
+                if job.deadline_at <= now or job.attempts >= job.max_attempts:
+                    store.end_job(connection, job, state="dead", now=now, error_code="outcome_delivery_exhausted")
+                    return None
+                return store.claim(connection, run, job, owner=owner, lease=jobs.LEASE, now=now)
             decision = repo.get_decision(connection, binding.proposal_id, binding.proposal_version)
             if isinstance(binding, jobs.ExpiryBinding) and decision is not None:
                 store.end_job(connection, job, state="done", now=now, error_code="superseded_by_decision")
@@ -186,7 +202,8 @@ class ReviewRuntime:
             run, job, now = jobs.check_claim(connection, token, self.executor.clock)
             binding = jobs.binding_of(job)
             if isinstance(binding, jobs.OutcomeBinding):
-                raise ImmutableRecord("outcome projection unavailable")
+                jobs.check_projection(connection, token, self.executor.clock)
+                return ProjectOutcome()
             existing = self._existing(connection, run, binding)
             if existing is not None:
                 return existing  # recovery precedes every authority/deadline/refusal check
@@ -240,7 +257,15 @@ class ReviewRuntime:
             run, job, now = jobs.check_claim(connection, token, self.executor.clock)
             binding = jobs.binding_of(job)
             if isinstance(binding, jobs.OutcomeBinding):
-                raise ImmutableRecord("outcome projection unavailable")
+                run, job, now = jobs.check_projection(connection, token, self.executor.clock)
+                if isinstance(result, ProjectOutcome):
+                    finish_outcome(connection, run, job, now)
+                else:
+                    delay = min(timedelta(minutes=5), DEFER * 2 ** min(job.attempts - 1, 10))
+                    exhausted = job.attempts >= job.max_attempts or now + delay >= job.deadline_at
+                    store.end_job(connection, job, state="dead" if exhausted else "queued", now=now,
+                                  error_code="outcome_delivery_failed", available_at=now + delay)
+                return
             # Never emit no-effect wording if a reservation committed before a crash/cancellation.
             existing = self._existing(connection, run, binding)
             if existing is not None:

@@ -36,7 +36,7 @@ from policyops_contracts.conversation import (
 )
 from policyops_contracts.e01 import E01Manifest, E01Report, E01Selection, TrajectoryRecord
 from policyops_contracts.errors import ErrorEnvelope
-from policyops_contracts.events import EventEnvelope
+from policyops_contracts.events import EventEnvelope, ReviewOutcome
 from policyops_contracts.evidence import EvidenceManifest
 from policyops_contracts.gateway import ToolObservation
 from policyops_contracts.grounding import (
@@ -90,6 +90,7 @@ MODELS: dict[str, type[BaseModel]] = {
     "policy-rule": PolicyRule,
     "proposal-presentation": ProposalPresentationRecord,
     "run-event": EventEnvelope,
+    "review-outcome": ReviewOutcome,
     "simulator-confirmation": SimulatorConfirmationEvent,
     "user-snapshot": UserSnapshot,
     "variant-snapshot": VariantSnapshot,

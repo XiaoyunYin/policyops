@@ -625,6 +625,36 @@ export interface components {
              */
             schema_version: "policyops.error/v1";
         };
+        /** EventEnvelope */
+        EventEnvelope: {
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /**
+             * Event Version
+             * @default 1
+             * @constant
+             */
+            event_version: 1;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Payload */
+            payload: components["schemas"]["RunEventRunStateChanged"] | components["schemas"]["RunEventMessagePosted"] | components["schemas"]["RunEventToolCallRequested"] | components["schemas"]["RunEventToolCallFinished"] | components["schemas"]["RunEventProposalPresented"] | components["schemas"]["RunEventConsentRecorded"] | components["schemas"]["RunEventClarificationRequested"] | components["schemas"]["RunEventApprovalDecided"] | components["schemas"]["RunEventEscalationRequested"] | components["schemas"]["RunEventErrorRaised"] | components["schemas"]["RunEventExecutionChanged"] | components["schemas"]["RunEventReviewOutcome"];
+            /**
+             * Schema Version
+             * @default policyops.run-event/v1
+             * @constant
+             */
+            schema_version: "policyops.run-event/v1";
+            scope: components["schemas"]["RunEventRunScope"];
+            /** Sequence */
+            sequence: number;
+        };
         /** EvidenceRef */
         EvidenceRef: {
             /** Content Sha256 */
@@ -1094,6 +1124,326 @@ export interface components {
          * @enum {string}
          */
         Role: "analyst" | "reviewer" | "admin" | "auditor";
+        /** ApprovalDecided */
+        RunEventApprovalDecided: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject";
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "approval.decided";
+        };
+        /** ClarificationRequested */
+        RunEventClarificationRequested: {
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "ambiguous_reply" | "declined" | "stale_presentation" | "expired";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "consent.clarification_requested";
+        };
+        /** ConsentRecorded */
+        RunEventConsentRecorded: {
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Consent Id
+             * Format: uuid
+             */
+            consent_id: string;
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "consent.recorded";
+        };
+        /**
+         * ErrorCode
+         * @enum {string}
+         */
+        RunEventErrorCode: "invalid_input" | "unauthenticated" | "forbidden" | "not_found" | "conflict" | "stale_version" | "context_changed" | "expired" | "customer_not_authenticated" | "customer_mismatch" | "policy_denied" | "policy_unsupported" | "consent_required" | "consent_ambiguous" | "approval_required" | "separation_of_duties" | "protocol_violation" | "upstream_money_precision" | "rate_limited" | "unavailable" | "internal";
+        /**
+         * ErrorRaised
+         * @description Replayable error marker: code and identifiers only (the free-form detail stays in the response).
+         */
+        RunEventErrorRaised: {
+            code: components["schemas"]["RunEventErrorCode"];
+            /**
+             * Correlation Id
+             * Format: uuid
+             */
+            correlation_id: string;
+            /** Retryable */
+            retryable: boolean;
+            /**
+             * Rule Id
+             * @default null
+             */
+            rule_id: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error.raised";
+        };
+        /** EscalationRequested */
+        RunEventEscalationRequested: {
+            /** Rule Id */
+            rule_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "escalation.requested";
+        };
+        /**
+         * ExecutionChanged
+         * @description A state change of one approved execution (T19), correlated by execution and operation ID. Carries no
+         *     request, address or customer data: the receipt is referenced by its SHA-256 only.
+         */
+        RunEventExecutionChanged: {
+            /** Attempt */
+            attempt: number;
+            /**
+             * Code
+             * @default null
+             */
+            code: string | null;
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /**
+             * Outcome
+             * @default null
+             */
+            outcome: ("committed" | "upstream_rejected" | "effect_mismatch" | "money_unrepresentable" | "version_conflict" | "fenced" | "precheck_refused" | "cancelled_before_dispatch") | null;
+            /**
+             * Receipt Sha256
+             * @default null
+             */
+            receipt_sha256: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "dispatched" | "succeeded" | "failed" | "unknown" | "reconciled";
+            tool: components["schemas"]["RunEventToolName"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "execution.changed";
+        };
+        /** MessagePosted */
+        RunEventMessagePosted: {
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Message Sequence */
+            message_sequence: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "case.message_posted";
+        };
+        /** ProposalPresented */
+        RunEventProposalPresented: {
+            /** Action Digest */
+            action_digest: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "proposal.presented";
+        };
+        /**
+         * ReviewOutcome
+         * @description Factual review projection; identifiers and closed reasons only, never arguments or customer text.
+         */
+        RunEventReviewOutcome: {
+            /**
+             * Decision Id
+             * @default null
+             */
+            decision_id: string | null;
+            /**
+             * Execution Id
+             * @default null
+             */
+            execution_id: string | null;
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /**
+             * Observed Ledger Version
+             * @default null
+             */
+            observed_ledger_version: number | null;
+            /**
+             * Operation Id
+             * @default null
+             */
+            operation_id: string | null;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "succeeded" | "reconciled" | "refused" | "unknown";
+            /**
+             * Proposal Id
+             * Format: uuid
+             */
+            proposal_id: string;
+            /** Proposal Version */
+            proposal_version: number;
+            reason: components["schemas"]["RunEventReviewReason"];
+            /**
+             * Receipt Sha256
+             * @default null
+             */
+            receipt_sha256: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "review.outcome";
+        };
+        /**
+         * ReviewReason
+         * @enum {string}
+         */
+        RunEventReviewReason: "review_rejected" | "proposal_expired" | "proposal_stale" | "run_deadline_exceeded" | "run_terminal" | "initiator_not_authorized" | "precheck_refused" | "review_record_invalid" | "review_retries_exhausted" | "committed" | "fenced" | "upstream_rejected" | "effect_mismatch" | "money_unrepresentable" | "version_conflict" | "cancelled_before_dispatch" | "outcome_unconfirmed";
+        /** RunScope */
+        RunEventRunScope: {
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** RunStateChanged */
+        RunEventRunStateChanged: {
+            /**
+             * Current
+             * @enum {string}
+             */
+            current: "queued" | "running" | "waiting_input" | "waiting_approval" | "reconciling" | "succeeded" | "failed" | "cancelled" | "budget_exceeded";
+            /** Previous */
+            previous: ("queued" | "running" | "waiting_input" | "waiting_approval" | "reconciling" | "succeeded" | "failed" | "cancelled" | "budget_exceeded") | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run.state_changed";
+        };
+        /** ToolCallFinished */
+        RunEventToolCallFinished: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "ok" | "denied" | "escalated" | "error" | "unknown";
+            /**
+             * Rule Id
+             * @default null
+             */
+            rule_id: string | null;
+            tool: components["schemas"]["RunEventToolName"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool.finished";
+        };
+        /** ToolCallRequested */
+        RunEventToolCallRequested: {
+            /** Call Sha256 */
+            call_sha256: string;
+            kind: components["schemas"]["RunEventToolKind"];
+            tool: components["schemas"]["RunEventToolName"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool.requested";
+        };
+        /**
+         * ToolKind
+         * @enum {string}
+         */
+        RunEventToolKind: "read" | "write" | "generic";
+        /**
+         * ToolName
+         * @enum {string}
+         */
+        RunEventToolName: "find_user_id_by_email" | "find_user_id_by_name_zip" | "get_user_details" | "get_order_details" | "get_product_details" | "get_item_details" | "list_all_product_types" | "calculate" | "transfer_to_human_agents" | "cancel_pending_order" | "modify_pending_order_address" | "modify_pending_order_payment" | "modify_pending_order_items" | "return_delivered_order_items" | "exchange_delivered_order_items" | "modify_user_address";
         /** RunScope */
         RunScope: {
             /**

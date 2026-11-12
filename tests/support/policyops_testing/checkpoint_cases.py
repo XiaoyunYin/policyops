@@ -42,7 +42,7 @@ class Claimed:
 
     def state(self) -> dict[str, Any]:
         scope = self.scope.run
-        return InvestigationState(state_version=1, workspace_id=scope.workspace_id, case_id=scope.case_id,
+        return InvestigationState(state_version=2, workspace_id=scope.workspace_id, case_id=scope.case_id,
                                   run_id=scope.run_id, graph_sha256=DIGESTS[0], prompt_sha256=DIGESTS[1],
                                   config_sha256=DIGESTS[2]).model_dump(mode="json")
 

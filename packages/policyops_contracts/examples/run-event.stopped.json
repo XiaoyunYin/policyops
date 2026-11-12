@@ -1,0 +1,21 @@
+{
+  "event_id": "00000000-0000-0000-0000-0000000003ea",
+  "event_version": 1,
+  "occurred_at": "2026-01-01T12:04:00Z",
+  "payload": {
+    "details": {
+      "cleanup_unconfirmed": false,
+      "reason": "usage_unconfirmed",
+      "usage_unconfirmed": true
+    },
+    "message_id": "00000000-0000-0000-0000-0000000004b3",
+    "type": "run.stopped"
+  },
+  "schema_version": "policyops.run-event/v1",
+  "scope": {
+    "case_id": "00000000-0000-0000-0000-000000000002",
+    "run_id": "00000000-0000-0000-0000-000000000003",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "sequence": 23
+}

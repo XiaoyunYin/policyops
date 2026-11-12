@@ -1,0 +1,67 @@
+{
+  "$comment": "policyops_contracts 0.3.0; generated, do not edit",
+  "$defs": {
+    "StopDetails": {
+      "additionalProperties": false,
+      "properties": {
+        "cleanup_unconfirmed": {
+          "default": false,
+          "title": "Cleanup Unconfirmed",
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/StopReason"
+        },
+        "usage_unconfirmed": {
+          "default": false,
+          "title": "Usage Unconfirmed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "StopDetails",
+      "type": "object"
+    },
+    "StopReason": {
+      "enum": [
+        "usd_cap",
+        "call_cap",
+        "count_cap",
+        "input_tokens",
+        "active_time",
+        "tool_cap",
+        "context_limit",
+        "overrun",
+        "contract_block",
+        "usage_unconfirmed"
+      ],
+      "title": "StopReason",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "details": {
+      "$ref": "#/$defs/StopDetails"
+    },
+    "message_id": {
+      "format": "uuid",
+      "title": "Message Id",
+      "type": "string"
+    },
+    "type": {
+      "const": "run.stopped",
+      "default": "run.stopped",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "message_id",
+    "details"
+  ],
+  "title": "RunStopped",
+  "type": "object"
+}

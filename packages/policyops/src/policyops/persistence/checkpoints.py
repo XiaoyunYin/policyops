@@ -22,6 +22,7 @@ from langgraph.checkpoint.base import (
 from langgraph.checkpoint.serde.types import ERROR
 from sqlalchemy import Connection, Engine, text
 
+from policyops.orchestration.state import STATE_VERSION
 from policyops.persistence import checkpoint_json as codec
 from policyops.persistence import runs
 from policyops.persistence.database import (
@@ -122,7 +123,7 @@ class InvestigationSaver(BaseCheckpointSaver[int]):
         checkpoint = codec.decode_checkpoint(row["payload"])
         if row["codec_version"] != 1:
             raise codec.CheckpointCompatibilityError("unsupported stored codec version")
-        if row["state_version"] != 1:
+        if row["state_version"] != STATE_VERSION:
             raise codec.CheckpointStateVersionError("unsupported stored state version")
         if row["checkpoint_id"] != checkpoint["id"] or row["checkpoint_ns"] != "":
             raise codec.CheckpointUnsafeTypeError("checkpoint row disagrees with envelope")
@@ -204,9 +205,9 @@ class InvestigationSaver(BaseCheckpointSaver[int]):
             connection.execute(text(
                 "INSERT INTO checkpoints.snapshots (workspace_id, thread_id, checkpoint_ns, checkpoint_id, "
                 "parent_checkpoint_id, generation, codec_version, state_version, payload, metadata) "
-                "VALUES (:w, :t, '', :id, :parent, :generation, 1, 1, CAST(:payload AS jsonb), CAST(:meta AS jsonb)) "
+                "VALUES (:w, :t, '', :id, :parent, :generation, 1, :sv, CAST(:payload AS jsonb), CAST(:meta AS jsonb)) "
                 "ON CONFLICT DO NOTHING"), {**keys, "parent": parent, "generation": self.token.generation,
-                                           "payload": codec.json_bytes(payload).decode(),
+                                           "sv": STATE_VERSION, "payload": codec.json_bytes(payload).decode(),
                                            "meta": codec.json_bytes(meta).decode()})
             row = connection.execute(text(
                 "SELECT parent_checkpoint_id, payload, metadata, codec_version, state_version "
@@ -215,7 +216,7 @@ class InvestigationSaver(BaseCheckpointSaver[int]):
                 keys).one()
             if row[3] != 1:
                 raise codec.CheckpointCompatibilityError("unsupported stored codec version")
-            if row[4] != 1:
+            if row[4] != STATE_VERSION:
                 raise codec.CheckpointStateVersionError("unsupported stored state version")
             if tuple(row[:3]) != (parent, payload, meta):
                 raise IdempotencyConflict("checkpoint replay changed content")

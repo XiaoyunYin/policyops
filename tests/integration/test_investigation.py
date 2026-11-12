@@ -32,6 +32,7 @@ from policyops.runtime.spec import AwaitingApproval, Failed, InvestigationComple
 from policyops.runtime.worker import Context, Worker
 from policyops.services.proposals import ProposalService
 from policyops_contracts.clock import FixedClock
+from policyops_contracts.conversation import AgentLimits, ToolResult
 from policyops_contracts.retail_service import FIXTURE_SHA256
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalScope
 from policyops_contracts.scalars import CaseScope, RunScope
@@ -104,7 +105,9 @@ def db(new_app_database: NewDatabase) -> AppDatabase:
     return new_app_database("investigation")
 
 
-def scenario(db: AppDatabase, path: Path, mode: str = "answer", *, max_steps: int = 32) -> Scenario:
+def scenario(db: AppDatabase, path: Path, mode: str = "answer", *, max_steps: int = 32,
+             limits: AgentLimits | None = None, retrieval_config: RetrievalConfig | None = None,
+             input_text: str = "Please help with my refund.") -> Scenario:
     world = World(db, path)
     world.publish(documents([("refunds", "Refund policy", TEXT)]))
     case = uuid4()
@@ -112,7 +115,7 @@ def scenario(db: AppDatabase, path: Path, mode: str = "answer", *, max_steps: in
         repo.create_case(connection, NewCase(id=case, workspace_id=world.ws, scenario="retail",
                                              customer_user_id=RetailWorld().user_id, created_by=None, created_at=START))
         repo.append_message(connection, message_id=uuid4(), scope=CaseScope(workspace_id=world.ws, case_id=case),
-                            source="seeded", entered_by=None, text_value="Please help with my refund.",
+                            source="seeded", entered_by=None, text_value=input_text,
                             created_at=START)
     binding = CaseCustomerBinding(scope=CaseScope(workspace_id=world.ws, case_id=case), seed_id="retail-demo-9999",
                                   user_id=RetailWorld().user_id, bound_at=START)
@@ -126,7 +129,8 @@ def scenario(db: AppDatabase, path: Path, mode: str = "answer", *, max_steps: in
     spec = build_investigation_spec(env="test", engine=world.engine, configuration=Configuration(),
                                     policy=fictional_policy(),
                                     retrieval_scope=RetrievalScope(corpus_key="test-banking"),
-                                    retrieval_config=RetrievalConfig(mode="lexical"), bindings=(binding,),
+                                    retrieval_config=retrieval_config or RetrievalConfig(mode="lexical"),
+                                    limits=limits, bindings=(binding,),
                                     fixture_sha256=FIXTURE_SHA256, retail=lambda scope: retail,
                                     providers=Embeddings().providers(), tokenizer=TOKENIZER,
                                     clock=FixedLeaseClock(clock), wall_clock=clock, max_steps=max_steps,
@@ -445,8 +449,8 @@ def test_executor_maps_recursion_guard_to_persisted_failure(
 def test_budget_terminal_uses_budget_exceeded_run_state(db: AppDatabase, tmp_path: Path) -> None:
     from policyops.providers.calls import CallReport
     test = scenario(db, tmp_path, "abstain")
-    test.model.script[:] = [CallReport(None, "budget", "cap")]
-    assert test.worker.run_once() == 1 and test.state() == "budget_exceeded" and test.agent_messages() == 0
+    test.model.script[:] = [CallReport(None, "budget", "usd_cap")]
+    assert test.worker.run_once() == 1 and test.state() == "budget_exceeded" and test.agent_messages() == 1
 
 
 def test_owned_heartbeat_cancels_graph_and_preserves_fence_loss(db: AppDatabase, tmp_path: Path) -> None:
@@ -466,3 +470,149 @@ def test_owned_heartbeat_cancels_graph_and_preserves_fence_loss(db: AppDatabase,
         assert cleaned.is_set()
     asyncio.run(exercise())
     assert test.state() == "running" and test.agent_messages() == 0
+
+
+def test_trimmed_checkpoint_restart_keeps_exact_valid_citations(
+        db: AppDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from policyops.orchestration.adapters import InvestigationAdapters
+
+    test = scenario(db, tmp_path, limits=AgentLimits(transcript_bytes=5000, knowledge_steps=16))
+    test.model.script[:] = [calls("search_policy", {"query": "refunds"}, "search"),
+                            *[calls("calculate", {"expression": "1"}, f"read{i}") for i in range(3)],
+                            calls(prompt.FINISH, ANSWER, "finish")]
+
+    async def read(self: InvestigationAdapters, state: InvestigationState, *, deadline: float) -> ToolResult:
+        assert state.next_action is not None and state.next_action.call is not None
+        return ToolResult(call_id=state.next_action.call.call_id, content="large observation " * 160)
+
+    monkeypatch.setattr(InvestigationAdapters, "read", read)
+    original = InvestigationSaver.aput
+    fired = False
+
+    class CrashSaver(InvestigationSaver):
+        async def aput(self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,
+                       new_versions: ChannelVersions) -> RunnableConfig:
+            nonlocal fired
+            result = await original(self, config, checkpoint, metadata, new_versions)
+            state = checkpoint["channel_values"].get("state")
+            if state is not None and state["trimmed_pairs"] > 0 and not fired:
+                fired = True
+                raise SimulatedCrash
+            return result
+
+    monkeypatch.setattr(runtime, "InvestigationSaver", CrashSaver)
+    first = test.claim()
+    with pytest.raises(SimulatedCrash):
+        test.executor.execute(first)
+    assert fired
+    saved = asyncio.run(test.saver(first).aget_tuple(test.saver(first).config()))
+    assert saved is not None
+    state = saved.checkpoint["channel_values"]["state"]
+    search_result = next(e["content"] for e in state["transcript"]
+                         if e["kind"] == "tool_result" and e["call_id"] == "search")
+    assert TEXT in search_result and state["evidence_call_ids"] == ["search"]
+    test.api.clock.advance(timedelta(minutes=1))
+    second = test.claim()
+    monkeypatch.setattr(runtime, "InvestigationSaver", InvestigationSaver)
+    result = replace(test.executor).execute(second)
+    assert isinstance(result, InvestigationCompleted) and "Refunds take ten days. [" in result.text
+    assert any(search_result in part.content for request in test.model.requests[3:] for message in request.messages
+               for part in message.parts if part.kind == "tool_result" and part.call_id == "search")
+    test.worker.finish(second.claim_token, result)
+    assert test.state() == "succeeded" and test.world.count("app.citations") > 0
+
+
+def test_stop_finish_is_atomic_idempotent_and_reconciles_lost_commit_ack(
+        db: AppDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sqlalchemy.engine import RootTransaction
+
+    from policyops.persistence.database import TransactionOutcomeUnknown
+    from policyops.runtime.spec import Stopped
+    from policyops_contracts.stops import StopDetails, StopReason
+
+    test = scenario(db, tmp_path, "abstain")
+    context = test.claim()
+    result = Stopped(StopDetails(reason=StopReason.USAGE_UNCONFIRMED, usage_unconfirmed=True))
+    end_job = runs.end_job
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("synthetic rollback")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(runs, "end_job", fail)
+        with pytest.raises(RuntimeError, match="synthetic rollback"):
+            test.worker.finish(context.claim_token, result)
+    assert test.agent_messages() == 0 and test.state() == "running"
+    assert runs.end_job is end_job
+    commit = RootTransaction.commit
+
+    def lost_ack(tx: RootTransaction) -> None:
+        commit(tx)
+        raise OSError("synthetic acknowledgement loss")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(RootTransaction, "commit", lost_ack)
+        with pytest.raises(TransactionOutcomeUnknown):
+            test.worker.finish(context.claim_token, result)
+    test.worker.finish(context.claim_token, result)
+    assert test.agent_messages() == 1 and test.state() == "failed"
+    assert test.api.scalar("SELECT count(*) FROM app.run_events WHERE run_id = %s AND event_type = 'run.stopped'",
+                           test.run_id) == 1
+    assert not test.worker.process(context.claim_token.job_id, context.workspace_id)
+    assert not test.model.keys
+
+
+@pytest.mark.parametrize("stage", ["embedding", "rerank"])
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_retrieval_budget_exhaustion_stops_instead_of_fallback(
+        db: AppDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, uncertain: bool) -> None:
+    from policyops.providers.calls import AttemptRecord, CallReport
+    from policyops.providers.embedding_calls import BatchReport, JobReport
+    import policyops.retrieval.rerank as rerank_module
+    import policyops.retrieval.search as search_module
+    from policyops_contracts.retrieval import RerankConfig
+
+    config = (RetrievalConfig(mode="hybrid", dense_policy="lexical_fallback") if stage == "embedding" else
+              RetrievalConfig(mode="lexical", rerank=RerankConfig(policy="baseline_fallback")))
+    test = scenario(db, tmp_path, retrieval_config=config)
+    test.world.publish(documents([("a", "Refunds", TEXT), ("b", "Refunds too", "Refunds go to the same card.")]))
+    calls_seen: list[str] = []
+
+    async def embedding(*args: Any, **kwargs: Any) -> JobReport:
+        calls_seen.append("embedding")
+        if uncertain:
+            return JobReport(uuid4(), "incomplete", "transport", [BatchReport(
+                0, "sent", "unresolved", physical_request=True, cleanup_confirmed=False)])
+        return JobReport(uuid4(), "budget", "usd_cap")
+
+    async def rerank(*args: Any, **kwargs: Any) -> CallReport:
+        calls_seen.append("rerank")
+        if uncertain:
+            return CallReport(None, "failed", "transport", [AttemptRecord(
+                uuid4(), "op", None, fate="unresolved", cleanup_confirmed=False)])
+        return CallReport(None, "budget", "call_cap")
+
+    monkeypatch.setattr(search_module, "run_job", embedding)
+    monkeypatch.setattr(rerank_module, "call", rerank)
+    assert test.worker.run_once() == 1
+    assert calls_seen == [stage] and test.state() == ("failed" if uncertain else "budget_exceeded")
+    assert test.agent_messages() == 1
+    assert len(test.model.keys) == 1 and not test.retail.calls
+    assert test.world.count("app.retrieval_traces") == 0
+    assert test.worker.run_once() == 0 and len(test.model.keys) == 1 and calls_seen == [stage]
+
+
+def test_model_cap_e2e_has_zero_later_model_or_tool_calls(db: AppDatabase, tmp_path: Path) -> None:
+    test = scenario(db, tmp_path, "abstain", limits=AgentLimits(model_calls=1, knowledge_steps=16))
+    test.model.script[:] = [calls("find_user_id_by_email", {"email": EMAIL}), calls(prompt.FINISH, ABSTAIN)]
+    assert test.worker.run_once() == 1 and test.state() == "budget_exceeded"
+    assert test.agent_messages() == 1 and len(test.model.keys) == 1 and not test.retail.calls
+    assert test.worker.run_once() == 0 and len(test.model.keys) == 1 and not test.retail.calls
+
+
+def test_pinned_intake_limit_stops_before_any_model_or_tool_call(db: AppDatabase, tmp_path: Path) -> None:
+    test = scenario(db, tmp_path, "abstain", limits=AgentLimits(transcript_bytes=1024, knowledge_steps=16),
+                    input_text="pinned original " * 100)
+    assert test.worker.run_once() == 1 and test.state() == "failed"
+    assert not test.model.keys and not test.retail.calls and test.agent_messages() == 1
+    assert test.world.count("checkpoints.snapshots") == 0

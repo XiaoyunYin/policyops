@@ -483,6 +483,25 @@ facts again; final messages, message events and run status commit atomically in 
 short-circuit model/tool work. A lost billed model response becomes `provider_result_unavailable` under the original
 invocation key, without paying for a replacement response.
 
+Investigation state v2 fits context at intake, before checkpointing node results and before each model request.
+It evicts the oldest unpinned completed call/result pairs first, then old notices and agent history. Input messages,
+pending actions, validated evidence-bearing search pairs and typed proposal/presentation/consent/decision facts
+remain pinned. Arguments, quotes and presented terms are never shortened. If the required material cannot fit,
+the run stops with `context_limit`. Version 1 investigation snapshots fail closed; there is no implicit upgrade.
+Provider preparation also enforces server-owned aggregate bounds before decoding schemas/arguments or building
+provider histories: 256 messages, 2,048 parts, 32,768 structural nodes and 256 KiB of UTF-8 content/schema text.
+Escaped canonical inference and count bodies are measured with early exit before full encoding, each at 512 KiB.
+These bounds are digest-bound and do not replace token admission or token headroom checks.
+
+Resource exhaustion produces a typed `run.stopped` event and a fixed message saying what stopped and that no
+further actions will run. Message, event, terminal run state and job completion commit together. Resource stops
+use `budget_exceeded`; context/contract failures use `failed`. Unconfirmed usage is reported explicitly and its
+reserved cost remains held. In-process billing evidence can still be lost on a crash; there is no accounting outbox.
+The final permitted model answer may finalize deterministically, but another model/tool step cannot start after
+an exhausted cap. Embedding/reranking budget exhaustion stops investigations even when standalone retrieval is
+configured to fall back. A stopped run never automatically resumes or resets its caps. Graph loop/integrity
+failures keep separate failure codes.
+
 The custom saver trades stock `PostgresSaver` features for explicit tenant RLS, restricted runtime grants and a
 closed serializer that cannot reconstruct arbitrary Python objects. Runtime DDL, forks, subgraphs, arbitrary object
 payloads and checkpoint pruning are unsupported. Framework checkpoint v4, codec v1 and application state v1 are

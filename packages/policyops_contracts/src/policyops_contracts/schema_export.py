@@ -36,7 +36,7 @@ from policyops_contracts.conversation import (
 )
 from policyops_contracts.e01 import E01Manifest, E01Report, E01Selection, TrajectoryRecord
 from policyops_contracts.errors import ErrorEnvelope
-from policyops_contracts.events import EventEnvelope, ReviewOutcome
+from policyops_contracts.events import EventEnvelope, ReviewOutcome, RunStopped
 from policyops_contracts.evidence import EvidenceManifest
 from policyops_contracts.gateway import ToolObservation
 from policyops_contracts.grounding import (
@@ -75,6 +75,7 @@ from policyops_contracts.wire import FromRuntime, ToRuntime
 
 
 MODELS: dict[str, type[BaseModel]] = {
+    "run-stopped": RunStopped,
     "action-proposal": ActionProposal,
     "approval-decision": ApprovalDecision,
     "case-customer-binding": CaseCustomerBinding,

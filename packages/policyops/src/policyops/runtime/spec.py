@@ -27,6 +27,7 @@ from policyops.persistence.runs import ClaimToken
 from policyops_contracts.conversation import AgentMessage
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.events import EventPayload
+from policyops_contracts.stops import StopDetails, StopReason
 
 
 if TYPE_CHECKING:
@@ -41,6 +42,10 @@ MESSAGE_NAMESPACE = UUID("f0391011-238c-5143-b655-a6d2fbb6f7e2")
 
 def investigation_message_id(workspace_id: UUID, run_id: UUID) -> UUID:
     return uuid5(MESSAGE_NAMESPACE, f"{workspace_id}:{run_id}:final")
+
+
+def stop_message_id(workspace_id: UUID, run_id: UUID) -> UUID:
+    return uuid5(MESSAGE_NAMESPACE, f"{workspace_id}:{run_id}:stop")
 
 
 @dataclass(frozen=True)
@@ -84,18 +89,31 @@ class InvestigationCompleted:
 
 
 @dataclass(frozen=True)
-class BudgetExceeded:
-    pass
-
-
-@dataclass(frozen=True)
 class UsageUnconfirmed:
     """Accounting failed after dispatch. Reserved cost stays held; the run must admit no further work."""
 
     report: CallReport | JobReport | None = None
 
 
-Outcome = Succeeded | Failed | Retry | AwaitingApproval | InvestigationCompleted | BudgetExceeded | UsageUnconfirmed
+@dataclass(frozen=True)
+class Stopped:
+    details: StopDetails
+    report: CallReport | JobReport | None = None
+
+
+def unconfirmed_stop(report: CallReport | JobReport | None) -> Stopped:
+    from policyops.providers.calls import CallReport
+    from policyops.providers.embedding_calls import JobReport
+
+    cleanup = (bool(report.cleanup_unconfirmed) if isinstance(report, CallReport) else
+               (report.pending_cleanup_confirmed is False or any(b.cleanup_confirmed is False for b in report.batches))
+               if isinstance(report, JobReport) else False)
+    return Stopped(StopDetails(reason=StopReason.USAGE_UNCONFIRMED, usage_unconfirmed=True,
+                               cleanup_unconfirmed=cleanup), report)
+
+
+Outcome = (Succeeded | Failed | Retry | AwaitingApproval | InvestigationCompleted
+           | UsageUnconfirmed | Stopped)
 
 
 class StepContext(Protocol):

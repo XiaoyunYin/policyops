@@ -444,6 +444,25 @@ def blocked(scope: Scope, block: str | None) -> Scope:
 
 
 class Ledger:
+    def exhaustion(self, binding: Binding) -> str | None:
+        """Observe exhausted shared caps before new graph work; admission still rechecks atomically."""
+        with self.store.transaction() as tx:
+            refs = lock_order(tx.bind(binding, self.configuration.caps))
+            scopes = tx.lock_scopes(refs)
+            tx.check_admission(refs)
+            for scope in scopes:
+                if scope.contract_block is not None:
+                    return "contract_block"
+                if scope.overrun:
+                    return "overrun"
+                if scope.available_usd <= 0:
+                    return "usd_cap"
+                if scope.calls_consumed + scope.calls_held >= scope.cap_calls:
+                    return "call_cap"
+                if scope.counts_used >= scope.cap_counts:
+                    return "count_cap"
+        return None
+
     def __init__(self, store: LedgerStore, configuration: Configuration,
                  earlier_snapshots: Sequence[PriceSnapshot] = ()) -> None:
         self.store = store

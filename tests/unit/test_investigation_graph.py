@@ -71,7 +71,7 @@ class RecordingSaver(BaseCheckpointSaver[int]):
 
 
 def initial(**fields: Any) -> InvestigationState:
-    return update(InvestigationState(state_version=1, workspace_id=WS, case_id=uuid4(), run_id=RUN,
+    return update(InvestigationState(state_version=2, workspace_id=WS, case_id=uuid4(), run_id=RUN,
                                      graph_sha256="1" * 64, prompt_sha256="2" * 64, config_sha256="3" * 64,
                                      transcript=(UserMessage(text="Help with a refund."),)), **fields)
 
@@ -189,7 +189,7 @@ def test_persisted_ceiling_refuses_new_work_after_resume() -> None:
 def test_saved_model_cap_and_duplicate_evidence_identities_are_refused() -> None:
     model = ScriptedModel([])
     final, _ = run(model, initial(model_calls=16))
-    assert final.terminal is not None and final.terminal.kind == "loop_ceiling" and not model.keys
+    assert final.terminal is not None and final.terminal.kind == "stopped" and not model.keys
     for changes in ({"retrieved_steps": [0, 0]}, {"retrieved_steps": [-1]},
                     {"input_message_ids": [str(RUN), str(RUN)]}):
         with pytest.raises(ValueError):
@@ -217,8 +217,8 @@ def test_recursion_guard_terminal_update_roundtrips_closed_codec() -> None:
 
 @pytest.mark.parametrize("report_value,kind", [(CallReport(None, "failed", "replayed_settled"),
                                                 "provider_result_unavailable"),
-                                               (CallReport(None, "budget", "cap"), "budget_exceeded"),
-                                               (CallReport(None, "deadline", "deadline"), "deadline")])
+                                               (CallReport(None, "budget", "usd_cap"), "stopped"),
+                                               (CallReport(None, "deadline", "deadline"), "stopped")])
 def test_typed_provider_failures(report_value: CallReport, kind: str) -> None:
     model = ScriptedModel([report_value])
     final, _ = run(model)
@@ -324,7 +324,7 @@ def test_graph_digest_is_source_independent_and_tracks_state_schema(monkeypatch:
         changed.setattr(runtime, "InvestigationState", ChangedState)
         assert runtime.graph_digest() != original
     assert runtime.graph_digest() == original
-    monkeypatch.setattr(runtime, "GRAPH_VERSION", "policyops.investigation-graph/v2")
+    monkeypatch.setattr(runtime, "GRAPH_VERSION", "policyops.investigation-graph/v999")
     assert runtime.graph_digest() != original
 
 

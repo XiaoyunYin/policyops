@@ -13,8 +13,13 @@ from policyops_contracts.agent import AgentStep
 from policyops_contracts.base import WireModel
 from policyops_contracts.conversation import AgentToolCall, Entry, PendingToolOutcome
 from policyops_contracts.grounding import GroundedAnswer
+from policyops_contracts.model import CallId
 from policyops_contracts.proposal import EvidenceRef
-from policyops_contracts.scalars import PositiveVersion, Sha256Hex
+from policyops_contracts.scalars import PositiveVersion, Sha256Hex, UtcDatetime
+from policyops_contracts.stops import StopDetails
+
+
+STATE_VERSION = 2
 
 
 class CheckpointStateVersionError(ValueError):
@@ -31,10 +36,31 @@ class InvestigationAction(WireModel):
     answer: GroundedAnswer | None = None
 
 
+CriticalStatus = Literal["created", "presented", "superseded", "expired"]
+
+
+class CriticalFact(WireModel):
+    """Existing trusted rows, presented as labeled data; never authority for an action."""
+    proposal_id: UUID
+    proposal_version: PositiveVersion
+    action_digest: Sha256Hex
+    status: CriticalStatus
+    expires_at: UtcDatetime
+    presentation_message_id: UUID | None = None
+    presentation_text: Annotated[str, Field(max_length=4000)] | None = None
+    presentation_sha256: Sha256Hex | None = None
+    consent_id: UUID | None = None
+    consent_expires_at: UtcDatetime | None = None
+    decision_id: UUID | None = None
+    decision: Literal["approve", "reject"] | None = None
+    decision_expires_at: UtcDatetime | None = None
+
+
 class AwaitingApproval(WireModel):
     kind: Literal["awaiting_approval"] = "awaiting_approval"
     proposal_id: UUID
     proposal_version: PositiveVersion
+    fact: CriticalFact | None = None
 
 
 class InvestigationCompleted(WireModel):
@@ -43,15 +69,21 @@ class InvestigationCompleted(WireModel):
 
 
 class InvestigationFailed(WireModel):
-    kind: Literal["loop_ceiling", "tool_error", "provider_error", "provider_cancelled", "budget_exceeded",
-                  "deadline", "checkpoint_incompatible", "provider_result_unavailable"]
+    kind: Literal["loop_ceiling", "tool_error", "provider_error", "provider_cancelled",
+                  "checkpoint_incompatible", "provider_result_unavailable"]
 
 
-Terminal = Annotated[AwaitingApproval | InvestigationCompleted | InvestigationFailed, Field(discriminator="kind")]
+class InvestigationStopped(WireModel):
+    kind: Literal["stopped"] = "stopped"
+    details: StopDetails
+
+
+Terminal = Annotated[AwaitingApproval | InvestigationCompleted | InvestigationFailed | InvestigationStopped,
+                     Field(discriminator="kind")]
 
 
 class InvestigationState(WireModel):
-    state_version: Literal[1]
+    state_version: Literal[2]
     workspace_id: UUID
     case_id: UUID
     run_id: UUID
@@ -78,6 +110,10 @@ class InvestigationState(WireModel):
     final_text: Annotated[str, Field(min_length=1, max_length=4000)] | None = None
     terminal: Terminal | None = None
     cleanup_unconfirmed: bool = False
+    evidence_call_ids: Annotated[tuple[CallId, ...], Field(max_length=16)] = ()
+    critical_facts: Annotated[tuple[CriticalFact, ...], Field(max_length=64)] = ()
+    trimmed_pairs: Annotated[int, Field(ge=0, le=64)] = 0
+    trimmed_notices: Annotated[int, Field(ge=0, le=256)] = 0
 
     @model_validator(mode="after")
     def distinct_identities(self) -> Self:
@@ -93,6 +129,7 @@ def state_from_json(value: object) -> InvestigationState:
     from policyops.persistence.checkpoint_json import json_bytes
 
     raw = json_bytes(value, limit=262144)
-    if type(value) is not dict or type(value.get("state_version")) is not int or value["state_version"] != 1:
+    if (type(value) is not dict or type(value.get("state_version")) is not int
+            or value["state_version"] != STATE_VERSION):
         raise CheckpointStateVersionError("unsupported investigation state version")
     return InvestigationState.model_validate_json(raw)

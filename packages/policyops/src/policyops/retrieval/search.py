@@ -76,6 +76,7 @@ from pydantic import ValidationError
 from sqlalchemy import Engine
 
 from policyops.budget.ledger import Ledger
+from policyops.orchestration.stops import InvestigationStop, stop_reason
 from policyops.persistence.embeddings import EmbeddingStore, JobConflict, vector_text
 from policyops.persistence.retrieval import RetrievalStore, Snapshot, Span, StepJob, StepRefused, StoredTrace
 from policyops.providers.calls import Providers
@@ -143,6 +144,7 @@ from policyops_contracts.retrieval import (
     TraceScope,
     canonical_sha256,
 )
+from policyops_contracts.stops import StopDetails, StopReason
 
 
 MAX_QUERY_TOKENS = 1024
@@ -282,7 +284,8 @@ class Retriever:
     def __init__(self, engine: Engine, workspace_id: UUID, *, embeddings: EmbeddingStore, ledger: Ledger,
                  providers: Callable[[], Providers], tokenizer: Tokenizer,
                  limits: RetrieverLimits | None = None, clock: Callable[[], float] = time.monotonic,
-                 rerank: bool = False, rerank_port: RerankPort | None = None, env: str | None = None) -> None:
+                 stop_on_budget: bool = False, rerank: bool = False, rerank_port: RerankPort | None = None,
+                 env: str | None = None) -> None:
         # Rerank wiring first: before any read, reservation, credential or factory use.
         if rerank_port is not None:
             if getattr(rerank_port, "test_only", False) is not True or env != "test":
@@ -300,6 +303,7 @@ class Retriever:
         self.store = RetrievalStore(engine, workspace_id)
         self.workspace_id = workspace_id
         self.embeddings, self.ledger, self.providers, self.tokenizer = embeddings, ledger, providers, tokenizer
+        self.stop_on_budget = stop_on_budget
         self.limits = limits or RetrieverLimits()
         self.clock = clock
         self._rerank_port: RerankPort | None = None
@@ -463,6 +467,9 @@ class Retriever:
         work.counts_claimed += outcome.counts_claimed
         work.inferences_dispatched += outcome.inferences_dispatched
         work.cleanup_unconfirmed = work.cleanup_unconfirmed or outcome.cleanup_unconfirmed
+        if self.stop_on_budget and any(a.fate == "unresolved" for a in outcome.attempts):
+            raise InvestigationStop(StopDetails(reason=StopReason.USAGE_UNCONFIRMED, usage_unconfirmed=True,
+                                                cleanup_unconfirmed=work.cleanup_unconfirmed))
         self._check_deadline(deadline)  # 1: the global deadline first, whatever the stage said
         if (outcome.request_identity, tuple(outcome.window_document_ids)) != (built.request_identity, window):
             raise StepRefused("rerank_integrity", "the rerank outcome is bound to another request")  # 2
@@ -483,6 +490,9 @@ class Retriever:
             raise StepRefused("run_not_active")
         elif status != "applied" and status not in FALLBACK_STATUSES:
             raise StepRefused("rerank_integrity", "an unknown rerank status")
+        if self.stop_on_budget and status in {"budget", "contract_block", "count_failed"}:
+            raise InvestigationStop(StopDetails(reason=stop_reason(reason),
+                cleanup_unconfirmed=work.cleanup_unconfirmed))
         if status != "applied" and config.policy == "refuse":
             raise StepRefused("rerank_unavailable", status)  # 6
         ranked = reorder(fused, window, labels) if status == "applied" else list(fused)  # 7
@@ -562,6 +572,9 @@ class Retriever:
 
     def _interpret(self, report: JobReport) -> tuple[tuple[float, ...], int, UUID | None]:
         requests, job_id = report.physical_requests, report.job_id
+        if self.stop_on_budget and any(b.state == "unresolved" for b in report.batches):
+            raise InvestigationStop(StopDetails(reason=StopReason.USAGE_UNCONFIRMED, usage_unconfirmed=True,
+                cleanup_unconfirmed=any(b.cleanup_confirmed is False for b in report.batches)))
         if report.status == "complete" and len(report.vectors) == 1:
             vector = report.vectors[0].vector
             if not valid_vector(vector):
@@ -571,6 +584,9 @@ class Retriever:
             raise StepRefused("deadline_passed")
         if report.status == "in_progress_elsewhere":
             raise StepRefused("step_in_progress")
+        if self.stop_on_budget and (report.status == "budget"
+                or report.reason in {"blocked_by_contract", "blocked_by_overrun", "count_rejected"}):
+            raise InvestigationStop(StopDetails(reason=stop_reason(report.reason)))
         if report.status == "budget":
             raise _Unavailable("budget", requests=requests, job_id=job_id)
         if report.reason == "run_not_active":

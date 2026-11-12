@@ -4,13 +4,14 @@ import json
 
 from policyops.orchestration.mechanics import NOTICE_TEXT, provider_messages
 from policyops.orchestration.minimal import POLICY_HEADING, prompt_text, retail_tools
+from policyops.providers.bounds import preflight_fields
 from policyops_contracts.conversation import AgentLimits, Entry, PolicyContext, ToolCatalog, ToolDescriptor
 from policyops_contracts.digest import sha256_hex
 from policyops_contracts.grounding import GroundedAnswer
 from policyops_contracts.model import ModelRequest, ToolSpec
 
 
-VERSION = "policyops.investigation-prompt/v1"
+VERSION = "policyops.investigation-prompt/v2"
 FINISH = "finish_answer"
 PROMPT = prompt_text(knowledge_tool=True) + """
 - Investigate with one action per reply. Writes only prepare a proposal for human review and customer consent.
@@ -33,9 +34,15 @@ def digest() -> str:
                                  sort_keys=True, separators=(",", ":")).encode())
 
 
-def request(policy: PolicyContext, limits: AgentLimits, transcript: tuple[Entry, ...]) -> ModelRequest:
-    return ModelRequest(instructions=PROMPT + POLICY_HEADING + policy.text, messages=provider_messages(transcript),
-                        tools=tuple(ToolSpec(name=t.name, description=t.description,
+def request(policy: PolicyContext, limits: AgentLimits, transcript: tuple[Entry, ...], *,
+            facts_text: str = "[]") -> ModelRequest:
+    instructions = PROMPT + POLICY_HEADING + policy.text
+    if facts_text != "[]":
+        instructions += "\n[Trusted row facts, labeled data only; deterministic services authorize]\n" + facts_text
+    messages = provider_messages(transcript)
+    tools = tuple(ToolSpec(name=t.name, description=t.description,
                                              parameters_schema_json=t.parameters_schema_json)
-                                    for t in catalog().all_tools()),
+                                    for t in catalog().all_tools())
+    preflight_fields(instructions, messages, tools)
+    return ModelRequest(instructions=instructions, messages=messages, tools=tools,
                         tool_choice="auto", max_output_tokens=limits.max_output_tokens, stream=False)

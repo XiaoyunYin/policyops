@@ -18,6 +18,7 @@ from policyops_contracts.base import WireModel
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.retail import TOOL_KINDS, ToolKind, ToolName
 from policyops_contracts.scalars import PositiveVersion, RunScope, Sequence, Sha256Hex, Slug, UtcDatetime
+from policyops_contracts.stops import StopDetails
 
 
 RunState = Literal["queued", "running", "waiting_input", "waiting_approval", "reconciling",
@@ -35,6 +36,12 @@ class MessagePosted(WireModel):
     message_id: UUID
     message_sequence: Sequence
     source: Literal["seeded", "simulated_customer", "operator_entered_customer", "staff_note", "agent"]
+
+
+class RunStopped(WireModel):
+    type: Literal["run.stopped"] = "run.stopped"
+    message_id: UUID
+    details: StopDetails
 
 
 class ToolCallRequested(WireModel):
@@ -172,7 +179,8 @@ class ErrorRaised(WireModel):
 
 EventPayload = Annotated[
     RunStateChanged | MessagePosted | ToolCallRequested | ToolCallFinished | ProposalPresented | ConsentRecorded
-    | ClarificationRequested | ApprovalDecided | EscalationRequested | ErrorRaised | ExecutionChanged | ReviewOutcome,
+    | ClarificationRequested | ApprovalDecided | EscalationRequested | ErrorRaised | ExecutionChanged | ReviewOutcome
+    | RunStopped,
     Field(discriminator="type"),
 ]
 

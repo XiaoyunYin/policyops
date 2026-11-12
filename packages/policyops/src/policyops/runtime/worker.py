@@ -39,6 +39,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Connection, Engine
 
 from policyops.domain.roles import Action, Role, is_allowed
+from policyops.orchestration.stops import stop_text
 from policyops.persistence import repositories as repo
 from policyops.persistence import review_jobs
 from policyops.persistence import runs as store
@@ -55,20 +56,23 @@ from policyops.runtime.review import ReviewRuntime
 from policyops.runtime.spec import (
     UNCONFIGURED,
     AwaitingApproval,
-    BudgetExceeded,
     Failed,
     InvestigationCompleted,
     Outcome,
     Retry,
     RuntimeCatalog,
     RuntimeSpec,
+    Stopped,
     Succeeded,
     UsageUnconfirmed,
     investigation_message_id,
+    stop_message_id,
+    unconfirmed_stop,
 )
 from policyops_contracts.errors import ErrorCode
-from policyops_contracts.events import ErrorRaised, EventPayload, MessagePosted, RunStateChanged
+from policyops_contracts.events import ErrorRaised, EventPayload, MessagePosted, RunStateChanged, RunStopped
 from policyops_contracts.scalars import CaseScope
+from policyops_contracts.stops import StopDetails, StopReason
 
 
 log = logging.getLogger("policyops.worker")
@@ -215,6 +219,9 @@ class Worker:
             job_row = store.get_job(connection, job_id)
             if job_row is None:
                 return None
+            observed = store.get_run(connection, job_row.run_id)
+            if observed is None or repo.lock_case(connection, observed.case_id) is None:
+                return None
             run = store.get_run(connection, job_row.run_id, skip_locked=True)  # run first, then job
             job = store.get_job(connection, job_id, skip_locked=True) if run is not None else None
             if run is None or job is None:
@@ -235,8 +242,11 @@ class Worker:
             refusal = self._refusal(connection, run, job, spec, now)
             if refusal is not None:
                 reason, code, rule_id = refusal
-                self._fail_run(connection, run, now, code=code, rule_id=rule_id)
-                store.end_job(connection, job, state="dead", now=now, error_code=reason)
+                if reason == "deadline_exceeded":
+                    self._stop_run(connection, run, job, now, StopDetails(reason=StopReason.ACTIVE_TIME))
+                else:
+                    self._fail_run(connection, run, now, code=code, rule_id=rule_id)
+                    store.end_job(connection, job, state="dead", now=now, error_code=reason)
                 return None
             if spec is None:  # unreachable: `_refusal` dead-letters a missing spec
                 return None
@@ -277,29 +287,36 @@ class Worker:
 
     # -- finish ---------------------------------------------------------------------------------------------------
 
+    @staticmethod
+    def _stop_run(connection: Connection, run: store.Run, job: store.Job, now: datetime,
+                  details: StopDetails) -> None:
+        message = repo.append_message(connection, message_id=stop_message_id(run.workspace_id, run.id),
+            scope=CaseScope(workspace_id=run.workspace_id, case_id=run.case_id), source="agent", entered_by=None,
+            text_value=stop_text(details), created_at=now)
+        repo.bump_case_version(connection, run.case_id, now)
+        store.append_event(connection, run, MessagePosted(message_id=message.message_id,
+            message_sequence=message.sequence, source="agent"), now)
+        store.append_event(connection, run, RunStopped(message_id=message.message_id, details=details), now)
+        target: store.RunState = "failed" if details.failed else "budget_exceeded"
+        done = store.set_state(connection, run, target, now, bump_generation=True)
+        store.append_event(connection, done, RunStateChanged(previous=run.state, current=target), now)
+        store.end_job(connection, job, state="done", now=now, error_code=details.reason.value)
+
     def finish(self, token: store.ClaimToken, outcome: Outcome) -> None:
+        if isinstance(outcome, UsageUnconfirmed):
+            outcome = unconfirmed_stop(outcome.report)
         try:
             with workspace_transaction(self.app_engine, token.workspace_id) as connection:
                 # Message/proposal finalization shares the case -> run -> job lock order.
-                if isinstance(outcome, InvestigationCompleted | AwaitingApproval | UsageUnconfirmed):
+                if isinstance(outcome, InvestigationCompleted | AwaitingApproval | Stopped | Retry):
                     observed = store.get_run(connection, token.run_id)
                     if observed is None or repo.lock_case(connection, observed.case_id) is None:
                         raise store.Fenced("run_missing")
                 run, job, now = store.check_fence(connection, token, self.clock)
-                if isinstance(outcome, UsageUnconfirmed):
-                    message = repo.append_message(connection,
-                        message_id=investigation_message_id(run.workspace_id, run.id), scope=CaseScope(
-                            workspace_id=run.workspace_id, case_id=run.case_id), source="agent", entered_by=None,
-                        text_value="Investigation stopped: usage is unconfirmed; reserved cost remains held.",
-                        created_at=now)
-                    repo.bump_case_version(connection, run.case_id, now)
-                    store.append_event(connection, run, MessagePosted(message_id=message.message_id,
-                        message_sequence=message.sequence, source="agent"), now)
-                    self._fail_run(connection, run, now, code=ErrorCode.UNAVAILABLE,
-                                   rule_id="investigation.usage_unconfirmed")
-                    store.end_job(connection, job, state="done", now=now, error_code="usage_unconfirmed")
+                if isinstance(outcome, Stopped):
+                    self._stop_run(connection, run, job, now, outcome.details)
                     return
-                if isinstance(outcome, Succeeded | InvestigationCompleted | AwaitingApproval | BudgetExceeded):
+                if isinstance(outcome, Succeeded | InvestigationCompleted | AwaitingApproval):
                     target: store.RunState = "succeeded"
                     if isinstance(outcome, InvestigationCompleted):
                         expected = investigation_message_id(run.workspace_id, run.id)
@@ -326,8 +343,6 @@ class Worker:
                         if presented_message is None or presented_message.text != proposal.presentation.text:
                             raise ImmutableRecord("prepared presentation changed")
                         target = "waiting_approval"
-                    elif isinstance(outcome, BudgetExceeded):
-                        target = "budget_exceeded"
                     done = store.set_state(connection, run, target, now, bump_generation=True)
                     store.append_event(connection, done, RunStateChanged(previous=run.state, current=target),
                                        now)
@@ -340,9 +355,7 @@ class Worker:
                     store.end_job(connection, job, state="dead", now=now, error_code="max_attempts")
                 elif (now + backoff(job.attempts) >= job.deadline_at
                       or store.remaining_us(run, now) <= int(backoff(job.attempts).total_seconds() * 1_000_000)):
-                    self._fail_run(connection, run, now, code=ErrorCode.UNAVAILABLE,
-                                   rule_id="runtime.deadline_exceeded")
-                    store.end_job(connection, job, state="dead", now=now, error_code="deadline_exceeded")
+                    self._stop_run(connection, run, job, now, StopDetails(reason=StopReason.ACTIVE_TIME))
                 else:
                     store.end_job(connection, job, state="queued", now=now, error_code=outcome.reason,
                                   available_at=now + backoff(job.attempts))

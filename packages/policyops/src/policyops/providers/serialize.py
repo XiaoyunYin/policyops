@@ -23,7 +23,15 @@ from types import MappingProxyType
 from typing import Any
 
 from policyops.budget.config import ChatActor, Configuration
-from policyops.providers.canonical import CanonicalError, canonical_bytes, fresh, sha256_hex, strict_loads
+from policyops.providers.bounds import REQUEST_BOUNDS, preflight
+from policyops.providers.canonical import (
+    CanonicalError,
+    canonical_bytes,
+    canonical_size,
+    fresh,
+    sha256_hex,
+    strict_loads,
+)
 from policyops.providers.contract import CONTRACT_VERSION, ENDPOINTS, ContractGap, Provider, require_cache_mode
 from policyops.providers.schema import CheckedSchema, SchemaGap, check_schema
 from policyops_contracts.model import Message, ModelRequest, TextPart, ToolResultPart, ToolUsePart
@@ -194,6 +202,7 @@ def _anthropic_body(request: ModelRequest, actor: ChatActor, tools: Mapping[str,
 def prepare(request: ModelRequest, configuration: Configuration, actor_name: str) -> PreparedRequest:
     if not isinstance(request, ModelRequest):
         raise TypeError("request must be a ModelRequest")
+    preflight(request)
     actor = configuration.actors.get(actor_name)  # type: ignore[call-overload]
     if not isinstance(actor, ChatActor):
         raise ContractGap(f"{actor_name!r} is not a configured chat actor")
@@ -209,9 +218,16 @@ def prepare(request: ModelRequest, configuration: Configuration, actor_name: str
     endpoint = ENDPOINTS[provider]
     body = (_openai_body if provider == "openai" else _anthropic_body)(request, actor, tools, output)
     keys = OPENAI_COUNT_KEYS if provider == "openai" else ANTHROPIC_COUNT_KEYS
+    count_body = {key: body[key] for key in keys if key in body}
+    try:
+        canonical_size(body, limit=REQUEST_BOUNDS["body_bytes"])
+        canonical_size(count_body, limit=REQUEST_BOUNDS["body_bytes"])
+    except CanonicalError as error:
+        raise ContractGap("provider body bound exceeded") from error
     body_bytes = canonical_bytes(body)
-    count_bytes = canonical_bytes({key: body[key] for key in keys if key in body})
-    envelope = canonical_bytes({"contract": CONTRACT_VERSION, "provider": provider, "method": "POST",
+    count_bytes = canonical_bytes(count_body)
+    envelope = canonical_bytes({"contract": CONTRACT_VERSION, "bounds": dict(REQUEST_BOUNDS),
+                                "provider": provider, "method": "POST",
                                 "host": endpoint.host, "path": endpoint.create_path, "query": {},
                                 "version_headers": dict(endpoint.version_headers), "body": body})
     return PreparedRequest(provider, actor_name, actor.model, "POST", endpoint.host, endpoint.create_path,

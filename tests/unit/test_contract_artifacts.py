@@ -31,6 +31,7 @@ EXAMPLE_MODELS: dict[str, type[BaseModel]] = {
     "case-message.operator-entered-yes": CaseMessage, "customer-consent": CustomerConsent,
     "approval-decision": ApprovalDecision, "run-event.proposal-presented": EventEnvelope,
     "run-event.review-outcome": EventEnvelope,
+    "run-event.stopped": EventEnvelope,
     "error.consent-ambiguous": ErrorEnvelope, "evidence-manifest.failed-run": EvidenceManifest,
     "case-customer-binding": CaseCustomerBinding,
     "customer-authentication": CustomerAuthentication, "demo-seed": DemoSeed,

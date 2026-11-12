@@ -40,6 +40,54 @@ class CanonicalError(ValueError):
 MAX_DEPTH = 64
 
 
+def canonical_size(value: object, *, limit: int, max_nodes: int = 32768) -> int:
+    """Measure before encoding a full body. Strings are escaped in small chunks; stop at the first excess."""
+    size = nodes = 0
+
+    def add(amount: int) -> None:
+        nonlocal size
+        size += amount
+        if size > limit:
+            raise CanonicalError("canonical JSON byte bound exceeded")
+
+    def visit(item: object, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > max_nodes or depth > MAX_DEPTH:
+            raise CanonicalError("canonical JSON structural bound exceeded")
+        if isinstance(item, str):
+            add(2)
+            for start in range(0, len(item), 1024):
+                try:
+                    add(len(json.dumps(item[start:start + 1024], ensure_ascii=False).encode("utf-8")) - 2)
+                except UnicodeEncodeError:
+                    raise CanonicalError("invalid UTF-8 text") from None
+        elif item is None:
+            add(4)
+        elif type(item) is bool:
+            add(4 if item else 5)
+        elif type(item) is int:
+            if item.bit_length() > 256:
+                raise CanonicalError("integer bound exceeded")
+            add(len(str(item)))
+        elif type(item) is list:
+            add(2 + max(0, len(item) - 1))
+            for child in item:
+                visit(child, depth + 1)
+        elif type(item) is dict:
+            add(2 + max(0, len(item) - 1) + len(item))
+            for key, child in item.items():
+                if type(key) is not str:
+                    raise CanonicalError("object keys are strings")
+                visit(key, depth + 1)
+                visit(child, depth + 1)
+        else:
+            raise CanonicalError("unsupported canonical JSON value")
+
+    visit(value, 0)
+    return size
+
+
 MAX_EXPONENT = 100
 
 

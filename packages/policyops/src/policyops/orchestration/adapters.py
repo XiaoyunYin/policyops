@@ -7,8 +7,10 @@ from typing import Literal
 from uuid import UUID
 
 from policyops.gateway.steps import Gateway
+from policyops.orchestration.facts import critical_fact
 from policyops.orchestration.graph import ABSTENTION
 from policyops.orchestration.state import AwaitingApproval, InvestigationState
+from policyops.orchestration.stops import InvestigationStop
 from policyops.persistence import repositories as repo
 from policyops.persistence.citations import CitationRecorder, citation_id
 from policyops.persistence.database import ImmutableRecord, workspace_transaction
@@ -23,6 +25,7 @@ from policyops_contracts.grounding import Assertion, CitationBundle, CitedQuote,
 from policyops_contracts.proposal import EvidenceRef
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalQuery, RetrievalRefused, RetrievalScope
 from policyops_contracts.scalars import CaseScope
+from policyops_contracts.stops import StopDetails, StopReason
 
 
 @dataclass(frozen=True)
@@ -109,6 +112,8 @@ class InvestigationAdapters:
                                                             scope=self.retrieval_scope, config=self.retrieval_config),
                                                deadline=deadline)
         if isinstance(found, RetrievalRefused):
+            if found.code == "deadline_passed":
+                raise InvestigationStop(StopDetails(reason=StopReason.ACTIVE_TIME))
             return KnowledgeResult(content="Policy retrieval unavailable.", is_error=True)
         # Bound the actual delivered text before recording; no second trace or independently reranked result.
         content = f"Retrieval step {index}\n{found.evidence_text}"
@@ -166,7 +171,8 @@ class InvestigationAdapters:
                                                                   key=lambda r: str(r.evidence_id)))
                         or proposal.rationale != f"Requested tool: {call.name}."):
                     raise ImmutableRecord("proposal replay binding changed")
-                return AwaitingApproval(proposal_id=row.proposal_id, proposal_version=row.proposal_version)
+                return AwaitingApproval(proposal_id=row.proposal_id, proposal_version=row.proposal_version,
+                                        fact=critical_fact(connection, row))
         if time.monotonic() >= deadline:
             raise TimeoutError
         result = self.gateway.step(step, previous=state.previous_step, sequence=state.step_count)
@@ -178,8 +184,12 @@ class InvestigationAdapters:
                                               step=state.step_count, evidence=state.recorded_evidence,
                                               rationale=f"Requested tool: {call.name}.")
         if isinstance(prepared, Prepared):
-            return AwaitingApproval(proposal_id=prepared.proposal.proposal_id,
-                                    proposal_version=prepared.proposal.proposal_version)
+            with workspace_transaction(self.proposals.app_engine, scope.run.workspace_id) as connection:
+                row = repo.proposal_row(connection, prepared.proposal.proposal_id, prepared.proposal.proposal_version)
+                if row is None:
+                    raise ImmutableRecord("prepared proposal missing")
+                return AwaitingApproval(proposal_id=row.proposal_id, proposal_version=row.proposal_version,
+                                        fact=critical_fact(connection, row))
         return ToolResult(call_id=call.call_id, content="Proposal refused by deterministic policy checks.",
                           is_error=True)
 

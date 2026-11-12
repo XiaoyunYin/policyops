@@ -14,6 +14,7 @@ from policyops.budget.config import DEFAULT_ACTORS, ChatActor, Configuration
 from policyops.budget.ledger import Diagnostic, Settlement
 from policyops.budget.prices import SNAPSHOT_2026_11_05
 from policyops.budget.pricing import Usage, cost
+from policyops.providers.bounds import REQUEST_BOUNDS
 from policyops.providers.canonical import (
     CanonicalError,
     canonical_bytes,
@@ -202,23 +203,26 @@ def smoke_request(name: str) -> ModelRequest:
                         stream=True)
 
 
-def envelope_sha256(provider: str, body: dict[str, Any]) -> str:
+def envelope_sha256(provider: str, body: dict[str, Any], *, bounded: bool = False) -> str:
     """The request fingerprint `prepare` computes, for an arbitrary body (to reconstruct the frozen one)."""
     endpoint = ENDPOINTS[provider]
-    return sha256_hex(canonical_bytes({"contract": CONTRACT_VERSION, "provider": provider, "method": "POST",
+    return sha256_hex(canonical_bytes({**({"bounds": dict(REQUEST_BOUNDS)} if bounded else {}),
+                                       "contract": CONTRACT_VERSION, "provider": provider, "method": "POST",
                                        "host": endpoint.host, "path": endpoint.create_path, "query": {},
                                        "version_headers": dict(endpoint.version_headers), "body": body}))
 
 
 @pytest.mark.parametrize(("provider", "name"), sorted(FROZEN_SMOKE))
-def test_only_the_haiku_request_changes_and_only_by_the_omitted_speed_field(provider: str, name: str) -> None:
+def test_body_provenance_is_preserved_and_new_bounds_are_digest_bound(provider: str, name: str) -> None:
     actor = "agent" if provider == "openai" else "judge"
     current = prepare(smoke_request(name), Configuration(), actor)
     frozen_request, frozen_count = FROZEN_SMOKE[(provider, name)]
     assert sha256_hex(current.count_body) == frozen_count  # the count body never carried `speed`
     body = fresh(current.body)
+    assert current.request_sha256 == envelope_sha256(provider, body, bounded=True)
+    assert current.request_sha256 != envelope_sha256(provider, body)  # T23 bounds change admission identity
     if provider == "openai":
-        assert current.request_sha256 == frozen_request  # Luna bytes are unchanged
+        assert envelope_sha256(provider, body) == frozen_request  # provider body bytes are unchanged
         return
     assert "speed" not in body and current.request_sha256 != frozen_request  # a new identity, as expected
     assert envelope_sha256(provider, body | {"speed": "standard"}) == frozen_request  # the only difference

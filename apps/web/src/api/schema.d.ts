@@ -644,7 +644,7 @@ export interface components {
              */
             occurred_at: string;
             /** Payload */
-            payload: components["schemas"]["RunEventRunStateChanged"] | components["schemas"]["RunEventMessagePosted"] | components["schemas"]["RunEventToolCallRequested"] | components["schemas"]["RunEventToolCallFinished"] | components["schemas"]["RunEventProposalPresented"] | components["schemas"]["RunEventConsentRecorded"] | components["schemas"]["RunEventClarificationRequested"] | components["schemas"]["RunEventApprovalDecided"] | components["schemas"]["RunEventEscalationRequested"] | components["schemas"]["RunEventErrorRaised"] | components["schemas"]["RunEventExecutionChanged"] | components["schemas"]["RunEventReviewOutcome"];
+            payload: components["schemas"]["RunEventRunStateChanged"] | components["schemas"]["RunEventMessagePosted"] | components["schemas"]["RunEventToolCallRequested"] | components["schemas"]["RunEventToolCallFinished"] | components["schemas"]["RunEventProposalPresented"] | components["schemas"]["RunEventConsentRecorded"] | components["schemas"]["RunEventClarificationRequested"] | components["schemas"]["RunEventApprovalDecided"] | components["schemas"]["RunEventEscalationRequested"] | components["schemas"]["RunEventErrorRaised"] | components["schemas"]["RunEventExecutionChanged"] | components["schemas"]["RunEventReviewOutcome"] | components["schemas"]["RunEventRunStopped"];
             /**
              * Schema Version
              * @default policyops.run-event/v1
@@ -1403,6 +1403,39 @@ export interface components {
              */
             type: "run.state_changed";
         };
+        /** RunStopped */
+        RunEventRunStopped: {
+            details: components["schemas"]["RunEventStopDetails"];
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run.stopped";
+        };
+        /** StopDetails */
+        RunEventStopDetails: {
+            /**
+             * Cleanup Unconfirmed
+             * @default false
+             */
+            cleanup_unconfirmed: boolean;
+            reason: components["schemas"]["RunEventStopReason"];
+            /**
+             * Usage Unconfirmed
+             * @default false
+             */
+            usage_unconfirmed: boolean;
+        };
+        /**
+         * StopReason
+         * @enum {string}
+         */
+        RunEventStopReason: "usd_cap" | "call_cap" | "count_cap" | "input_tokens" | "active_time" | "tool_cap" | "context_limit" | "overrun" | "contract_block" | "usage_unconfirmed";
         /** ToolCallFinished */
         RunEventToolCallFinished: {
             /**

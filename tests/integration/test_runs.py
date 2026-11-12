@@ -406,7 +406,7 @@ def test_deadline_and_attempt_exhaustion_dead_letter_with_typed_codes(fresh: App
     late = api.start_run(browser, new_case(api, browser), '"1"').json()["run_id"]
     api.clock.advance(timedelta(hours=2))
     assert worker.run_once() == 0
-    assert job_of(api, late)["error"] == "deadline_exceeded" and run_state(api, late) == "failed"
+    assert job_of(api, late)["error"] == "active_time" and run_state(api, late) == "budget_exceeded"
 
 
 def test_initiator_permission_is_rechecked_before_work(api: CaseApi, scripted: ScriptedExecutor) -> None:
@@ -605,10 +605,10 @@ def test_a_killed_worker_process_is_reclaimed_after_its_lease(fresh: AppDatabase
     assert states(api, run) == ["queued", "running", "succeeded"]
 
 
-def test_a_retry_without_a_valid_slot_before_the_deadline_dead_letters(fresh: AppDatabase) -> None:
+def test_a_retry_without_active_time_for_backoff_stops(fresh: AppDatabase) -> None:
     """The backoff would land at or after the job's deadline (which must stay after `available_at`): the claim is
-    still valid, but no retry can be scheduled, so the job is dead-lettered with a typed code instead of failing a
-    database check and rolling back."""
+    still valid, but no retry can be scheduled. A typed active-time stop and its message commit with job completion
+    instead of failing a database check and rolling back."""
     from policyops.runtime.spec import Retry
 
     retrying = ScriptedExecutor(events=0, outcome="retry")
@@ -620,8 +620,8 @@ def test_a_retry_without_a_valid_slot_before_the_deadline_dead_letters(fresh: Ap
     assert token is not None
     api.clock.advance(timedelta(seconds=59.5))  # deadline in 1.5 s, first backoff 2 s; the lease is still current
     worker.finish(token, Retry("test_scripted_retry"))
-    assert job_of(api, run)["state"] == "dead" and job_of(api, run)["error"] == "deadline_exceeded"
-    assert run_state(api, run) == "failed"
+    assert job_of(api, run)["state"] == "done" and job_of(api, run)["error"] == "active_time"
+    assert run_state(api, run) == "budget_exceeded"
     assert api.scalar("SELECT request_sha256 FROM app.jobs WHERE run_id = %s", UUID(run)) is not None
 
 

@@ -8,7 +8,7 @@ from policyops.orchestration.state import CheckpointStateVersionError, Investiga
 
 
 def value() -> dict[str, Any]:
-    return {"state_version": 1, "workspace_id": str(uuid4()), "case_id": str(uuid4()), "run_id": str(uuid4()),
+    return {"state_version": 2, "workspace_id": str(uuid4()), "case_id": str(uuid4()), "run_id": str(uuid4()),
             "graph_sha256": "1" * 64, "prompt_sha256": "2" * 64, "config_sha256": "3" * 64}
 
 
@@ -18,7 +18,7 @@ def test_state_roundtrip() -> None:
     assert state.model_config["frozen"] and state.model_config["extra"] == "forbid"
 
 
-@pytest.mark.parametrize("version", [None, False, True, "1", 0, 2, -1])
+@pytest.mark.parametrize("version", [None, False, True, "2", 0, 1, -1])
 def test_state_version_has_no_implicit_upgrader(version: Any) -> None:
     data = value()
     if version is None:

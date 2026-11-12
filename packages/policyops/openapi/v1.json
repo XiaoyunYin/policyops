@@ -739,6 +739,7 @@
                 "proposal.presented": "#/components/schemas/RunEventProposalPresented",
                 "review.outcome": "#/components/schemas/RunEventReviewOutcome",
                 "run.state_changed": "#/components/schemas/RunEventRunStateChanged",
+                "run.stopped": "#/components/schemas/RunEventRunStopped",
                 "tool.finished": "#/components/schemas/RunEventToolCallFinished",
                 "tool.requested": "#/components/schemas/RunEventToolCallRequested"
               },
@@ -780,6 +781,9 @@
               },
               {
                 "$ref": "#/components/schemas/RunEventReviewOutcome"
+              },
+              {
+                "$ref": "#/components/schemas/RunEventRunStopped"
               }
             ],
             "title": "Payload"
@@ -2574,6 +2578,70 @@
         ],
         "title": "RunStateChanged",
         "type": "object"
+      },
+      "RunEventRunStopped": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/RunEventStopDetails"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "run.stopped",
+            "default": "run.stopped",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "details"
+        ],
+        "title": "RunStopped",
+        "type": "object"
+      },
+      "RunEventStopDetails": {
+        "additionalProperties": false,
+        "properties": {
+          "cleanup_unconfirmed": {
+            "default": false,
+            "title": "Cleanup Unconfirmed",
+            "type": "boolean"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RunEventStopReason"
+          },
+          "usage_unconfirmed": {
+            "default": false,
+            "title": "Usage Unconfirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "StopDetails",
+        "type": "object"
+      },
+      "RunEventStopReason": {
+        "enum": [
+          "usd_cap",
+          "call_cap",
+          "count_cap",
+          "input_tokens",
+          "active_time",
+          "tool_cap",
+          "context_limit",
+          "overrun",
+          "contract_block",
+          "usage_unconfirmed"
+        ],
+        "title": "StopReason",
+        "type": "string"
       },
       "RunEventToolCallFinished": {
         "additionalProperties": false,

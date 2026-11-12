@@ -88,6 +88,8 @@ def provider_messages(transcript: Sequence[Entry], *, opening: bool = False) -> 
             messages.append(Message(role="assistant", parts=(TextPart(text=first.text),)))
             entries = entries[1:]
         for entry in entries:
+            if len(user) == 64:
+                flush()
             if open_call is not None:
                 if not (isinstance(entry, ToolResult) and entry.call_id == open_call):
                     raise TranscriptInvariant("a tool call is not directly followed by its result")

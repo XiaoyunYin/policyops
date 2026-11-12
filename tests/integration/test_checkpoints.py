@@ -192,7 +192,7 @@ def test_insert_equal_conflicts_ordering_reserved_updates_and_fence(shared_db: A
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("axis", ["codec", "framework", "state", "state_row", "id"])
+@pytest.mark.parametrize("axis", ["codec", "framework", "state", "state_row", "state_v1", "state_row_v1", "id"])
 def test_incompatible_persisted_versions_fail_closed(shared_db: AppDatabase, axis: str) -> None:
     owner = claimed(shared_db)
 
@@ -205,6 +205,8 @@ def test_incompatible_persisted_versions_fail_closed(shared_db: AppDatabase, axi
                 "framework": "payload = jsonb_set(payload, '{framework_version}', '3')",
                 "state": "payload = jsonb_set(payload, '{channel_values,state,state_version}', '0')",
                 "state_row": "state_version = 0",
+                "state_v1": "payload = jsonb_set(payload, '{channel_values,state,state_version}', '1')",
+                "state_row_v1": "state_version = 1",
                 "id": "payload = jsonb_set(payload, '{id}', '\"other\"')",
             }
             conn.execute(f"UPDATE checkpoints.snapshots SET {updates[axis]} WHERE workspace_id = %s",  # noqa: S608

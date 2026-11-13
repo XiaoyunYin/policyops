@@ -187,7 +187,8 @@ class FrozenStudy(WireModel):
             raise ValueError("frozen price snapshot mismatch")
         spec = self.specification
         if (sha256_bytes(canonical_bytes(spec)) != self.config_sha256
-                or spec.get("schema_version") != "policyops.study/v2" or spec.get("tasks") != tasks
+                or spec.get("schema_version") not in {"policyops.study/v2", "policyops.study/v3"}
+                or spec.get("tasks") != tasks
                 or spec.get("seeds") != list(self.seeds) or spec.get("purpose") != self.purpose
                 or spec.get("limits") != self.limits.model_dump(mode="json")):
             raise ValueError("frozen specification mismatch")

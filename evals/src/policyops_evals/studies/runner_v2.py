@@ -43,7 +43,8 @@ def source_provenance() -> dict[str, Any]:
         if path.endswith(".json") and len(data) <= 60000:
             try:
                 body = json.loads(data)
-                if isinstance(body, dict) and body.get("schema_version") == "policyops.study/v2":
+                if (isinstance(body, dict)
+                        and body.get("schema_version") in {"policyops.study/v2", "policyops.study/v3"}):
                     body.pop("preregistration_sha256", None)
                     data = canonical_bytes(body)
             except ValueError:

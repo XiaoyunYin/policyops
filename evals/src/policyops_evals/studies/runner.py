@@ -31,7 +31,6 @@ from policyops.persistence.evaluation import (
 )
 from policyops.providers.calls import CallReport, Providers
 from policyops.providers.contract import require_clean_environment
-from policyops_contracts.conversation import AgentLimits
 from policyops_contracts.model import ModelRequest
 from policyops_evals import upstream
 from policyops_evals.build import SOURCE, default_manifest_dir, tree_for
@@ -233,8 +232,7 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
             ceilings=ActorCeilings(variant.actors.simulator.logical_calls, variant.actors.judge.logical_calls),
             upstream_seed=slot.seed, timings=timings)
         bridge = InProcessAgentBridge(ledger.configuration, agent,
-            loop=loop, limits=AgentLimits(model_calls=variant.actors.agent.logical_calls,
-                                         max_output_tokens=variant.actors.agent.max_output))
+            loop=loop, limits=study.agent_limits(variant))
         register()
         with actors.install():
             config = TextRunConfig(domain="retail", agent=FACTORY_NAME, user="user_simulator",

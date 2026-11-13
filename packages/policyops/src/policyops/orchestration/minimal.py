@@ -18,10 +18,11 @@ sequential turns may come from different loops.
    `uuid5(AGENT_NAMESPACE, "{conversation}:{call index}")`, never reissued. Then:
    - a provider, budget, deadline, contract, refusal or truncation outcome is terminal, and so is any reply that
      returns after the deadline (its billing stays as T11 recorded it; it is not accepted as a timely action);
-   - an invalid reply (several calls, text with a call, no action, an unknown tool, invalid arguments, a retail
+   - an invalid reply (several calls, no action, an unknown tool, invalid arguments, a retail
      protocol violation, any T11 `invalid_output`) appends only a fixed `RuntimeNotice`. Nothing the model produced
      is kept. `consecutive_invalid` of them in a row is terminal;
    - a message ends the turn (in retail mode, the exact handoff message after a transfer is terminal `handoff`);
+   - exactly one valid tool call with text drops that text and records `tool_text_dropped` without an invalid step;
    - a tool call is appended and dispatched once. From dispatch until a validated result with exactly that call ID
      is accepted, its outcome is **unknown** (`PendingToolOutcome`); a port error, an invalid or oversized result or
      a cancellation leaves it unknown and ends the conversation. Knowledge results are content only and bound to the
@@ -236,7 +237,7 @@ def prompt_text(*, knowledge_tool: bool) -> str:
 
 
 def prompt_sha256(*, knowledge_tool: bool, opening: bool = False) -> str:
-    """The fixed prompt version: the prompt, the policy heading and every runtime notice text. Opening mode adds the
+    """The fixed prompt version: the prompt, policy heading and invalid-reply feedback. Opening mode adds the
     opener presentation and marker; without it the digest input is exactly the original one."""
     if type(opening) is not bool:
         raise TypeError("opening is a bool")
@@ -520,10 +521,17 @@ class MinimalAgent:
                 return done("steps_per_turn_exhausted")
             if action.query is not None and self._knowledge_steps >= limits.knowledge_steps:
                 return done("knowledge_steps_exhausted")
-            if not self._fits(action.call, room=2):  # the call and its result
+            diagnostic = RuntimeNotice(code="tool_text_dropped") if action.text_dropped else None
+            # Reserve entries for the diagnostic, call and result before dispatch.
+            if diagnostic is not None and (not self._fits(diagnostic, room=3)
+                    or self._bytes + entry_bytes(diagnostic) + entry_bytes(action.call) > limits.transcript_bytes):
+                return done("transcript_limit")
+            if not self._fits(action.call, room=2 + int(diagnostic is not None)):
                 return done("transcript_limit")
             if time.monotonic() >= deadline:
                 return done("deadline")
+            if diagnostic is not None:
+                self._append(diagnostic)
             self._append(action.call)
             # Dispatch begins: until a validated matching result is accepted, the outcome is unknown.
             self._pending = PendingToolOutcome(call_id=action.call.call_id, name=action.call.name,
@@ -568,4 +576,4 @@ class MinimalAgent:
         return produced if produced.call_id == call_id else None
 
     def _parse(self, result: ModelResult) -> _Notice | _Say | _Use:
-        return parse(result, names=self._names, retail=self._retail, previous=self._previous)
+        return parse(result, names=self._names, retail=self._retail, previous=self._previous, drop_tool_text=True)

@@ -179,6 +179,11 @@ def parser() -> argparse.ArgumentParser:
     frozen_report.add_argument("--snapshot")
     frozen_report.add_argument("--out", type=outside_repository)
     frozen_report.set_defaults(handler=command_report)
+    taxonomy = groups.add_parser("taxonomy", help="count failure codes from sealed and hash-linked private artifacts")
+    taxonomy.add_argument("--study", type=Path, required=True)
+    taxonomy.add_argument("--snapshot", required=True)
+    taxonomy.add_argument("--out", type=outside_repository, required=True)
+    taxonomy.set_defaults(handler=command_taxonomy)
     data = groups.add_parser("data", help="public benchmark data")
     commands = data.add_subparsers(dest="command", required=True)
 
@@ -242,6 +247,18 @@ def command_report(args: argparse.Namespace) -> int:
     report({"schema_version": result["schema_version"], "snapshot_sha256": result["snapshot_sha256"],
             "integrity_status": result["integrity_status"]})
     return 0 if result["integrity_status"] == "valid" else 1
+
+
+def command_taxonomy(args: argparse.Namespace) -> int:
+    from policyops_evals.studies.taxonomy import render
+
+    try:
+        result = render(args.study, snapshot=args.snapshot, out=args.out)
+    except Exception:
+        print("policyops-evals: taxonomy integrity refusal", file=sys.stderr)
+        return 1
+    report({key: result[key] for key in ("schema_version", "snapshot_sha256", "scheduled_trials")})
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

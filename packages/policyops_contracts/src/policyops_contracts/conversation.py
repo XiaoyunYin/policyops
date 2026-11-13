@@ -33,7 +33,7 @@ from policyops_contracts.retrieval import MAX_QUERY_CODE_POINTS
 from policyops_contracts.scalars import MessageText, Sha256Hex, Slug
 
 
-CONFIG_VERSION = "policyops.agent-config/v1"
+CONFIG_VERSION = "policyops.agent-config/v2"
 TURN_VERSION = "policyops.agent-turn/v1"
 SNAPSHOT_VERSION = "policyops.agent-snapshot/v1"
 PROMPT_VERSION = "policyops.agent-prompt/v1"
@@ -154,9 +154,13 @@ class AgentLimits(WireModel):
 
 
 class AgentConfig(WireModel):
-    """What a paired graph comparison must hold equal. Every digest is checked by the runtime before any work."""
+    """Minimal baseline identity, checked before any work.
 
-    v: Literal["policyops.agent-config/v1"] = "policyops.agent-config/v1"
+    V2 binds the single-tool/drop-text protocol and its informational notice.
+    V1 trajectories used strict text-plus-tool refusal with the same prompt.
+    """
+
+    v: Literal["policyops.agent-config/v2"] = "policyops.agent-config/v2"
     prompt_version: Literal["policyops.agent-prompt/v1"] = "policyops.agent-prompt/v1"
     prompt_sha256: Sha256Hex
     domain: Domain
@@ -198,11 +202,14 @@ class ToolResult(WireModel):
 
 
 NoticeCode = Literal["several_tool_calls", "text_with_tool_call", "empty_reply", "unknown_tool", "invalid_arguments",
-                     "invalid_output", "protocol_violation"]
+                     "invalid_output", "protocol_violation", "tool_text_dropped"]
 
 
 class RuntimeNotice(WireModel):
-    """A fixed runtime notice in place of an invalid model reply; it never quotes model output."""
+    """A fixed runtime diagnostic; it never quotes discarded model output.
+
+    `tool_text_dropped` is informational and does not count as an invalid reply.
+    """
 
     kind: Literal["notice"] = "notice"
     code: NoticeCode

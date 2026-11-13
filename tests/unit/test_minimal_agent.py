@@ -269,12 +269,10 @@ def test_retail_protocol_violations_become_notices_and_the_model_may_recover() -
 
 
 INVALID = [
-    ("several calls", result(calls=(ToolCall(call_id="a", name="calculate", arguments_json='{"expression":"1+1"}'),
+    ("several calls", result(text="Checking.", calls=(ToolCall(call_id="a", name="calculate",
+                                                             arguments_json='{"expression":"1+1"}'),
                                     ToolCall(call_id="b", name="calculate", arguments_json='{"expression":"2"}'))),
      "several_tool_calls"),
-    ("text with a call", result(text="Checking.", calls=(ToolCall(call_id="a", name="get_order_details",
-                                                                  arguments_json='{"order_id":"#W0000001"}'),)),
-     "text_with_tool_call"),
     ("no action", result(text=None), "empty_reply"),
     ("unknown tool (T11)", result("invalid_output", reason_code="unknown_tool"), "unknown_tool"),
     ("schema (T11)", result("invalid_output", reason_code="tool_arguments_schema"), "invalid_arguments"),
@@ -284,6 +282,51 @@ INVALID = [
     ("structured answer", result("structured"), "invalid_output"),
     ("message over the bound", result(text="x" * 4001), "invalid_output"),
 ]
+
+
+@pytest.mark.parametrize("configuration", [LUNA, HAIKU])
+def test_mixed_tool_reply_executes_once_drops_text_and_does_not_count_invalid(configuration: Configuration) -> None:
+    mixed = result(text="PRIVATE_PREAMBLE", calls=(ToolCall(call_id="a", name="get_order_details",
+                                                           arguments_json=json.dumps(ORDER)),))
+    mixed_again = result(text="PRIVATE_PREAMBLE", calls=(ToolCall(call_id="b", name="get_order_details",
+                                                                 arguments_json=json.dumps(ORDER)),))
+    built = Built([says(""), report(mixed), report(mixed_again), says("Done.")], configuration=configuration,
+                  limits=AgentLimits(consecutive_invalid=2))
+    outcome = built.turn()
+    assert outcome.message == AgentMessage(text="Done.") and outcome.invalid_steps == 1
+    assert built.kinds() == ["user", "notice", "notice", "tool_call", "tool_result",
+                             "notice", "tool_call", "tool_result", "agent"]
+    assert outcome.appended[2] == RuntimeNotice(code="tool_text_dropped")
+    assert len(built.tools.calls) == 2 and built.agent.snapshot().consecutive_invalid == 0
+    assert "PRIVATE_PREAMBLE" not in built.agent.snapshot().model_dump_json()
+    assert "PRIVATE_PREAMBLE" not in built.model.requests[-1].model_dump_json()
+    prepare(built.model.requests[-1], configuration, "agent")
+
+    from policyops.orchestration.mechanics import Notice, parse
+    from policyops.providers.tools import StepRefused, to_agent_step
+
+    # The shared parser's graph default and the security gateway stay strict.
+    assert parse(mixed, names={"get_order_details": True}, retail=True, previous=None) == Notice("text_with_tool_call")
+    with pytest.raises(StepRefused, match="text_with_tool_call"):
+        to_agent_step(mixed)
+
+
+@pytest.mark.parametrize(("name", "arguments", "code"), [
+    ("unknown", "{}", "unknown_tool"), ("get_order_details", '{"order_id":"bad"}', "invalid_arguments")])
+def test_mixed_reply_still_validates_tool_and_arguments(name: str, arguments: str, code: str) -> None:
+    mixed = result(text="PRIVATE_PREAMBLE", calls=(ToolCall(call_id="a", name=name, arguments_json=arguments),))
+    built = Built([report(mixed), report(mixed)])
+    outcome = built.turn()
+    assert (outcome.terminal, outcome.detail, outcome.invalid_steps) == ("invalid_steps", code, 2)
+    assert not built.tools.calls and "PRIVATE_PREAMBLE" not in built.agent.snapshot().model_dump_json()
+
+
+def test_dropped_text_notice_is_bounded_before_tool_dispatch() -> None:
+    mixed = result(text="discard", calls=(ToolCall(call_id="a", name="get_order_details",
+                                                  arguments_json=json.dumps(ORDER)),))
+    built = Built([report(mixed)], limits=AgentLimits(transcript_messages=3))
+    assert built.turn().terminal == "transcript_limit"
+    assert not built.tools.calls and built.kinds() == ["user"]
 
 
 @pytest.mark.parametrize(("case", "value", "code"), INVALID, ids=[case for case, _, _ in INVALID])
@@ -767,14 +810,20 @@ PROVIDERS = {"luna": LUNA, "haiku": HAIKU}
 
 
 @pytest.mark.parametrize("case", list(GOLDEN))
-def test_without_an_opening_requests_and_digests_equal_the_golden_recorded_before_the_change(case: str) -> None:
+def test_protocol_v2_changes_config_identity_but_preserves_prompt_and_plain_request_goldens(case: str) -> None:
     name, label = case.split("/")
     built, turns = _golden(name, PROVIDERS[label])
     for text in turns:
         assert built.turn(text).message is not None
     config_sha256, prompt, bodies = GOLDEN[case]
-    assert (built.config.digest(), built.agent.config_sha256, built.config.prompt_sha256) == (
-        config_sha256, config_sha256, prompt)
+    from policyops_contracts.digest import sha256_hex
+
+    legacy = built.config.model_dump(mode="json") | {"v": "policyops.agent-config/v1"}
+    legacy_bytes = json.dumps(legacy, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    assert sha256_hex(legacy_bytes) == config_sha256
+    assert built.config.v == "policyops.agent-config/v2"
+    assert built.config.digest() == built.agent.config_sha256 != config_sha256
+    assert built.config.prompt_sha256 == prompt
     assert prompt_sha256(knowledge_tool=built.catalog.knowledge_tool) == prompt
     assert [_body_sha256(request, PROVIDERS[label]) for request in built.model.requests] == bodies
 

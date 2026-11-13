@@ -14,5 +14,5 @@
   "policy_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
   "prompt_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
   "prompt_version": "policyops.agent-prompt/v1",
-  "v": "policyops.agent-config/v1"
+  "v": "policyops.agent-config/v2"
 }

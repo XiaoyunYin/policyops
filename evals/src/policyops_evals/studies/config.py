@@ -16,6 +16,7 @@ from policyops.budget.preflight import ChatBound, Manifest
 from policyops.budget.preflight import preflight as budget_preflight
 from policyops.orchestration.minimal import prompt_sha256
 from policyops_contracts import WireModel
+from policyops_contracts.conversation import AgentLimits
 from policyops_contracts.wire import WIRE_VERSION
 from policyops_evals import upstream
 from policyops_evals.build import RETAIL_SPLIT, SOURCE, default_manifest_dir, load_committed
@@ -125,6 +126,11 @@ class Study(WireModel):
             actors[name] = ChatActor(name, actor.model, actor.effort, max_input=actor.max_input,
                                      max_output=actor.max_output)
         return Configuration(actors=actors, caps=self.limits.caps())
+
+    def agent_limits(self, variant: Variant) -> AgentLimits:
+        """Legacy schemas retain their recorded implicit limits; v3 requires every field."""
+        return AgentLimits(model_calls=variant.actors.agent.logical_calls,
+                           max_output_tokens=variant.actors.agent.max_output)
 
     def digest(self) -> str:
         return sha256_bytes(canonical_bytes(self.model_dump(mode="json")))
@@ -269,6 +275,33 @@ class StudyV2(Study):
         return tuple(rows)
 
 
+class VariantV3(VariantV2):
+    agent_protocol: Literal["single-tool-drop-text/v1"]
+    agent_limits: AgentLimits
+
+    @model_validator(mode="after")
+    def explicit_limits(self) -> VariantV3:
+        if self.agent_limits.model_fields_set != set(AgentLimits.model_fields):
+            raise ValueError("v3 requires every agent limit explicitly")
+        if (self.agent_limits.model_calls != self.actors.agent.logical_calls
+                or self.agent_limits.max_output_tokens != self.actors.agent.max_output
+                or self.agent_limits.knowledge_steps != 0
+                or self.agent_limits.transcript_messages > 255):
+            raise ValueError("v3 agent limits disagree with the retail opening-mode actor")
+        return self
+
+
+class StudyV3(StudyV2):
+    schema_version: Literal["policyops.study/v3"]  # type: ignore[assignment]
+    variants: Annotated[tuple[VariantV3, ...], Field(min_length=2, max_length=4)]
+    notes: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+
+    def agent_limits(self, variant: Variant) -> AgentLimits:
+        if not isinstance(variant, VariantV3):
+            raise ValueError("v3 variant required")
+        return variant.agent_limits
+
+
 def load_study(path: Path) -> Study:
     with path.open("rb") as handle:
         data = handle.read(60001)
@@ -305,7 +338,9 @@ def load_study(path: Path) -> Study:
     # integer/bool and extra-field rejection. Re-encode the checked parse.
     parsed = json.loads(data, object_pairs_hook=pairs, parse_constant=lambda _: (_ for _ in ()).throw(
         ValueError("nonfinite study number")))
-    kind = StudyV2 if isinstance(parsed, dict) and parsed.get("schema_version") == "policyops.study/v2" else Study
+    schemas: dict[str, type[Study]] = {
+        "policyops.study/v1": Study, "policyops.study/v2": StudyV2, "policyops.study/v3": StudyV3}
+    kind = schemas.get(str(parsed.get("schema_version")), Study) if isinstance(parsed, dict) else Study
     result = kind.model_validate_json(json.dumps(parsed))
     result.validate_data()
     return result

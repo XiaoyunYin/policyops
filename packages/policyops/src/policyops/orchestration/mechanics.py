@@ -39,6 +39,8 @@ from policyops_contracts.retrieval import QueryText
 
 
 OPENING_MARKER = "[conversation start]"
+# Informational protocol diagnostics are separate from invalid-reply prompt feedback.
+TOOL_TEXT_DROPPED = "[runtime notice] Text accompanying the accepted tool call was dropped."
 NOTICE_TEXT: dict[NoticeCode, str] = {
     code: f"[runtime notice] Your previous reply was not a valid single action ({code}). Reply with exactly one "
           "tool call or one message."
@@ -100,7 +102,7 @@ def provider_messages(transcript: Sequence[Entry], *, opening: bool = False) -> 
             elif isinstance(entry, UserMessage):
                 user.append(TextPart(text=entry.text))
             elif isinstance(entry, RuntimeNotice):
-                user.append(TextPart(text=NOTICE_TEXT[entry.code]))
+                user.append(TextPart(text=notice_text(entry.code)))
             elif isinstance(entry, AgentMessage | AgentToolCall):
                 if not user:
                     raise TranscriptInvariant("an agent action follows a user-side entry")
@@ -131,8 +133,12 @@ def entry_bytes(entry: Entry) -> int:
     elif isinstance(entry, ToolResult):
         text = entry.content
     else:
-        text = NOTICE_TEXT[entry.code]
+        text = notice_text(entry.code)
     return len(text.encode("utf-8"))
+
+
+def notice_text(code: NoticeCode) -> str:
+    return TOOL_TEXT_DROPPED if code == "tool_text_dropped" else NOTICE_TEXT[code]
 
 
 @dataclass(frozen=True)
@@ -151,6 +157,7 @@ class Use:
     call: AgentToolCall
     step: AgentStep | None
     query: str | None  # set for the knowledge tool
+    text_dropped: bool = False
 
 
 def _slug(value: str | None) -> str | None:
@@ -185,7 +192,7 @@ def report_terminal(report: CallReport) -> tuple[TerminalReason, str | None] | N
 
 
 def parse(result: ModelResult, *, names: dict[str, bool], retail: bool,
-          previous: AgentStep | None) -> Notice | Say | Use:
+          previous: AgentStep | None, drop_tool_text: bool = False) -> Notice | Say | Use:
     if result.outcome == "invalid_output":
         return Notice(_INVALID_OUTPUT.get(result.reason_code or "", "invalid_output"))
     if result.outcome != "completed":  # a structured answer was never requested
@@ -193,7 +200,7 @@ def parse(result: ModelResult, *, names: dict[str, bool], retail: bool,
     calls, text = result.tool_calls, result.text
     if len(calls) > 1:
         return Notice("several_tool_calls")
-    if calls and text:
+    if calls and text and not drop_tool_text:
         return Notice("text_with_tool_call")
     if not calls and not text:
         return Notice("empty_reply")
@@ -212,16 +219,18 @@ def parse(result: ModelResult, *, names: dict[str, bool], retail: bool,
                 return Notice("invalid_arguments")
             if retail and after_transfer(previous):
                 return Notice("protocol_violation")
-            return Use(accepted, None, query)
+            return Use(accepted, None, query, text_dropped=bool(text))
         if not retail:
-            return Use(accepted, None, None)
+            return Use(accepted, None, None, text_dropped=bool(text))
         try:
-            step = to_agent_step(result)
+            # The gateway converter remains strict. Only this benchmark/minimal
+            # parser passes it a reply with the accompanying text removed.
+            step = to_agent_step(result.model_copy(update={"text": None}) if drop_tool_text else result)
         except StepRefused as refused:
             return Notice(_STEP_REFUSED.get(refused.code, "invalid_output"))
         if step_violation(previous, step) is not None:
             return Notice("protocol_violation")
-        return Use(accepted, step, None)
+        return Use(accepted, step, None, text_dropped=bool(text))
     try:
         said = AgentMessage(text=text or "")
     except ValidationError:

@@ -60,7 +60,7 @@
     },
     "RuntimeNotice": {
       "additionalProperties": false,
-      "description": "A fixed runtime notice in place of an invalid model reply; it never quotes model output.",
+      "description": "A fixed runtime diagnostic; it never quotes discarded model output.\n\n`tool_text_dropped` is informational and does not count as an invalid reply.",
       "properties": {
         "code": {
           "enum": [
@@ -70,7 +70,8 @@
             "unknown_tool",
             "invalid_arguments",
             "invalid_output",
-            "protocol_violation"
+            "protocol_violation",
+            "tool_text_dropped"
           ],
           "title": "Code",
           "type": "string"

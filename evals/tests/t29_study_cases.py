@@ -201,3 +201,35 @@ def test_resume_refuses_a_changed_source_binding(composed: Any, monkeypatch: pyt
     with pytest.raises(AssertionError):  # the double's immutable-run assertion
         run(resume=True)
     assert len(store.attempts) == 15
+
+
+def test_offline_paired_v2_runs_real_upstream_and_rerenders(composed: Any, monkeypatch: pytest.MonkeyPatch,
+                                                         tmp_path: Path) -> None:
+    from tau2.data_model.tasks import Task
+    from tau2.domains.retail.data_model import RetailDB
+
+    from policyops_evals.studies import bundles, runner_v2, taxonomy
+    from policyops_evals.studies.config import StudyV2
+
+    from .t32_support import SOURCE, StudyRepository
+
+    _, _, store, outputs, _ = composed
+    study = load_study(Path(__file__).parents[1] / "studies/offline-paired-v2.json")
+    assert isinstance(study, StudyV2)
+    repository = StudyRepository(store)
+    monkeypatch.setattr(runner_v2, "source_provenance", lambda: SOURCE)
+    data = fixture()
+    inputs = {t: runner.TrialInputs(Task.model_validate(data["task"] | {"id": t}),
+              {"db": RetailDB.model_validate(data["db"]), "policy": data["policy"]}) for t in study.tasks}
+    routes = Routes(outputs * len(study.schedule()))
+    summary = runner.run_study(study, cast(EvaluationRepository, repository), cast(EvalLedgerStore, store),
+        inputs=inputs, make_providers=lambda _: routes.providers,
+        make_ledger=lambda variant, token: Ledger(store, study.configuration(variant)))
+    assert summary["execution_complete"] and summary["scheduled"] == len(repository.terminals) == 16
+    assert not routes.outputs and repository.claims == 16
+    path = Path(summary["output"]) / "study.json"
+    digest = summary["snapshot_sha256"]
+    _, snapshot, _, _ = bundles.load(path, digest)
+    assert all(row.status == "success" for row in snapshot.trials)
+    result = taxonomy.render(path, snapshot=digest, out=tmp_path / "paired-taxonomy")
+    assert result["scheduled_trials"] == sum(row["count"] for row in result["counts"]) == 16

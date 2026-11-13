@@ -59,7 +59,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "What a paired graph comparison must hold equal. Every digest is checked by the runtime before any work.",
+  "description": "Minimal baseline identity, checked before any work.\n\nV2 binds the single-tool/drop-text protocol and its informational notice.\nV1 trajectories used strict text-plus-tool refusal with the same prompt.",
   "properties": {
     "actor_config_sha256": {
       "pattern": "^[0-9a-f]{64}$",
@@ -99,8 +99,8 @@
       "type": "string"
     },
     "v": {
-      "const": "policyops.agent-config/v1",
-      "default": "policyops.agent-config/v1",
+      "const": "policyops.agent-config/v2",
+      "default": "policyops.agent-config/v2",
       "title": "V",
       "type": "string"
     }

@@ -1,0 +1,222 @@
+{
+  "cache_mode": "none",
+  "calibration_sha256": "8c204ea3e21d6f9735a2e20628f14f5bc217e09240bdcd2bea1419d7089bb3a2",
+  "dataset_sha256": "fc0f802747a21405053c3ccf1a3124042d7aea10ce8339694ae0c3e515dc877a",
+  "decision": {
+    "candidate": "luna",
+    "direction": "candidate-minus-reference",
+    "guard_metrics": [
+      "pass^4"
+    ],
+    "margin": "0.10",
+    "metric": "pass^1",
+    "reference": "haiku"
+  },
+  "domain": "retail",
+  "eligibility": {
+    "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+    "example_prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+    "source_sha256": {
+      "retail-audit.json": "6582a7e511e1be8996f7d98ec467235ccc47bd2b91cc826b335fa6b2c89fdac3",
+      "retail-split.json": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+      "upstream-verification.json": "08c396e4ea5666adb20cd8947199c57b50f1676e69616152775beccc9662694b"
+    },
+    "tuning_task_ids": []
+  },
+  "limits": {
+    "invocation_calls": 20480,
+    "invocation_counts": 20480,
+    "invocation_usd": "75",
+    "scenario_calls": 64,
+    "scenario_counts": 64,
+    "scenario_usd": "0.20",
+    "study_calls": 20480,
+    "study_counts": 20480,
+    "study_input_tokens": 655360000,
+    "study_output_tokens": 41943040,
+    "study_usd": "75",
+    "trial_seconds": 600,
+    "max_unresolved_attempts": 3,
+    "max_tool_errors": 10
+  },
+  "notes": "Holdout prespecified before any holdout data: protocol is e03-dev-luna-haiku-v6 plus a model-neutral simulator ceiling increase from 12 to 16 calls after two v6 task-28 cutoffs. Candidate Luna vs reference Haiku; non-inferiority margin 0.10 on strict pass^1 with the pass^4 guard; task-bootstrap intervals. Dev result: Luna 0.7125 vs Haiku 0.7875, difference -0.075 [-0.1875, 0.025]. At this dev point estimate, non-inferiority is unlikely and “inconclusive” is an expected honest outcome. Luna remains the project default for cost, not claimed quality-equivalent.",
+  "pairing": {
+    "experimental_dimension": "agent.model",
+    "order_seed": 20261116,
+    "schedule_version": "paired-v1"
+  },
+  "preregistration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "price_revision": "pricing.2026-11-05.v1",
+  "provider_mode": "live",
+  "purpose": "holdout",
+  "repairs": 0,
+  "retries": 0,
+  "schema_version": "policyops.study/v3",
+  "seeds": [
+    20261116,
+    20261117,
+    20261118,
+    20261119
+  ],
+  "split_id": "holdout",
+  "split_sha256": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+  "statistics": {
+    "algorithm": "task-bootstrap-sha256-v1",
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 20261116,
+    "confidence": "0.95",
+    "ks": [
+      1,
+      4
+    ],
+    "quantile": "linear-r7-v1"
+  },
+  "study_key": "e03-holdout-luna-haiku-v1",
+  "task_list_sha256": "4f55cd3a5f015af0b28fda0e61501c7e2ef923debfcc2599174e20136ede6be4",
+  "tasks": [
+    "6",
+    "8",
+    "11",
+    "13",
+    "14",
+    "16",
+    "17",
+    "18",
+    "19",
+    "21",
+    "22",
+    "23",
+    "25",
+    "26",
+    "30",
+    "32",
+    "36",
+    "38",
+    "39",
+    "40",
+    "42",
+    "47",
+    "49",
+    "50",
+    "52",
+    "53",
+    "56",
+    "58",
+    "59",
+    "63",
+    "64",
+    "65",
+    "66",
+    "68",
+    "70",
+    "71",
+    "74",
+    "78",
+    "79",
+    "80",
+    "83",
+    "85",
+    "86",
+    "89",
+    "97",
+    "102",
+    "104",
+    "105",
+    "107",
+    "112"
+  ],
+  "variants": [
+    {
+      "actors": {
+        "agent": {
+          "effort": "low",
+          "logical_calls": 32,
+          "max_input": 32000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 120000,
+          "planning_output": 4000
+        },
+        "judge": {
+          "effort": "low",
+          "logical_calls": 1,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 16000,
+          "planning_output": 400
+        },
+        "simulator": {
+          "effort": "low",
+          "logical_calls": 16,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 80000,
+          "planning_output": 2667
+        }
+      },
+      "agent_kind": "minimal",
+      "agent_limits": {
+        "consecutive_invalid": 2,
+        "knowledge_steps": 0,
+        "max_output_tokens": 2048,
+        "model_calls": 32,
+        "steps_per_turn": 12,
+        "transcript_bytes": 48000,
+        "transcript_messages": 128
+      },
+      "agent_protocol": "single-tool-drop-text/v1",
+      "name": "luna",
+      "prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+      "schema_sha256": "bdac9b7b7ee097682c3198cf9632e62b50be1a2bf69395d35f089a67508dd7cd",
+      "tool_sha256": "f2f90a8e75d86c97e6ddc374bf321b6d9e05d292179092212a37e2d2ba14fce1"
+    },
+    {
+      "actors": {
+        "agent": {
+          "effort": "low",
+          "logical_calls": 32,
+          "max_input": 32000,
+          "max_output": 2048,
+          "model": "claude-haiku-5-5",
+          "planning_input": 120000,
+          "planning_output": 4000
+        },
+        "judge": {
+          "effort": "low",
+          "logical_calls": 1,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 16000,
+          "planning_output": 400
+        },
+        "simulator": {
+          "effort": "low",
+          "logical_calls": 16,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 80000,
+          "planning_output": 2667
+        }
+      },
+      "agent_kind": "minimal",
+      "agent_limits": {
+        "consecutive_invalid": 2,
+        "knowledge_steps": 0,
+        "max_output_tokens": 2048,
+        "model_calls": 32,
+        "steps_per_turn": 12,
+        "transcript_bytes": 48000,
+        "transcript_messages": 128
+      },
+      "agent_protocol": "single-tool-drop-text/v1",
+      "name": "haiku",
+      "prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+      "schema_sha256": "bdac9b7b7ee097682c3198cf9632e62b50be1a2bf69395d35f089a67508dd7cd",
+      "tool_sha256": "f2f90a8e75d86c97e6ddc374bf321b6d9e05d292179092212a37e2d2ba14fce1"
+    }
+  ]
+}

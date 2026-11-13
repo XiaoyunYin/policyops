@@ -95,6 +95,8 @@ def test_closed_termination_codes_are_retained() -> None:
     assert all(closed_termination(code) == code for code in SIMULATION_TERMINATIONS)
 
 
+# Importing tau2 first in this process triggers its deprecated stdlib `audioop` import (see retail_sim/fixture.py).
+@pytest.mark.filterwarnings("ignore:'audioop' is deprecated:DeprecationWarning")
 def test_upstream_enum_members_become_plain_codes() -> None:
     from tau2.data_model.simulation import TerminationReason
 

@@ -16,7 +16,7 @@ from policyops_evals.studies import statistics as stats
 from policyops_evals.studies.report_models import AttemptRow, FrozenStudy, Snapshot
 
 
-VERSION = "policyops.study-reporter/1"
+VERSION = "policyops.study-reporter/2"
 LIMITATIONS = [
     "pass^k estimates all k trials succeeding; it is not pass@k.",
     "Complete-case results are missingness-sensitive diagnostics and cannot select a release.",
@@ -42,7 +42,9 @@ def amounts(attempts: list[AttemptRow]) -> dict[str, Any]:
         held = sum((Decimal(a.reserved_usd) for a in attempts
                     if a.state in {"reserved", "dispatching", "unresolved"}), Decimal(0))
         spent = sum((Decimal(a.actual_usd or "0") for a in attempts if a.state == "settled"), Decimal(0))
+        upper_bound = spent + held
     return {"settled_usd": format(spent, "f"), "held_usd": format(held, "f"),
+        "upper_bound_usd": format(upper_bound, "f"),
         "inferences_consumed": sum(a.state in {"dispatching", "unresolved", "settled"} for a in attempts),
         "inferences_held": sum(a.state == "reserved" for a in attempts),
         "counts_used": sum(a.count_state != "none" for a in attempts),
@@ -115,7 +117,11 @@ def validate(study: FrozenStudy, snapshot: Snapshot) -> list[str]:
 
 def build(study: FrozenStudy, snapshot: Snapshot, bundle_hash: str, snapshot_hash: str) -> dict[str, Any]:
     discrepancies = validate(study, snapshot)
-    rows = list(snapshot.trials)
+    rows = [r.model_copy(update={"status": "error", "failure_class": r.failure_class or "infrastructure",
+                                 "composite_success": None, "db_success": None, "cost_known": False,
+                                 "cost_usd": None})
+            if r.status not in {"pending", "running"} and Decimal(r.held_usd) > 0 else r
+            for r in snapshot.trials]
     finished = all(r.status not in {"pending", "running"} for r in rows)
     complete = all(r.status in {"success", "failure"} for r in rows)
     variants: list[dict[str, Any]] = []
@@ -186,6 +192,9 @@ def build(study: FrozenStudy, snapshot: Snapshot, bundle_hash: str, snapshot_has
                < Decimal(reference_row["accounting"]["settled_usd"]))
     excluded = study.eligibility.excluded
     evaluated = {t.task_id for t in study.tasks}
+    with localcontext() as context:
+        context.prec = 80
+        trial_costs = {s.id: format(Decimal(s.spent_usd) + Decimal(s.held_usd), "f") for s in snapshot.scopes}
     return {"schema_version": "policyops.study-report/v1", "reporter_version": VERSION,
         "bundle_sha256": bundle_hash, "snapshot_sha256": snapshot_hash,
         "registration_sha256": study.registration_sha256, "analysis_spec_sha256": study.analysis_spec_sha256,
@@ -207,7 +216,8 @@ def build(study: FrozenStudy, snapshot: Snapshot, bundle_hash: str, snapshot_has
             "union_exclusions": len(excluded), "overlapping_exclusions": sum(len(e.reasons) > 1 for e in excluded),
             "evaluated_excluded_from_tuning": sum(e.task_id in evaluated for e in excluded),
             "denominator_before": len(rows), "denominator_after": len(rows)},
-        "trials": [r.model_dump(mode="json") for r in rows], "limitations": LIMITATIONS}
+        "trials": [r.model_dump(mode="json") | {"upper_bound_usd": trial_costs.get(r.scenario_id)} for r in rows],
+        "limitations": LIMITATIONS}
 
 
 def cell(value: Any) -> str:
@@ -222,12 +232,13 @@ def estimate(value: dict[str, Any]) -> str:
 
 def markdown(report: dict[str, Any]) -> bytes:
     lines = ["# Paired study report", "", f'Snapshot: {report["snapshot_sha256"]}', "",
-        "| Variant | Scheduled | Scored | Errors | Aborts | Pending | Settled USD | Held USD | Trial p50 ms |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        "| Variant | Scheduled | Scored | Errors | Aborts | Pending | Settled USD | Held USD | "
+        "Upper-bound USD | Trial p50 ms |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for v in report["variants"]:
         lines.append("| " + " | ".join(cell(x) for x in (v["name"], v["scheduled"], v["scored"], v["errors"],
             v["aborts"], v["pending"], v["accounting"]["settled_usd"], v["accounting"]["held_usd"],
-            v["trial_latency"]["p50_ms"])) + " |")
+            v["accounting"]["upper_bound_usd"], v["trial_latency"]["p50_ms"])) + " |")
     lines.extend(["", "| Variant | Stratum | k | Strict pass^k [95% CI] | Complete case [95% CI] | Eligible tasks |",
                   "|---|---|---:|---|---|---:|"])
     for m in report["metrics"]:

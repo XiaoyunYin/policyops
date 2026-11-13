@@ -55,6 +55,8 @@ class Variant(WireModel):
 
 
 class Limits(WireModel):
+    # Absent in legacy specifications: preserve their canonical bytes/digests.
+    max_unresolved_attempts: Annotated[int | None, Field(ge=0, le=1000, exclude_if=lambda v: v is None)] = None
     scenario_usd: Decimal
     invocation_usd: Decimal
     study_usd: Decimal
@@ -100,6 +102,8 @@ class Study(WireModel):
 
     @model_validator(mode="after")
     def consistent(self) -> Study:
+        if self.schema_version == "policyops.study/v1" and self.limits.max_unresolved_attempts is not None:
+            raise ValueError("bounded continuation requires the paired study runner")
         if (len(set(self.tasks)) != len(self.tasks) or len(set(self.seeds)) != len(self.seeds)
                 or len({v.name for v in self.variants}) != len(self.variants)):
             raise ValueError("duplicate study identities")
@@ -400,7 +404,8 @@ def preflight(study: Study, *, snapshot: Scope | None = None,
     prior_calls = 0 if snapshot is None else snapshot.calls_consumed + snapshot.calls_held
     prior_counts = 0 if snapshot is None else snapshot.counts_used
     blocked = snapshot is not None and (snapshot.overrun or snapshot.contract_block is not None)
-    if isinstance(study, StudyV2) and snapshot is not None and (snapshot.held_usd or snapshot.calls_held):
+    if (isinstance(study, StudyV2) and not study.limits.max_unresolved_attempts and snapshot is not None
+            and (snapshot.held_usd or snapshot.calls_held)):
         blocked = True  # abandoned/unknown billing must be reconciled, never discarded to resume
     ok = (cap_match and not blocked and per_scenario_ok and liability <= caps.invocation_usd
         and total_calls <= caps.invocation_calls and prior_usd + liability <= caps.study_usd

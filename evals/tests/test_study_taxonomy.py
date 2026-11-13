@@ -11,11 +11,12 @@ import pytest
 from policyops_evals import cli
 from policyops_evals.canonical import canonical_bytes, sha256_bytes
 from policyops_evals.studies import bundles, taxonomy
+from policyops_evals.studies.runner import provider_failures
 
 from .t32_support import frozen_fixture
 
 
-def fixture(root: Path) -> tuple[Path, str, list[Path]]:
+def fixture(root: Path, *, failures: list[dict[str, str]] | None = None) -> tuple[Path, str, list[Path]]:
     frozen, snapshot = frozen_fixture()
     directory = root / "benchmarks/studies" / str(frozen.study_id)
     invocation = root / "benchmarks" / str(uuid4())
@@ -30,11 +31,16 @@ def fixture(root: Path) -> tuple[Path, str, list[Path]]:
             "terminal": "invalid_steps" if row.status == "error" else None,
             "transcript": [{"kind": "user", "text": "HIDDEN_TASK_CANARY"},
                            {"kind": "notice", "code": "text_with_tool_call"}]}
+        if failures is not None:
+            agent = {"schema_version": "policyops.study-agent/v1", "snapshot": agent,
+                     "provider_failures": [f for f in failures if f["actor"] == "agent"]}
         target = invocation / f"{row.slot_id}-agent.json"
         bundles.write(target, canonical_bytes(agent))
         files.append(target)
-        result = {"outcome": row.status, "error_class": "CANARY_IN_ERROR" if i == 1 else None,
+        result: dict[str, Any] = {"outcome": row.status, "error_class": "CANARY_IN_ERROR" if i == 1 else None,
             "agent_snapshot_sha256": sha256_bytes(target.read_bytes()), "transcript": "RAW_TRANSCRIPT_CANARY"}
+        if failures is not None:
+            result["provider_failures"] = failures
         target = invocation / f"{row.slot_id}-result.json"
         raw = canonical_bytes(result)
         bundles.write(target, raw)
@@ -46,6 +52,38 @@ def fixture(root: Path) -> tuple[Path, str, list[Path]]:
     bundles.write(directory / f"private-inventory-{invocation.name}.json", canonical_bytes({
         "schema_version": "policyops.private-inventory/v1", "base": "benchmarks", "files": entries}))
     return directory / "study.json", digest, files
+
+
+def test_closed_attempt_codes_reach_result_agent_and_taxonomy(monkeypatch: pytest.MonkeyPatch,
+                                                            tmp_path: Path) -> None:
+    from policyops.providers.calls import AttemptRecord, CallReport
+
+    monkeypatch.setenv("POLICYOPS_TEMP_DIR", str(tmp_path))
+    records = [AttemptRecord(uuid4(), "agent", None, reason="http_529", dispatch_granted=True),
+               AttemptRecord(uuid4(), "agent", None, reason="count.http_429"),
+               AttemptRecord(uuid4(), "agent", None, reason="PRIVATE_BODY_CANARY")]
+    failures = provider_failures([("agent", CallReport(None, "failed", "http_529", records))])
+    assert [f["reason_code"] for f in failures] == ["http_529", "http_429"]
+    assert [f["phase"] for f in failures] == ["inference", "count"]
+    path, digest, files = fixture(tmp_path, failures=failures)
+    for target in files:
+        body = json.loads(target.read_bytes())
+        assert body["provider_failures"] == failures
+    result = taxonomy.render(path, snapshot=digest, out=tmp_path / "taxonomy")
+    assert {r["reason_code"] for r in result["provider_failures"]} == {"http_429", "http_529"}
+    assert sum(r["count"] for r in result["provider_failures"]) == 30
+    assert {r["count"] for r in result["provider_failures"]} == {7, 8}
+    assert b"CANARY" not in canonical_bytes(result)
+
+
+def test_unknown_provider_codes_are_refused_before_taxonomy_output(monkeypatch: pytest.MonkeyPatch,
+                                                                 tmp_path: Path) -> None:
+    monkeypatch.setenv("POLICYOPS_TEMP_DIR", str(tmp_path))
+    path, digest, _ = fixture(tmp_path, failures=[{"actor": "agent", "phase": "inference",
+                                                "reason_code": "PRIVATE_BODY_CANARY"}])
+    with pytest.raises(bundles.BundleRefused, match="private_failure_code"):
+        taxonomy.render(path, snapshot=digest, out=tmp_path / "out")
+    assert not (tmp_path / "out").exists()
 
 
 def test_taxonomy_counts_are_complete_sanitized_and_deterministic(monkeypatch: pytest.MonkeyPatch,

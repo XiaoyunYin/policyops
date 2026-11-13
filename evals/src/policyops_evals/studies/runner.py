@@ -129,7 +129,7 @@ def persisted_components(details: dict[str, Any]) -> str:
     body: dict[str, Any] = {key: details[key] for key in (
         "models_requested", "models_returned", "call_statuses", "usage",
         "failure_type", "trajectory_sha256", "partial_trajectory_sha256", "agent_snapshot_sha256", "finished_at",
-        "manifest_artifact_sha256", "parity_artifact_sha256", "timings")
+        "manifest_artifact_sha256", "parity_artifact_sha256", "timings", "provider_failures")
         if key in details}
     environment = details.get("environment")
     if environment is not None:
@@ -301,17 +301,29 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
     result["models_returned"] = {name: sorted({r.result.returned_model for a, r in reports
         if a == name and r.result is not None and r.result.returned_model is not None}) for name in ACTORS}
     result["call_statuses"] = {name: [r.status for a, r in reports if a == name] for name in ACTORS}
+    result["provider_failures"] = provider_failures(reports)
     if any(r.status in {"budget", "contract_gap"} or r.cleanup_unconfirmed for _, r in reports):
         result.update(outcome="budget_exceeded" if any(r.status == "budget" for _, r in reports) else "error",
                       reward=None, error_class="actor_limit_or_contract", stop=True)
     if bridge is not None and bridge._agent is not None:
         snapshot = bridge._agent.snapshot()
-        result["agent_snapshot_sha256"] = artifact(directory, f"{slot.id}-agent.json", snapshot.model_dump(mode="json"))
+        result["agent_snapshot_sha256"] = artifact(directory, f"{slot.id}-agent.json", {
+            "schema_version": "policyops.study-agent/v1",
+            "snapshot": snapshot.model_dump(mode="json"),
+            "provider_failures": [f for f in result["provider_failures"] if f["actor"] == "agent"]})
         if snapshot.terminal in {"budget", "model_calls_exhausted", "steps_per_turn_exhausted"}:
             result.update(outcome="budget_exceeded", reward=None, error_class="agent_limit")
     result["finished_at"] = datetime.now(UTC).isoformat()
     result["timings"] = timings.rows
     return result
+
+
+def provider_failures(reports: list[tuple[str, CallReport]]) -> list[dict[str, str]]:
+    """Payload-free per-attempt diagnostics for every actor, counts included."""
+    return [{"actor": actor, "attempt_id": str(attempt.attempt_id),
+             "phase": "inference" if attempt.dispatch_granted else "count",
+             "reason_code": attempt.failure_code}
+            for actor, report in reports for attempt in report.attempts if attempt.failure_code is not None]
 
 
 def run_study(study: Study, repository: EvaluationRepository, store: EvalLedgerStore, *, allow_paid: bool = False,

@@ -195,6 +195,28 @@ def test_billing_timing_and_contradictory_snapshots() -> None:
         Snapshot.model_validate_json(canonical_bytes(body))
 
 
+def test_unresolved_scored_trial_is_error_and_spend_is_an_upper_bound() -> None:
+    frozen, snapshot = frozen_fixture()
+    body = snapshot.model_dump(mode="json")
+    row = body["trials"][0]
+    row.update(cost_known=False, cost_usd=None, held_usd="0.002624")
+    body["attempts"] = [{"id": str(uuid4()), "scenario_id": row["scenario_id"], "actor": "agent",
+        "model": "gpt-6-luna", "state": "unresolved", "count_state": "admitted", "actual_usd": None,
+        "reserved_usd": "0.002624", "usage_valid": False}]
+    for scope in body["scopes"]:
+        if scope["id"] in {row["scenario_id"], str(frozen.study_id)}:
+            scope.update(held_usd="0.002624", calls_consumed=1, counts_used=1)
+    result = reports.build(frozen, Snapshot.model_validate_json(canonical_bytes(body)), "0" * 64, "1" * 64)
+    observed = next(r for r in result["trials"] if r["slot_id"] == row["slot_id"])
+    assert observed["status"] == "error" and observed["composite_success"] is None
+    assert not observed["cost_known"] and observed["cost_usd"] is None
+    assert observed["upper_bound_usd"] == "0.002624"
+    assert result["accounting"]["settled_usd"] == "0"
+    assert result["accounting"]["held_usd"] == result["accounting"]["upper_bound_usd"] == "0.002624"
+    assert result["decision"]["status"] == "descriptive"
+    assert b"Upper-bound USD" in reports.markdown(result)
+
+
 def test_timing_receipts_preserve_start_and_logical_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from policyops_evals.harness.timing import CallTimings, receipts
 

@@ -405,6 +405,13 @@ class EvaluationRepository:
             return {"created_at": now, "db_version": str(version), "trials": [dict(r) for r in trials],
                 "attempts": [dict(r) for r in attempts], "scopes": [dict(r) for r in scopes]}
 
+    def unresolved_attempts(self, study_id: UUID) -> int:
+        """All unknown dispatched bills, including residue from abandoned claims."""
+        with transaction(self.engine) as connection:
+            return int(connection.execute(text(
+                "SELECT count(*) FROM evaluation.usage_attempts WHERE study_scope_id = :id "
+                "AND state IN ('dispatching', 'unresolved')"), {"id": study_id}).scalar_one())
+
     def usage(self, scenario_id: UUID) -> dict[str, Any]:
         with transaction(self.engine) as connection:
             row = connection.execute(text(

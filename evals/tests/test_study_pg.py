@@ -22,9 +22,18 @@ from policyops_testing.app_database import AppCluster, AppDatabase
 from policyops_testing.postgres import OwnedPostgres
 
 from .t32_support import SOURCE, bill_fixture_inference, example
+from .test_study_v5 import continuation_case
 
 
 pytestmark = pytest.mark.postgres
+
+
+@pytest.mark.parametrize("unknown", [1, 2, 3, 4])
+def test_bounded_continuation_with_persisted_holds(unknown: int, db: AppDatabase,
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    repository = EvaluationRepository(db.engine(EVAL_RUNTIME))
+    store = EvalLedgerStore(repository.engine, env="evaluation")
+    continuation_case(repository, store, unknown, monkeypatch, tmp_path)
 
 
 @pytest.fixture

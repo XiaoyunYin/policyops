@@ -75,6 +75,7 @@ from policyops.providers.results import Evidence
 from policyops.providers.serialize import PreparedRequest, prepare
 from policyops.telemetry import annotate, enabled, observed, provider_usage
 from policyops_contracts.model import Message, ModelRequest, ModelResult, TextPart
+from policyops_contracts.provider_failures import failure_code
 
 
 RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
@@ -135,6 +136,10 @@ class AttemptRecord:
     # Normalized, bounded billing evidence survives a failed accounting transaction in this process.
     evidence: Evidence | None = None
 
+    @property
+    def failure_code(self) -> str | None:
+        return failure_code(self.reason)
+
 
 @dataclass
 class CallReport:
@@ -142,6 +147,10 @@ class CallReport:
     status: Literal["result", "failed", "deadline", "budget", "contract_gap"]
     reason: str | None
     attempts: list[AttemptRecord] = field(default_factory=list)
+
+    @property
+    def failure_code(self) -> str | None:
+        return failure_code(self.reason)
 
     @property
     def cleanup_unconfirmed(self) -> tuple[UUID, ...]:
@@ -400,12 +409,16 @@ async def _call(ledger: Ledger, providers: Providers, binding: Binding, invocati
         # A failed settlement keeps normalized evidence reachable through the typed error's report.
         raise
     except TimeoutError:
+        if pending[0] is not None:
+            pending[0].record.reason = "timeout"
         try:
             _finish_pending(ledger, pending[0])
         except Exception as error:
             raise AccountingUnconfirmed(report) from error
         return CallReport(None, "deadline", "deadline", report.attempts)
     except asyncio.CancelledError as primary:
+        if pending[0] is not None:
+            pending[0].record.reason = "cancelled"
         try:
             _finish_pending(ledger, pending[0])
         except Exception as cleanup:

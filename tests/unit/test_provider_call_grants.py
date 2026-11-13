@@ -14,10 +14,11 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx2
 from pydantic import SecretStr
 import pytest
 
-from policyops.budget.config import Configuration
+from policyops.budget.config import ChatActor, Configuration
 from policyops.budget.ledger import (
     BudgetExhausted,
     CountGranted,
@@ -31,6 +32,7 @@ from policyops.providers import calls
 from policyops.providers.calls import AttemptRecord, CallLimits, CallReport, Providers
 from policyops.retrieval.rerank import attempt_work
 from policyops_contracts.model import Message, ModelRequest, OutputSpec, TextPart
+from policyops_contracts.provider_failures import closed_failure_code
 from policyops_testing.retrieval_fixtures import Scripted, count_reply, luna_reply, openai_json, slow
 
 
@@ -110,6 +112,48 @@ def run(books: Books, transport: Scripted, *, seconds: float = 30.0, attempt_sec
                                   "reranker", deadline=time.monotonic() + seconds,
                                   limits=CallLimits(retries_per_request=0, repairs=0, backoff_seconds=0.0,
                                                     attempt_seconds=attempt_seconds)))
+
+
+@pytest.mark.parametrize("phase", ["count", "inference"])
+@pytest.mark.parametrize("code", ["http_429", "http_529", "timeout", "connection", "malformed"])
+@pytest.mark.parametrize("model", ["gpt-6-luna", "claude-haiku-5-5"])
+def test_failure_codes_survive_calls_without_sensitive_values(phase: str, code: str, model: str) -> None:
+    canary = "PRIVATE_BODY_HEADER_KEY_CANARY"
+
+    def fail(request: httpx2.Request) -> httpx2.Response:
+        if code == "timeout":
+            raise httpx2.ReadTimeout(canary, request=request)
+        if code == "connection":
+            raise httpx2.ConnectError(canary, request=request)
+        if code == "malformed":
+            return httpx2.Response(200, content=canary.encode(), request=request)
+        return httpx2.Response(int(code[5:]), json={"error": {"message": canary}},
+                               headers={"x-private": canary}, request=request)
+
+    class FailureScript(Scripted):
+        async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+            is_count = request.url.path.endswith(("input_tokens", "count_tokens"))
+            self.seen.append("count" if is_count else "create")
+            if is_count and phase == "inference":
+                return httpx2.Response(200, json={"input_tokens": 900}, request=request)
+            return fail(request)
+
+    transport = FailureScript()
+    books = Books()
+    books.configuration = Configuration(actors={**books.configuration.actors,
+                                                "reranker": ChatActor("reranker", model, "low")})
+    provider = "openai" if model == "gpt-6-luna" else "anthropic"
+    providers = Providers({provider: KEY}, lambda _: transport)
+    report = asyncio.run(calls.call(books, providers, RunBinding(uuid4()), uuid4(), "test",  # type: ignore[arg-type]
+        REQUEST, "reranker", deadline=time.monotonic() + 30,
+        limits=CallLimits(retries_per_request=0, repairs=0)))
+    assert report.failure_code == report.attempts[0].failure_code == code
+    assert report.attempts[0].fate == ("released" if phase == "count" else "unresolved")
+    assert ("mark_unresolved" in books.log) == (phase == "inference")
+    assert canary not in repr(report) and canary not in repr(books.log)
+    assert closed_failure_code(canary) is None
+    assert closed_failure_code("http_529 " + canary) is None
+    assert len(transport.seen) == (1 if phase == "count" else 2)  # no implicit retries
 
 
 def flags(record: AttemptRecord) -> tuple[bool, bool]:

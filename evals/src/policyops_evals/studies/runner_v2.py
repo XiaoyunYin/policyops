@@ -79,6 +79,29 @@ def raw_inventory(directory: Path, invocation: Path) -> None:
         canonical_bytes({"schema_version": "policyops.private-inventory/v1", "base": "benchmarks", "files": entries}))
 
 
+def admit_slot(study: StudyV2, variant: Variant, slot: Slot, invocation_id: UUID,
+               repository: EvaluationRepository, store: EvalLedgerStore) -> bool:
+    """Serial study lease protects admission; the ledger still authorizes every call.
+
+    Reserve room for the entire next slot in every scope, retaining all previous
+    holds. Counting dispatching residue too never treats a crash as a free bill.
+    """
+    if repository.unresolved_attempts(slot.study_id) > (study.limits.max_unresolved_attempts or 0):
+        return False
+    remaining: dict[str, tuple[tuple[str, int, int], ...]] = {
+        v.name: ((slot.task_id, slot.trial_index, slot.seed),) if v.name == variant.name else ()
+        for v in study.variants}
+    plan = preflight(study, remaining=remaining)
+    usd, calls = Decimal(plan["admission_ceiling_usd"]), plan["inference_ceiling"]
+    for identity in (slot.study_id, invocation_id, slot.scenario_id):
+        scope = store.scope(identity)
+        if (scope is None or scope.overrun or scope.contract_block or scope.available_usd < usd
+                or scope.calls_consumed + scope.calls_held + calls > scope.cap_calls
+                or scope.counts_used + calls > scope.cap_counts):
+            return False
+    return True
+
+
 def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore, *, allow_paid: bool,
         resume: bool, inputs: Mapping[str, runner.TrialInputs] | None,
         make_providers: Callable[[Study], Callable[[], Providers]],
@@ -167,6 +190,8 @@ def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore
                     slot = lookup[name, task, i]
                     if slot.state != "scheduled":
                         continue
+                    if not admit_slot(study, variants[name], slot, invocation_id, repository, store):
+                        break
                     try:
                         token = repository.claim(slot, invocation_id, lease)
                         if token is None:
@@ -185,10 +210,17 @@ def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore
                             details = {"outcome": "error", "reward": None,
                                        "error_class": "trial_setup_or_artifact", "stop": True}
                         usage = repository.usage(slot.scenario_id)
+                        known = not usage["held_usd"] and not usage["calls_held"]
+                        if not known:
+                            details.update(outcome="error", reward=None,
+                                           error_class=details["error_class"] or "unresolved_billing")
                         details["usage"] = {k: str(v) if isinstance(v, Decimal) else v for k, v in usage.items()}
                         details["actor_attempts"] = repository.actor_attempts(slot.scenario_id)
+                        failures = {f["attempt_id"]: f["reason_code"] for f in details.get("provider_failures", [])}
+                        for attempt in details["actor_attempts"]:
+                            if attempt["id"] in failures:
+                                attempt["reason_code"] = failures[attempt["id"]]
                         digest = runner.artifact(invocation, f"{slot.id}-result.json", details)
-                        known = not usage["held_usd"] and not usage["calls_held"]
                         terminal = EvaluationTrial(id=slot.id, evaluation_run_id=slot.run_id, task_id=task,
                             trial_index=i, seed=slot.seed, outcome=details["outcome"],
                             reward=None if details["reward"] is None else Decimal(details["reward"]),
@@ -197,7 +229,8 @@ def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore
                             latency_ms=int((time.monotonic() - start) * 1000), artifact_sha256=digest,
                             created_at=datetime.now(UTC))
                         repository.finalize(terminal, token, lease)
-                        if details.get("stop") or usage["held_usd"] or usage["overrun"] or usage["contract_block"]:
+                        if (details.get("stop") or usage["overrun"] or usage["contract_block"]
+                                or (not study.limits.max_unresolved_attempts and usage["held_usd"])):
                             break  # v2 preserves never-claimed slots for resume
                     except (KeyboardInterrupt, SystemExit):
                         repository.abort(slot, lease, reason="study_interrupted")

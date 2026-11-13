@@ -17,6 +17,7 @@ FAILURES = {"trial_failed": "application", "scoring_unavailable": "judge_unavail
     "unclaimed_closed": "interruption", "cleanup_unconfirmed": "infrastructure",
     "actor_limit_or_contract": "budget", "agent_limit": "budget", "trial_setup_or_artifact": "infrastructure"}
 FAILURES.update(judge_unavailable="judge_unavailable", simulator_failed="simulator")
+FAILURES["unresolved_billing"] = "infrastructure"
 
 
 def money(value: Any) -> str:
@@ -78,6 +79,8 @@ def normalize(study: FrozenStudy, raw: dict[str, Any]) -> Snapshot:
             if not valid or db_success is None:
                 status, failure = "error", "judge_unavailable" if strata[task] == "db_nl" else "application"
         known = scope is not None and not scope["held_usd"] and not scope["calls_held"]
+        if row and row["state"] == "finalized" and scope and (scope["held_usd"] or scope["calls_held"]):
+            status, failure, db_success = "error", failure or "infrastructure", None
         trials.append({"variant": variant, "task_id": task, "trial_index": index, "seed": seed,
             "slot_id": str(slot_id), "scenario_id": str(scenario), "stratum": strata[task],
             "status": status, "failure_class": failure, "db_success": db_success,

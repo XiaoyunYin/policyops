@@ -54,6 +54,7 @@ from policyops.providers.transport import (
     sdk_client,
 )
 from policyops_contracts.model import ModelResult
+from policyops_contracts.provider_failures import failure_code
 
 
 MAX_EVENTS = 10_000
@@ -67,6 +68,10 @@ class CountFailed(RuntimeError):
         super().__init__(code)
         self.code = code
         self.cleanup_confirmed = cleanup_confirmed
+
+    @property
+    def failure_code(self) -> str | None:
+        return failure_code(self.code)
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,10 @@ class Invocation:
     retry_after: float | None = None
     error: str | None = None
     cleanup_confirmed: bool = True  # False if a stream or client close did not finish within its bound
+
+    @property
+    def failure_code(self) -> str | None:
+        return failure_code(self.error or (self.result.reason_code if self.result else None))
 
 
 @dataclass

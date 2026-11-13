@@ -6,11 +6,13 @@ No transcript field is copied into the output.
 """
 
 from collections import Counter
+from decimal import Decimal
 from pathlib import Path
 import re
 from typing import Any
 
 from policyops_contracts.conversation import ConversationSnapshot
+from policyops_contracts.provider_failures import closed_failure_code
 from policyops_evals.canonical import canonical_bytes, sha256_bytes
 from policyops_evals.studies import bundles
 from policyops_evals.studies.reports import validate
@@ -18,7 +20,7 @@ from policyops_evals.studies.reports import validate
 
 ERRORS = frozenset({"trial_failed", "scoring_unavailable", "trial_deadline", "study_interrupted",
     "abandoned_claim", "unclaimed_closed", "cleanup_unconfirmed", "actor_limit_or_contract", "agent_limit",
-    "trial_setup_or_artifact", "judge_unavailable", "simulator_failed"})
+    "trial_setup_or_artifact", "judge_unavailable", "simulator_failed", "unresolved_billing"})
 OUTCOMES = frozenset({"success", "failure", "error", "aborted", "budget_exceeded"})
 type ArtifactIndex = dict[tuple[str, str], list[Path]]
 
@@ -87,6 +89,7 @@ def render(path: Path, *, snapshot: str, out: Path) -> dict[str, Any]:
     found = inventory(path.parent)
     counts: Counter[tuple[str, str, str, str]] = Counter()
     tasks: Counter[tuple[str, str, str, str, str]] = Counter()
+    failures: Counter[tuple[str, str, str, str]] = Counter()
     for row in frozen.trials:
         outcome: str = row.status
         terminal = "unavailable"
@@ -103,16 +106,34 @@ def render(path: Path, *, snapshot: str, out: Path) -> dict[str, Any]:
                 raise bundles.BundleRefused("private_result_outcome")
             code = raw_result.get("error_class")
             error = "none" if code is None else code if isinstance(code, str) and code in ERRORS else "unknown_error"
+            provider_failures = raw_result.get("provider_failures", [])
+            if not isinstance(provider_failures, list) or len(provider_failures) > 1000:
+                raise bundles.BundleRefused("private_failure_bounds")
+            for failure in provider_failures:
+                reason = closed_failure_code(failure.get("reason_code")) if isinstance(failure, dict) else None
+                if (reason is None or failure.get("actor") not in ("agent", "simulator", "judge")
+                        or failure.get("phase") not in ("count", "inference")):
+                    raise bundles.BundleRefused("private_failure_code")
+                failures[(row.variant, failure["actor"], failure["phase"], reason)] += 1
             agent_hash = raw_result.get("agent_snapshot_sha256")
             if agent_hash is not None:
                 if not isinstance(agent_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", agent_hash):
                     raise bundles.BundleRefused("private_agent_digest")
                 agent, _ = linked(found, f"{row.slot_id}-agent.json", agent_hash, invocation=result_path.parent)
+                if isinstance(agent, dict) and "snapshot" in agent:
+                    agent_failures = [f for f in provider_failures if f["actor"] == "agent"]
+                    if (agent.get("schema_version") != "policyops.study-agent/v1"
+                            or agent.get("provider_failures") != agent_failures):
+                        raise bundles.BundleRefused("private_agent_failures")
+                    agent = agent["snapshot"]
                 try:
                     checked = ConversationSnapshot.model_validate_json(canonical_bytes(agent))
                 except ValueError:
                     raise bundles.BundleRefused("private_agent_schema") from None
                 terminal = checked.terminal or "none"
+        if row.status not in {"pending", "running"} and Decimal(row.held_usd) > 0:
+            outcome = "error"
+            error = "unresolved_billing" if error == "none" else error
         group_key = (row.variant, outcome, terminal, error)
         counts[group_key] += 1
         tasks[(row.task_id, *group_key)] += 1
@@ -123,12 +144,16 @@ def render(path: Path, *, snapshot: str, out: Path) -> dict[str, Any]:
     fields = ("variant", "outcome", "agent_terminal_reason", "error_class")
     result: dict[str, Any] = {"schema_version": "policyops.study-taxonomy/v1", "study_sha256": study_hash,
         "snapshot_sha256": snapshot_hash, "scheduled_trials": len(frozen.trials),
-        "counts": rows(counts, fields), "per_task": rows(tasks, ("task_id", *fields))}
+        "counts": rows(counts, fields), "per_task": rows(tasks, ("task_id", *fields)),
+        "provider_failures": rows(failures, ("variant", "actor", "phase", "reason_code"))}
     lines = ["# Study failure taxonomy", "", f"Snapshot: {snapshot_hash}", "",
              "Outcome is the raw result code when available; absent artifacts use the sealed slot status.",
+             "Finalized slots with held liability are always errors, including historical snapshots.",
              "Terminal `none` means observed without a terminal; `unavailable` means no linked agent artifact.",
              "Unknown error strings map to `unknown_error`. Counts include every scheduled trial.", ""]
-    for title, key, columns in (("Counts", "counts", fields), ("Per-task matrix", "per_task", ("task_id", *fields))):
+    failure_fields = ("variant", "actor", "phase", "reason_code")
+    for title, key, columns in (("Counts", "counts", fields), ("Per-task matrix", "per_task", ("task_id", *fields)),
+                               ("Provider failures", "provider_failures", failure_fields)):
         lines.extend([f"## {title}", "", "| " + " | ".join((*columns, "count")) + " |",
                       "| " + " | ".join("---" for _ in (*columns, "count")) + " |"])
         lines.extend("| " + " | ".join(str(row[c]) for c in (*columns, "count")) + " |" for row in result[key])

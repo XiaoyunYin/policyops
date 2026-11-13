@@ -143,3 +143,7 @@ class Repository:
     def actor_attempts(self, scenario_id: UUID) -> list[dict[str, Any]]:
         return [{"id": str(a.id), "actor": a.intent.actor, "actual_usd": str(a.actual_usd), "state": a.state}
                 for a in self.store.attempts.values() if a.intent.scope_ids[-1] == scenario_id]
+
+    def unresolved_attempts(self, study_id: UUID) -> int:
+        return sum(a.state in {"dispatching", "unresolved"} and study_id in a.intent.scope_ids
+                   for a in self.store.attempts.values())

@@ -107,6 +107,7 @@ class Environment(WireModel):
 
 
 class FrozenCaps(WireModel):
+    max_unresolved_attempts: Annotated[int | None, Field(ge=0, le=1000, exclude_if=lambda v: v is None)] = None
     scenario_usd: Money
     invocation_usd: Money
     study_usd: Money

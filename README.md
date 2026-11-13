@@ -608,6 +608,10 @@ correction. These screens are tested in jsdom, including two independent clients
 OIDC/proxy SSE, screen-reader or responsive-layout proof yet (T38/T39). Receipt downloads, raw fact inspection
 and model-generated customer replies remain outside this slice. A configured runtime is required for execution.
 
+## Security
+
+See the [threat model, control-to-test index and audit limits](docs/security.md).
+
 ## Data and licensing
 
 No upstream dataset or implementation has been copied into this repository. The evaluator environment installs tau2-bench at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062` as a pinned dependency, and `policyops-evals data fetch` acquires that commit's public data into a directory outside the checkout:

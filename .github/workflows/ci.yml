@@ -40,6 +40,8 @@ jobs:
         run: |
           python3 -B scripts/check_publication.py
           python3 -B scripts/check_publication.py --history
+      - name: Build-context files and private-path probes (no image build)
+        run: python3 -B scripts/check_build_context.py
       - name: Install checksum-verified gitleaks 8.30.1
         run: python3 -B scripts/gitleaks_gate.py install
       - name: gitleaks over all fetched history
@@ -230,6 +232,10 @@ jobs:
           ${{ matrix.py }} -B ../../scripts/devenv.py npm run typecheck
           ${{ matrix.py }} -B ../../scripts/devenv.py npm test
           ${{ matrix.py }} -B ../../scripts/devenv.py npm run build
+      - name: Browser bundle boundary (no server configuration or source maps)
+        run: >-
+          ${{ matrix.py }} -B ../../scripts/devenv.py ${{ matrix.py }} -B ../../scripts/check_bundle.py
+          --bundle "$POLICYOPS_TEMP_DIR/build/web"
       - name: Generated API types match the committed OpenAPI document (isolated, exactly locked generator)
         run: ${{ matrix.py }} -B ../../scripts/devenv.py ${{ matrix.py }} -B ../../scripts/api_types.py --check
       - name: Vitest user data stays under the temporary root

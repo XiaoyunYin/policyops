@@ -95,5 +95,18 @@ not by itself establish the provenance of every data file; see
 its remaining uncertainty. Any image or artifact that later ships upstream files
 (for example the planned retail simulator) must carry this notice.
 
-Other Python and JavaScript dependencies are installed from the lock files under
-their own licenses; their audit is not part of this notice.
+## Other installed dependencies: review before redistribution
+
+The offline metadata inventory (`scripts/audit_licenses.py`, app environment and web lock) identifies
+`psycopg` 3.3.6, `psycopg-binary` 3.3.6 and `psycopg-pool` 3.3.3 as LGPL-3.0-only;
+`certifi` 2026.10.23 as MPL-2.0; `orjson` 3.13.0 as MPL-2.0 AND (Apache-2.0 OR MIT);
+and the web build tool `lightningcss` 1.33.0 and its platform packages as MPL-2.0.
+`caniuse-lite` 1.0.30001819 declares CC-BY-4.0. These are metadata observations, not a legal
+clearance or a claim that every build dependency ships in the browser bundle.
+The separately inventoried evaluator environment also declares `tqdm` 4.70.1 as MPL-2.0 AND MIT.
+
+Preserve installed distribution license/notice files when redistributing environments or images.
+Copyleft obligations, attribution, unknown/legacy declarations, transitive native libraries and the
+exact files shipped need review for the actual T38 images. The inventory deliberately returns a
+review-required status for copyleft and unknown declarations; it does not waive them or replace
+the evaluator's separate inventory and data-provenance audit. No complete legal clearance is claimed.

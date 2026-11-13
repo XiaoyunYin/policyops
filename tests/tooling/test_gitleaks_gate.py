@@ -8,6 +8,8 @@ exception, tested here in both directions. Hook tests require the verified scann
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
+import hashlib
 import importlib.util
 import io
 import json
@@ -38,6 +40,14 @@ ALNUM = string.ascii_letters + string.digits
 # source file's own assignments cannot match generic-api-key when the repository is scanned.
 CORPUS_KEYS = tuple("tau2-" + name for name in ("banking-knowledge", "retail-policy"))
 CORPUS_KEY_PATHS = ("evals/src/policyops_evals/ingest_manifest.py", "evals/manifests/tau2-19f13ea3/ingest-corpora.json")
+# Empirically measured with pinned 8.30.1 and git log -p -U0 <commit>^!.
+# Merge resolution lines are absent from its default log diff, too.
+COMMIT_COVERAGE = {
+    "root": 1, "normal-add": 1, "deletion-only": 0, "rename-only": 0,
+    "mode-only": 0, "binary-only-add": 0, "allow-empty": 0,
+    "merge-clean": 0, "merge-resolution-add": 0,
+    "empty-file": 0, "blank-line": 1, "no-newline": 1,
+}
 # Runs the gate and records, through audit hooks, every directory it creates and
 # the TEMP/TMP/TMPDIR handed to each child process, whichever API created them.
 RECORDING_DRIVER = r'''
@@ -76,7 +86,7 @@ def stripe_like_key() -> str:
 class TempRepo:
     def __init__(self, test: unittest.TestCase) -> None:
         self._temp = tempfile.TemporaryDirectory(
-            prefix="policyops-gitleaks-", dir=os.environ.get("POLICYOPS_TEMP_DIR"),
+            prefix="policyops-gitleaks-", dir=os.environ.get("TEMP"),
         )
         test.addCleanup(self._temp.cleanup)
         self.root = Path(self._temp.name) / "work"
@@ -234,9 +244,12 @@ class GitleaksHookTests(unittest.TestCase):
         self.assertEqual(clean.returncode, 0, clean.stderr)
         blocked: list[tuple[str, str, str | None]] = [("apps/other_manifest.py", legit, None)]  # elsewhere
         for path in CORPUS_KEY_PATHS:
-            secret = random_text(32)
+            # Random keys can hit upstream stopwords/the letters-only allowlist.
+            # Fixed synthetic digests keep this exception-boundary test reproducible.
+            secret = hashlib.sha256(("generic:" + path).encode()).hexdigest()
             blocked.append((path, legit + f'api_key = "{secret}"\n', secret))  # a real secret beside them
-            lookalike = f"{CORPUS_KEYS[0]}-{random_text(20)}"
+            suffix = hashlib.sha256(("lookalike:" + path).encode()).hexdigest()[:20]
+            lookalike = f"{CORPUS_KEYS[0]}-{suffix}"
             blocked.append((path, f'{{"corpus_key": "{lookalike}"}}\n', lookalike))  # not an exact identifier
         for case, (path, content, generated) in enumerate(blocked):  # labels never carry generated values
             with self.subTest(case=case, path=path):
@@ -270,6 +283,272 @@ class GitleaksHookTests(unittest.TestCase):
         repo = TempRepo(self)
         result = repo.run(sys.executable, "-B", str(GATE), "history")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_clean_history_with_additions_passes(self) -> None:
+        repo = TempRepo(self)
+        for number in range(2):
+            repo.stage("apps/readme.txt", f"safe content {number}\n")
+            self.assertEqual(repo.commit(verify=False).returncode, 0)
+        result = repo.run(sys.executable, "-B", str(GATE), "history")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("history scan passed", result.stdout)
+
+    def test_clean_staged_scan_with_kilobytes_passes(self) -> None:
+        repo = TempRepo(self)
+        repo.stage("apps/readme.txt", "safe content\n" * 1000)
+        result = repo.run(sys.executable, "-B", str(GATE), "staged")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("staged scan passed", result.stdout)
+
+
+class GitleaksCommitKindTests(unittest.TestCase):
+    """Real repositories + pinned binary: the commit-count fixture is executable."""
+
+    def test_clean_commit_kind_matrix_and_secret_history(self) -> None:
+        binary = gate.resolve_binary(gate.platform_key())
+        repo = TempRepo(self)
+        scratch = repo.root.parent / "scanner-tmp"
+        scratch.mkdir()
+        total = 0
+
+        def scan(mode: str) -> tuple[int, str]:
+            output = io.StringIO()
+            with mock.patch.dict(os.environ, repo.env, clear=True), redirect_stdout(output), redirect_stderr(output):
+                result = gate.scan(binary, mode, repo.root, scratch)
+            return result, output.getvalue()
+
+        def record(kind: str) -> None:
+            nonlocal total
+            with self.subTest(kind=kind):
+                if kind == "binary-only-add":
+                    # The pinned scanner cannot read binary patches. The explicit
+                    # staged-content rule refuses zero-byte coverage for additions.
+                    with self.assertRaisesRegex(gate.GateError, "staged additions.*zero scanned"):
+                        scan("staged")
+                else:
+                    result, output = scan("staged")
+                    self.assertEqual(result, 0, output)
+                repo.git("-c", "core.hooksPath=", "commit", "--allow-empty", "-qm", kind)
+                revision = repo.git("rev-parse", "HEAD").strip()
+                measured = repo.run(
+                    str(binary), "git", "--config", str(gate.CONFIG), "--no-banner", "--no-color", "--redact",
+                    "--ignore-gitleaks-allow", f"--log-opts={revision}^!", "--report-format=json", "--report-path=-",
+                )
+                self.assertEqual(measured.returncode, 0, measured.stderr)
+                self.assertEqual(json.loads(measured.stdout), [])
+                observed, _ = gate.scan_coverage(measured.stderr, 0)
+                self.assertEqual(observed, COMMIT_COVERAGE[kind], measured.stderr)
+                stats = repo.git("log", f"{revision}^!", "--format=%H", "--numstat", "-z", "--")
+                self.assertEqual(gate.numstat_coverage(stats, "history"), observed)
+                total += COMMIT_COVERAGE[kind]
+                self.assertEqual(gate.expected_coverage(repo.root, "history", repo.env), total)
+                result, output = scan("history")
+                self.assertEqual(result, 0, output)
+
+        repo.stage("apps/a.txt", "base\n")
+        repo.stage("apps/b.txt", "spare\n")
+        record("root")
+        repo.git("rm", "apps/b.txt")
+        record("deletion-only")
+        repo.git("mv", "apps/a.txt", "apps/renamed.txt")
+        record("rename-only")
+        repo.git("update-index", "--chmod=+x", "apps/renamed.txt")
+        record("mode-only")
+        (repo.root / "apps/binary.dat").write_bytes(b"\0binary\0data\n")
+        repo.git("add", "apps/binary.dat")
+        record("binary-only-add")
+        record("allow-empty")
+        repo.stage("apps/normal.txt", "normal\n")
+        record("normal-add")
+        repo.stage("apps/empty.txt", "")
+        record("empty-file")
+        repo.stage("apps/blank.txt", "\n")
+        record("blank-line")
+        repo.stage("apps/no-newline.txt", "text")
+        record("no-newline")
+        main = repo.git("branch", "--show-current").strip()
+        repo.git("checkout", "-qb", "side")
+        repo.stage("apps/side.txt", "side\n")
+        record("normal-add")
+        repo.git("checkout", main)
+        repo.stage("apps/main.txt", "main\n")
+        record("normal-add")
+        repo.git("merge", "--no-ff", "--no-commit", "side")
+        record("merge-clean")
+        repo.git("checkout", "-qb", "conflict")
+        repo.stage("apps/normal.txt", "side conflict\n")
+        record("normal-add")
+        repo.git("checkout", main)
+        repo.stage("apps/normal.txt", "main conflict\n")
+        record("normal-add")
+        self.assertEqual(repo.run("git", "merge", "--no-ff", "--no-commit", "conflict").returncode, 1)
+        repo.stage("apps/normal.txt", "new resolution content\n")
+        record("merge-resolution-add")
+        # Binary deletions contain no additions and must pass the staged gate.
+        repo.git("rm", "apps/binary.dat")
+        result, output = scan("staged")
+        self.assertEqual(result, 0, output)
+        record("deletion-only")
+        secret = stripe_like_key()
+        repo.stage("apps/config.txt", f'payment_key = "{secret}"\n')
+        self.assertEqual(repo.commit(verify=False).returncode, 0)
+        result, output = scan("history")
+        self.assertEqual(result, 1, output)
+        self.assertIn("rule=stripe-access-token", output)
+        self.assertNotIn(secret, output)
+
+
+class GitleaksCoverageTests(unittest.TestCase):
+    """Fake both processes to reproduce misleading successful scanner responses."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="policyops-coverage-", dir=os.environ["TEMP"])
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name) / "repo"
+        self.repo.mkdir()
+        self.scratch = Path(self.temp.name) / "scratch"
+        self.scratch.mkdir()
+        self.binary = Path(self.temp.name) / "scanner"
+        self.output = io.StringIO()
+
+    @staticmethod
+    def summaries(commits: int = 0, size: int = 12, findings: int = 0) -> str:
+        outcome = f"WRN leaks found: {findings}" if findings else "INF no leaks found"
+        return (f"7:51PM INF {commits} commits scanned.\n"
+                f"7:51PM INF scanned ~{size} bytes ({size} bytes) in 269ms\n7:51PM {outcome}\n")
+
+    def run_scan(self, *, mode: str = "staged", stats: str = "1\t0\tapps/readme.txt\0", expected_commits: int = 2,
+                 stderr: str | None = None, findings: list[dict[str, object]] | None = None,
+                 git_stderr: str = "", git_exit: int = 0, scanner_exit: int | None = None,
+                 after_stats: str | None = None, after_commits: int | None = None) -> int:
+        report = [] if findings is None else findings
+        observations = 0
+
+        def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal observations
+            if args[0] == "git":
+                self.assertEqual(args[1:3], ["-C", str(self.repo)])
+                if mode == "history":
+                    self.assertEqual(args[3:], ["log", "--all", "--format=%H", "--numstat", "-z", "--"])
+                    count = after_commits if observations and after_commits is not None else expected_commits
+                    stdout = "".join(f"{n:040x}\0\n1\t0\tfile.txt\0" for n in range(count))
+                else:
+                    self.assertEqual(args[3:], ["diff", "--cached", "--numstat", "-z",
+                                               "--diff-filter=ACMRTUXB", "--"])
+                    stdout = after_stats if observations and after_stats is not None else stats
+                observations += 1
+                return subprocess.CompletedProcess(args, git_exit, stdout, git_stderr)
+            self.assertEqual(args[0], str(self.binary))
+            self.assertIn("--no-color", args)
+            self.assertEqual(args[args.index("--log-level") + 1], "info")
+            for flag in (["--pre-commit", "--staged"] if mode == "staged" else ["--log-opts=--all"]):
+                self.assertIn(flag, args)
+            return subprocess.CompletedProcess(args, int(bool(report)) if scanner_exit is None else scanner_exit,
+                                               json.dumps(report), self.summaries() if stderr is None else stderr)
+
+        with mock.patch.object(gate.subprocess, "run", side_effect=run), \
+                redirect_stdout(self.output), redirect_stderr(self.output):
+            return int(gate.scan(self.binary, mode, self.repo, self.scratch))
+
+    def test_git_warning_and_empty_success_fails_closed(self) -> None:
+        warning = "7:51PM ERR [git] warning: unable to access config: Permission denied\n"
+        with self.assertRaisesRegex(gate.GateError, "Git diagnostic.*aborted/partial"):
+            self.run_scan(stderr=warning + self.summaries(size=0))
+        self.assertNotIn("scan passed", self.output.getvalue())
+
+    def test_unknown_stderr_on_success_fails_without_echoing_it(self) -> None:
+        sensitive = random_text(40)
+        for diagnostic in (f"7:51PM WRN skipped file {sensitive}\n", f"unexpected {sensitive}\n",
+                           "7:51PM ERR error=\"stderr is not empty\"\n"):
+            with self.subTest(diagnostic=diagnostic[:10]), \
+                    self.assertRaisesRegex(gate.GateError, "unknown scanner diagnostic") as caught:
+                self.run_scan(stderr=self.summaries() + diagnostic)
+            self.assertNotIn(sensitive, str(caught.exception))
+
+    def test_nonempty_staged_diff_with_empty_scan_fails_closed(self) -> None:
+        for stats in ("1\t0\tfile.txt\0", "-\t-\tbinary.dat\0"):
+            with self.subTest(stats=stats), self.assertRaisesRegex(gate.GateError, "staged additions.*zero scanned"):
+                self.run_scan(stats=stats, stderr=self.summaries(size=0))
+
+    def test_clean_scan_with_coverage_passes(self) -> None:
+        self.assertEqual(self.run_scan(), 0)
+        self.assertIn("staged scan passed", self.output.getvalue())
+
+    def test_clean_scan_accepts_pinned_human_readable_byte_units(self) -> None:
+        for size in ("14 KB", "192.58 KB", "8.80 MB", "1 GB", "1.2 TB"):
+            with self.subTest(size=size):
+                stderr = self.summaries(size=192584).replace("192584 bytes)", f"{size})")
+                self.assertEqual(self.run_scan(stderr=stderr), 0)
+
+    def test_empty_staged_diff_with_empty_scan_passes(self) -> None:
+        for stats in ("", "0\t1\tfile.txt\0", "0\t0\t\0old\0new\0", "0\t0\tfile.txt\0"):
+            with self.subTest(stats=stats):
+                self.assertEqual(self.run_scan(stats=stats, stderr=self.summaries(size=0)), 0)
+
+    def test_zero_eligible_history_still_runs_scanner_and_validates_diagnostics(self) -> None:
+        self.assertEqual(self.run_scan(mode="history", expected_commits=0, stderr=self.summaries(size=0)), 0)
+        with self.assertRaisesRegex(gate.GateError, "Git diagnostic"):
+            self.run_scan(mode="history", expected_commits=0,
+                          stderr=self.summaries(size=0) + "7:51PM ERR [git] read aborted\n")
+
+    def test_numstat_rejects_malformed_and_truncated_records(self) -> None:
+        for mode, stats in (("staged", "1\t0\tpath"), ("staged", "1\t-\tpath\0"),
+                            ("staged", "1\t0\t\0old\0"), ("staged", "junk\0"),
+                            ("history", "1\t0\tpath\0"), ("history", "x" * 40 + "\0"),
+                            ("history", ("a" * 40 + "\0") * 2)):
+            with self.subTest(mode=mode, stats=stats), self.assertRaises(gate.GateError):
+                gate.numstat_coverage(stats, mode)
+
+    def test_numstat_treats_rename_paths_as_opaque_and_counts_commits_once(self) -> None:
+        stats = "0\t0\t\0" + "a" * 40 + "\0\n1\t0\tpath\0"
+        self.assertEqual(gate.numstat_coverage(stats, "staged"), 0)
+        history = "a" * 40 + "\0\n" + stats + "2\t1\ta\tb\nfile\0-\t-\tbinary\0"
+        history += "b" * 40 + "\0\n0\t9\tdeleted\0"
+        self.assertEqual(gate.numstat_coverage(history, "history"), 1)
+
+    def test_exact_link_only_notice_for_local_remote_is_benign(self) -> None:
+        notice = "7:51PM INF Unknown SCM platform. Use --platform to include links in findings. host=\n"
+        self.assertEqual(self.run_scan(stderr=notice + self.summaries()), 0)
+        with self.assertRaisesRegex(gate.GateError, "unknown scanner diagnostic"):
+            self.run_scan(stderr=notice.rstrip() + "unrecognized-host\n" + self.summaries())
+
+    def test_finding_fails_and_redacts_values(self) -> None:
+        sensitive = stripe_like_key()
+        report = [{"File": "apps/config.txt", "StartLine": 1, "RuleID": "stripe-access-token", "Secret": sensitive}]
+        self.assertEqual(self.run_scan(findings=report, stderr=self.summaries(findings=1)), 1)
+        self.assertIn("rule=stripe-access-token", self.output.getvalue())
+        self.assertNotIn(sensitive, self.output.getvalue())
+
+    def test_partial_history_count_fails_closed(self) -> None:
+        with self.assertRaisesRegex(gate.GateError, "history coverage mismatch.*2.*1"):
+            self.run_scan(mode="history", stderr=self.summaries(commits=1))
+
+    def test_clean_history_with_matching_count_passes(self) -> None:
+        self.assertEqual(self.run_scan(mode="history", stderr=self.summaries(commits=2)), 0)
+
+    def test_independent_coverage_changes_during_scan_fail_closed(self) -> None:
+        with self.assertRaisesRegex(gate.GateError, "staged coverage changed"):
+            self.run_scan(after_stats="1\t0\tfirst\0" + "1\t0\tsecond\0")
+        with self.assertRaisesRegex(gate.GateError, "history coverage changed"):
+            self.run_scan(mode="history", stderr=self.summaries(commits=2), after_commits=3)
+
+    def test_missing_or_duplicate_summaries_fail_closed(self) -> None:
+        for stderr in ("", "7:51PM INF no leaks found\n", self.summaries() * 2):
+            with self.subTest(stderr=stderr), self.assertRaisesRegex(gate.GateError, "coverage/result summaries"):
+                self.run_scan(stderr=stderr)
+
+    def test_result_summary_must_agree_with_report(self) -> None:
+        with self.assertRaisesRegex(gate.GateError, "coverage/result summaries"):
+            self.run_scan(stderr=self.summaries(findings=1))
+
+    def test_independent_git_warning_or_failure_fails_closed(self) -> None:
+        for stderr, code in (("warning: partial read", 0), ("", 128)):
+            with self.subTest(code=code), self.assertRaisesRegex(gate.GateError, "Git staged coverage check failed"):
+                self.run_scan(git_stderr=stderr, git_exit=code)
+
+    def test_exit_report_inconsistency_fails_closed(self) -> None:
+        with self.assertRaisesRegex(gate.GateError, "invalid report/exit consistency"):
+            self.run_scan(scanner_exit=1)
 
 
 class GitleaksTempRootTests(unittest.TestCase):
@@ -356,7 +635,7 @@ class GitleaksTempRootTests(unittest.TestCase):
 class GitleaksInstallTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(
-            prefix="policyops-gitleaks-install-", dir=os.environ.get("POLICYOPS_TEMP_DIR"),
+            prefix="policyops-gitleaks-install-", dir=os.environ.get("TEMP"),
         )
         self.addCleanup(self.temp.cleanup)
         self.dest = Path(self.temp.name) / "bin"

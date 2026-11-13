@@ -25,6 +25,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -174,12 +175,103 @@ def repo_toplevel(env: dict[str, str]) -> Path:
     return Path(output).resolve()
 
 
-def has_commits(repo: Path, env: dict[str, str]) -> bool:
-    refs = subprocess.run(
-        ["git", "-C", str(repo), "rev-list", "--all", "--max-count=1"],
-        capture_output=True, text=True, check=True, env=env,
-    ).stdout.strip()
-    return bool(refs)
+def expected_coverage(repo: Path, mode: str, env: dict[str, str]) -> int:
+    """Count additions, matching the pinned scanner's ``git log -p -U0 --all``.
+
+    Numstat uses the same rename and merge defaults as the scanner's patch query.
+    A history commit contributes once if it has any added text lines. Binary,
+    empty and deletion-only diffs contribute nothing; default log diffs omit
+    merges, even those with conflict-resolution additions. Staged binary changes
+    other than deletions still require nonzero scanned bytes (fail closed).
+    """
+    args = (["diff", "--cached", "--numstat", "-z", "--diff-filter=ACMRTUXB", "--"] if mode == "staged"
+            else ["log", "--all", "--format=%H", "--numstat", "-z", "--"])
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, encoding="utf-8", errors="replace", env=env,
+    )
+    # Do not echo arbitrary Git output: it can contain untrusted paths or secrets.
+    if result.returncode != 0 or result.stderr.strip():
+        raise GateError(f"Git {mode} coverage check failed (exit {result.returncode}; "
+                        f"stderr={'present' if result.stderr.strip() else 'absent'}); scan may be incomplete")
+    return numstat_coverage(result.stdout, mode)
+
+
+def numstat_coverage(output: str, mode: str) -> int:
+    """Parse NUL records, consuming rename paths without interpreting their text."""
+    if output and not output.endswith("\0"):
+        raise GateError(f"Git {mode} coverage check returned incomplete numstat records")
+    records = iter(output.split("\0")[:-1])
+    count = 0
+    added = False
+    commit: str | None = None
+    seen: set[str] = set()
+    for record in records:
+        if mode == "history" and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", record):
+            if record in seen:
+                raise GateError("Git history coverage check returned a duplicate commit")
+            seen.add(record)
+            count += int(added)
+            commit, added = record, False
+            continue
+        fields = record.removeprefix("\n").split("\t", 2)
+        if len(fields) != 3 or (mode == "history" and commit is None) or not (
+            (fields[0] == fields[1] == "-") or
+            (re.fullmatch(r"[0-9]+", fields[0]) and re.fullmatch(r"[0-9]+", fields[1]))
+        ):
+            raise GateError(f"Git {mode} coverage check returned invalid numstat records")
+        # -z represents a rename as counts + empty path + old path + new path.
+        # Paths may contain tabs/newlines or resemble a hash/stat record.
+        if not fields[2] and (not next(records, "") or not next(records, "")):
+            raise GateError(f"Git {mode} coverage check returned incomplete rename paths")
+        has_additions = (fields[0] == "-" and mode == "staged") or (fields[0].isdecimal() and int(fields[0]) > 0)
+        if mode == "staged":
+            count += int(has_additions)
+        else:
+            added |= has_additions
+    return count + int(added)
+
+
+def scan_coverage(stderr: str, finding_count: int) -> tuple[int, int]:
+    """Allow the pinned scanner's summaries and one link-only local-remote notice.
+
+    No Git warnings, scanner errors or unknown messages are benign. In particular,
+    exit 0 with [] does not mean the Git diff reader finished. --no-color keeps this
+    grammar independent of terminal capabilities; timestamp and duration may vary.
+    """
+    commits: list[int] = []
+    sizes: list[int] = []
+    outcomes: list[int] = []
+    for line in stderr.splitlines():
+        match = re.fullmatch(r"[0-9]{1,2}:[0-9]{2}(?:AM|PM) (INF|WRN) (.+)", line)
+        if match:
+            level, message = match.groups()
+            count = re.fullmatch(r"([0-9]+) commits scanned\.", message)
+            size = re.fullmatch(
+                r"scanned ~([0-9]+) bytes \((?:0|[0-9]+ bytes|[0-9]+(?:\.[0-9]+)? [KMGT]B)\) "
+                r"in [0-9]+(?:\.[0-9]+)?(?:ns|µs|ms|s|m|h)(?:[0-9.]+(?:ns|µs|ms|s|m|h))*", message,
+            )
+            leaks = re.fullmatch(r"leaks found: ([0-9]+)", message)
+            if level == "INF" and count:
+                commits.append(int(count[1]))
+                continue
+            if level == "INF" and size:
+                sizes.append(int(size[1]))
+                continue
+            if level == "INF" and message == "no leaks found":
+                outcomes.append(0)
+                continue
+            if level == "WRN" and leaks:
+                outcomes.append(int(leaks[1]))
+                continue
+            # A local filesystem remote has no SCM host. This exact notice only
+            # disables finding hyperlinks; it does not describe a read failure.
+            if level == "INF" and message == "Unknown SCM platform. Use --platform to include links in findings. host=":
+                continue
+        diagnostic = "Git diagnostic" if "[git]" in line else "unknown scanner diagnostic"
+        raise GateError(f"rejected {diagnostic} on stderr; possible aborted/partial scan (details withheld)")
+    if len(commits) != 1 or len(sizes) != 1 or outcomes != [finding_count]:
+        raise GateError("missing, duplicate or inconsistent scanner coverage/result summaries")
+    return commits[0], sizes[0]
 
 
 def scan(binary: Path, mode: str, repo: Path, scratch: Path) -> int:
@@ -189,14 +281,12 @@ def scan(binary: Path, mode: str, repo: Path, scratch: Path) -> int:
     if (repo / ".gitleaksignore").exists():
         raise GateError(".gitleaksignore in the repository root would suppress findings; remove it")
     env = scratch_environment(scratch)
-    if mode == "history" and not has_commits(repo, env):
-        print("gitleaks: repository has no commits; nothing to scan.")
-        return 0
+    expected = expected_coverage(repo, mode, env)
     with tempfile.TemporaryDirectory(prefix="gitleaks-noignore-", dir=scratch) as empty_ignore_dir:
         command = [
-            str(binary), "git", "--config", str(CONFIG), "--no-banner", "--redact",
+            str(binary), "git", "--config", str(CONFIG), "--no-banner", "--no-color", "--redact",
             "--ignore-gitleaks-allow", "--gitleaks-ignore-path", empty_ignore_dir,
-            "--report-format", "json", "--report-path", "-", "--log-level", "error",
+            "--report-format", "json", "--report-path", "-", "--log-level", "info",
         ]
         if mode == "staged":
             command += ["--pre-commit", "--staged"]
@@ -209,11 +299,18 @@ def scan(binary: Path, mode: str, repo: Path, scratch: Path) -> int:
         findings = json.loads(result.stdout)
     except json.JSONDecodeError:
         findings = None
-    if not isinstance(findings, list) or result.returncode not in {0, 1} or (
+    if not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings) or (
+        result.returncode not in {0, 1}) or (
         result.returncode == 1) != bool(findings):
-        detail = result.stderr.strip()[-2000:]
-        raise GateError(f"gitleaks {mode} scan failed (exit {result.returncode}). {detail}")
+        raise GateError(f"gitleaks {mode} scan failed (exit {result.returncode}; invalid report/exit consistency)")
+    commits, scanned_bytes = scan_coverage(result.stderr, len(findings))
     if not findings:
+        if mode == "staged" and expected > 0 and scanned_bytes == 0:
+            raise GateError("staged additions but scanner reported zero scanned bytes; scan may be incomplete")
+        if mode == "history" and commits != expected:
+            raise GateError(f"history coverage mismatch: Git expects {expected} commits, scanner reported {commits}")
+        if expected_coverage(repo, mode, env) != expected:
+            raise GateError(f"Git {mode} coverage changed during scan; retry on a stable repository")
         print(f"gitleaks {VERSION} {mode} scan passed.")
         return 0
     print(f"gitleaks {VERSION} {mode} scan found {len(findings)} potential secret(s) "

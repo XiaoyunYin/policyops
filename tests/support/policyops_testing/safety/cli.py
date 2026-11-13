@@ -224,6 +224,10 @@ def execute(config: Config, recorder: EvidenceRecorder, suites: tuple[str, ...],
 
 
 def verify_file(path: Path) -> list[str]:
+    if (path.is_file() and path.stat().st_size <= 32 * 1024 * 1024
+            and json.loads(path.read_bytes()).get("study_id") == "t30-e05-v1"):
+        from policyops_testing.safety.e05_cli import verify_file as verify_e05
+        return verify_e05(path)
     root = path.parent.parent
     # Reuse the recorder's path/link checks without permitting report creation or directory recreation.
     if not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
@@ -264,12 +268,18 @@ def verify_file(path: Path) -> list[str]:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--suite", default="matrix,e04", help="matrix,e04 (Slice A only)")
+    result.add_argument("--suite", default="matrix,e04", help="matrix,e04 (Slice A) or e05 (separate frozen config)")
     result.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     result.add_argument("--out", type=Path)
     result.add_argument("--pair-id", action="append", default=[])
     result.add_argument("--verify-report", type=Path)
     result.add_argument("--worker", type=Path, help=argparse.SUPPRESS)
+    result.add_argument("--provider-mode", choices=("scripted", "live"), default="scripted")
+    result.add_argument("--allow-paid", action="store_true")
+    result.add_argument("--preflight-only", action="store_true")
+    result.add_argument("--offline-only", action="store_true", help="E05 SDK/parser smoke without PostgreSQL/effects")
+    result.add_argument("--fixture-id", action="append", default=[])
+    result.add_argument("--live-child", action="store_true", help=argparse.SUPPRESS)
     return result
 
 
@@ -282,6 +292,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             errors = verify_file(args.verify_report)
             print(json.dumps({"verified": not errors, "errors": errors}, sort_keys=True))
             return int(bool(errors))
+        if args.suite == "e05":
+            from policyops_testing.safety.e05_cli import command as e05_command
+            return e05_command(args, argv)
+        if args.provider_mode != "scripted" or args.allow_paid or args.preflight_only or args.offline_only \
+                or args.fixture_id or args.live_child:
+            raise ValueError("E05 options require --suite e05")
         config = load_config(args.config)
         suites = tuple(args.suite.split(","))
         if not suites or len(set(suites)) != len(suites) or not set(suites) <= {"matrix", "e04"}:

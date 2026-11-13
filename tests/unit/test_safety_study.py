@@ -458,7 +458,7 @@ def test_cli_invalid_selection_and_malformed_config_fail_before_output_creation(
                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICYOPS_TEMP_DIR", str(tmp_path))
     target = tmp_path / "should-not-exist"
-    assert cli.main(["--suite", "e05", "--out", str(target)]) == 2
+    assert cli.main(["--suite", "unknown", "--out", str(target)]) == 2
     assert cli.main(["--pair-id", "pair-999", "--out", str(target)]) == 2
     config_path = tmp_path / "malformed.json"
     config_path.write_text(json.dumps({"unexpected": True}), encoding="utf-8")

@@ -17,6 +17,21 @@
 !README.md
 !LICENSE
 !THIRD_PARTY_NOTICES.md
+!evals/
+evals/**
+!evals/pyproject.toml
+!evals/uv.lock
+!evals/src/
+!evals/src/**
+!evals/migrations/
+evals/migrations/**
+!evals/migrations/retail/
+!evals/migrations/retail/**
+!evals/manifests/
+evals/manifests/**
+!evals/manifests/tau2-19f13ea3/
+evals/manifests/tau2-19f13ea3/**
+!evals/manifests/tau2-19f13ea3/source.json
 
 # Re-exclude local/private/generated material inside allowed source trees.
 **/PLAN.md

@@ -152,7 +152,7 @@ class RepositoryConfigTests(unittest.TestCase):
 
     def test_images_pinned_by_digest(self) -> None:
         images = json.loads((REPO / "infra" / "images.json").read_text(encoding="utf-8"))["images"]
-        self.assertEqual(set(images), {"postgres", "oidc", "proxy"})
+        self.assertEqual(set(images), {"postgres", "oidc", "proxy", "python", "node"})
         for role, pin in images.items():
             with self.subTest(role=role):
                 self.assertRegex(pin["digest"], r"^sha256:[0-9a-f]{64}$")

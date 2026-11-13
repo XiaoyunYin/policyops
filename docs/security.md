@@ -108,6 +108,12 @@ Advisory databases change daily; these are dated observations, not a standing gu
 
 ## Residual risks and explicit exclusions
 
+- Local Compose attaches only Caddy to the non-internal `edge` network to make its published loopback port
+  reachable on Docker Desktop. API shares Caddy's network namespace, so both have potential internet egress.
+  PostgreSQL, retail, Dex, worker and one-shots stay on the internal default network with no external egress.
+  This trade-off is limited to the fictional local demo; X04 is required before any non-loopback exposure.
+  The smoke asserts host access to Caddy, exact loopback-only publishing, network membership and retail's
+  external DNS/TCP denial. It does not establish egress confinement for Caddy/API.
 - The publication and bundle checks use filename/content heuristics. Novel, encoded or renamed secrets/private
   material can evade them; review diffs, staged contents, notices and the independent scanner too. History checks
   cover local reachable refs, not unreachable objects, absent remote refs or already published external copies.

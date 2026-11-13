@@ -28,6 +28,8 @@ PUBLIC_DOCS = {
     "docs/security.md", "docs/data-provenance.md",
     # T06: public reference for the database role matrix, bootstrap/migration usage and restore/rollback limits.
     "docs/database.md",
+    # T38: reproducible Compose operations, migration ownership and coherent recovery procedures.
+    "docs/operations.md",
     # T07: public reference for the OIDC/session/CSRF design, local identity setup and its limits.
     "docs/authentication.md",
     # T17: the generated rule/source coverage map: rule IDs, policy line ranges and clause digests, and the IDs and

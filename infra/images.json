@@ -1,6 +1,20 @@
 {
-  "_comment": "Container image pins (multi-arch index digests resolved from the registries on 2026-11-04). Compose/Dockerfiles must reference image@digest exactly; update tag, digest and verification together.",
+  "_comment": "Container image pins (multi-arch index digests; service pins resolved 2026-11-04, Python/Node by coordinator 2026-11-13). Compose/Dockerfiles must reference image@digest exactly; update tag, digest and verification together.",
   "images": {
+    "python": {
+      "image": "python",
+      "tag": "3.12.16-slim-trixie",
+      "digest": "sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b",
+      "contents": "CPython 3.12.16, Debian trixie slim; coordinator-resolved multi-arch index",
+      "source": "https://hub.docker.com/_/python"
+    },
+    "node": {
+      "image": "node",
+      "tag": "26.13.0-trixie-slim",
+      "digest": "sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072",
+      "contents": "Node.js 26.13.0, Debian trixie slim; coordinator-resolved multi-arch index",
+      "source": "https://hub.docker.com/_/node"
+    },
     "postgres": {
       "image": "pgvector/pgvector",
       "tag": "0.8.7-pg17-trixie",

@@ -77,7 +77,8 @@ def check_context(root: Path) -> list[str]:
         "terraform.tfstate", "local.tfvars", "credentials.json", "service-account.json",
         "dist/app.js", "build/app.js", "coverage/report.json",
     ]
-    for prefix in ("", "apps/", "apps/web/", "packages/", "packages/example/src/", "scripts/", "tests/", "infra/"):
+    for prefix in ("", "apps/", "apps/web/", "packages/", "packages/example/src/", "scripts/", "tests/", "infra/",
+                   "evals/", "evals/src/", "evals/migrations/retail/"):
         failures.extend(f"{prefix}{name}: private-path probe included" for name in private
                         if included(prefix + name, rules))
     for path in context_paths(root, rules):

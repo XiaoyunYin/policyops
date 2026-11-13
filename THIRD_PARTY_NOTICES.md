@@ -1,5 +1,7 @@
 # Third-party notices
 
+PolicyOps is distributed under the [MIT license](LICENSE). Third-party components retain their own terms below.
+
 ## OpenTelemetry
 
 The application installs `opentelemetry-sdk` 1.45.1, `opentelemetry-api` 1.45.1 and
@@ -96,6 +98,34 @@ its remaining uncertainty. Any image or artifact that later ships upstream files
 (for example the planned retail simulator) must carry this notice.
 
 ## Other installed dependencies: review before redistribution
+
+### Compose image redistribution
+
+The T38 app/retail image definitions copy installed Python distributions with their `.dist-info` metadata,
+license/notice texts and native libraries intact. Their frozen lock and this notice are shipped under
+`/usr/share/policyops/` and `/opt/policyops/`. Python code remains readable; LGPL libraries are dynamically loaded
+from the unmodified installed environment (they are not statically linked into PolicyOps). Rebuild from the
+corresponding frozen lock to replace a library, observing its compatibility and license terms. Dependency sources
+and releases are identified by those locks: <https://pypi.org/project/psycopg/>,
+<https://pypi.org/project/psycopg-binary/>, <https://pypi.org/project/psycopg-pool/>,
+<https://github.com/psycopg/psycopg>, <https://github.com/certifi/python-certifi>,
+<https://github.com/ijl/orjson> and <https://github.com/tqdm/tqdm>.
+
+The web runtime carries installed dependency package metadata and actual LICENSE/NOTICE/COPYING texts under
+`/usr/share/policyops/web-notices/`, including attribution for bundled dependencies, plus its package lock.
+Node/npm and development tooling stay in build stages. Caddy, CPython and PostgreSQL/Dex retain the notices
+provided by their upstream base images; the exact image digests are recorded in `infra/images.json`.
+
+The retail runtime additionally carries the unmodified, hash-verified tau2 retail `db.json` and MIT LICENSE under
+`/opt/fixture/`, with the Sierra Research attribution above. It ships no benchmark task/reference/split data.
+The full evaluator dependency set is retained as agreed, including litellm 1.82.6 with its documented advisory
+limitations; its proxy and model clients are not started. Build-stage uv 0.13.7 is checksum-pinned and is absent
+from final images (upstream: <https://github.com/astral-sh/uv>, MIT OR Apache-2.0).
+
+These definitions preserve notices and reproducibility inputs; effective image contents, transitive native
+library/source obligations and license inventory still require coordinator inspection before redistribution.
+They do not claim complete legal clearance. Debian/Alpine base packages retain their upstream copyright/license
+records; do not strip those files during image optimization.
 
 The offline metadata inventory (`scripts/audit_licenses.py`, app environment and web lock) identifies
 `psycopg` 3.3.6, `psycopg-binary` 3.3.6 and `psycopg-pool` 3.3.3 as LGPL-3.0-only;

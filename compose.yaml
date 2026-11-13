@@ -1,0 +1,225 @@
+# Image tags, contents and digest sources: infra/images.json. Local loopback demo only.
+x-app: &app
+  image: policyops-app:${POLICYOPS_IMAGE_TAG:-local}
+  platform: linux/amd64
+  build:
+    context: .
+    dockerfile: infra/docker/app.Dockerfile
+  user: "10001:10001"
+  read_only: true
+  init: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:uid=10001,gid=10001,mode=0700"]
+  stop_grace_period: 30s
+  labels: &labels
+    policyops.owner: policyops-compose
+    policyops.run: ${POLICYOPS_RUN_ID:?Set a unique run identity}
+  environment: &app-env
+    POLICYOPS_ENV: local
+    POLICYOPS_DB_HOST: postgres
+    POLICYOPS_DB_PORT: "5432"
+    POLICYOPS_DB_NAME: ${POLICYOPS_DATABASE:-policyops}
+    POLICYOPS_DB_SSLMODE: require
+    POLICYOPS_PUBLIC_ORIGIN: http://127.0.0.1:${POLICYOPS_HTTP_PORT:-8080}
+    POLICYOPS_OIDC_ISSUER: http://127.0.0.1:${POLICYOPS_HTTP_PORT:-8080}/dex
+    POLICYOPS_OIDC_CLIENT_ID: policyops-local
+    POLICYOPS_RETAIL_ORIGIN: http://retail:8001
+
+x-retail: &retail
+  <<: *app
+  image: policyops-retail:${POLICYOPS_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: infra/docker/retail.Dockerfile
+
+x-health: &health
+  interval: 10s
+  timeout: 8s
+  retries: 12
+  start_period: 15s
+
+services:
+  postgres:
+    # pgvector 0.8.7 / PostgreSQL 17.11; infra/images.json
+    image: pgvector/pgvector@sha256:01215e09bd4bd582d20230e025b6c971deeeffee49ceef1aae167e839cb62a7e
+    user: "999:999"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels: *labels
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+      PGDATA: /var/lib/postgresql/data/pgdata
+    entrypoint: [sh, /etc/policyops/postgres.sh]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/compose/postgres.sh:/etc/policyops/postgres.sh:ro
+    tmpfs:
+      - /tmp:uid=999,gid=999,mode=0700
+      - /var/run/postgresql:uid=999,gid=999,mode=0770
+    secrets: [postgres, postgres_tls_key, postgres_tls_cert]
+    healthcheck:
+      <<: *health
+      # The initdb temporary server has only a Unix socket; require the final TCP listener.
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, postgres, -d, postgres]
+    stop_grace_period: 60s
+
+  bootstrap-app:
+    <<: *app
+    command: [bootstrap-app]
+    secrets: [postgres, policyops_app_migrator, policyops_auth_runtime, policyops_app_runtime, policyops_eval_runtime, policyops_worker_discovery]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  migrate-app:
+    <<: *app
+    command: [migrate-app]
+    secrets: [policyops_app_migrator]
+    depends_on:
+      bootstrap-app: {condition: service_completed_successfully}
+    restart: "no"
+
+  bootstrap-retail:
+    <<: *retail
+    command: [bootstrap-retail]
+    secrets: [postgres, retail_migrator, retail_runtime]
+    depends_on:
+      migrate-app: {condition: service_completed_successfully}
+    restart: "no"
+
+  migrate-retail:
+    <<: *retail
+    command: [migrate-retail]
+    secrets: [retail_migrator]
+    depends_on:
+      bootstrap-retail: {condition: service_completed_successfully}
+    restart: "no"
+
+  seed-demo:
+    <<: *app
+    command: [seed-demo]
+    secrets: [policyops_auth_runtime, policyops_app_runtime]
+    depends_on:
+      migrate-retail: {condition: service_completed_successfully}
+    restart: "no"
+
+  retail:
+    <<: *retail
+    command: [retail]
+    secrets: [retail_runtime, retail_key]
+    depends_on:
+      migrate-retail: {condition: service_completed_successfully}
+    healthcheck:
+      <<: *health
+      test: [CMD, python, -B, infra/compose/runtime.py, health-retail]
+
+  dex:
+    # Dex v2.46.1; infra/images.json. gomplate is supplied by this pinned image.
+    image: ghcr.io/dexidp/dex@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels: *labels
+    entrypoint: [sh, /etc/policyops/dex.sh]
+    environment:
+      DEX_ISSUER: http://127.0.0.1:${POLICYOPS_HTTP_PORT:-8080}/dex
+      POLICYOPS_REDIRECT_URI: http://127.0.0.1:${POLICYOPS_HTTP_PORT:-8080}/api/v1/auth/callback
+    secrets:
+      - {source: client_secret, target: /work/secrets/client_secret}
+      - {source: alice, target: /work/secrets/alice}
+      - {source: bob, target: /work/secrets/bob}
+      - {source: carol, target: /work/secrets/carol}
+    volumes:
+      - ./infra/dex/config.yaml.tmpl:/etc/policyops/dex.yaml.tmpl:ro
+      - ./infra/compose/dex.sh:/etc/policyops/dex.sh:ro
+    tmpfs: ["/tmp:uid=10001,gid=10001,mode=0700"]
+    healthcheck:
+      <<: *health
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:5556/dex/.well-known/openid-configuration]
+    stop_grace_period: 20s
+
+  caddy:
+    image: policyops-web:${POLICYOPS_IMAGE_TAG:-local}
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      POLICYOPS_HTTP_PORT: ${POLICYOPS_HTTP_PORT:-8080}
+      XDG_DATA_HOME: /tmp/data
+      XDG_CONFIG_HOME: /tmp/config
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=0700
+      - /data:uid=10001,gid=10001,mode=0700
+      - /config:uid=10001,gid=10001,mode=0700
+    labels: *labels
+    # Docker Desktop needs a non-internal network for host loopback publishing.
+    # API shares this namespace; every other service stays on default only.
+    networks: [default, edge]
+    ports:
+      - "127.0.0.1:${POLICYOPS_HTTP_PORT:-8080}:${POLICYOPS_HTTP_PORT:-8080}"
+    depends_on:
+      dex: {condition: service_healthy}
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, 'wget -q -O /dev/null http://127.0.0.1:$${POLICYOPS_HTTP_PORT}/proxy-health']
+    stop_grace_period: 30s
+
+  api:
+    <<: *app
+    command: [api]
+    # Same loopback issuer for the backend and browser, without a DNS/transport override.
+    network_mode: service:caddy
+    secrets: [policyops_auth_runtime, policyops_app_runtime, client_secret]
+    depends_on:
+      seed-demo: {condition: service_completed_successfully}
+      retail: {condition: service_healthy}
+      caddy: {condition: service_healthy}
+    healthcheck:
+      <<: *health
+      test: [CMD, python, -B, infra/compose/runtime.py, health-api]
+
+  worker:
+    <<: *app
+    command: [worker]
+    secrets: [policyops_app_runtime, policyops_worker_discovery, retail_key]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      <<: *health
+      test: [CMD, python, -B, infra/compose/runtime.py, health-worker]
+
+networks:
+  default:
+    internal: true
+    labels: *labels
+  edge:
+    internal: false
+    labels: *labels
+volumes:
+  pgdata:
+    labels: *labels
+secrets:
+  postgres: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/postgres'}
+  postgres_tls_key: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/postgres_tls_key'}
+  postgres_tls_cert: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/postgres_tls_cert'}
+  policyops_app_migrator: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/policyops_app_migrator'}
+  policyops_auth_runtime: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/policyops_auth_runtime'}
+  policyops_app_runtime: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/policyops_app_runtime'}
+  policyops_eval_runtime: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/policyops_eval_runtime'}
+  policyops_worker_discovery: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/policyops_worker_discovery'}
+  retail_migrator: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/retail_migrator'}
+  retail_runtime: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/retail_runtime'}
+  retail_key: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/retail_key'}
+  client_secret: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/client_secret'}
+  alice: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/alice'}
+  bob: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/bob'}
+  carol: {file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/carol'}

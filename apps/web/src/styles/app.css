@@ -13,6 +13,11 @@ body {
   min-height: 100%;
 }
 
+/* The document scrolls; leave room for the sticky bar and the focus outline (WCAG 2.4.11). */
+html {
+  scroll-padding-top: calc(var(--topbar-height) + var(--space-2));
+}
+
 body {
   background: var(--surface-page);
   color: var(--text);

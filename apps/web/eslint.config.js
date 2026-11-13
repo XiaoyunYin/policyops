@@ -18,10 +18,10 @@ export default tseslint.config(
     rules: reactHooks.configs.recommended.rules,
   },
   {
-    files: ["vite.config.ts"],
+    files: ["vite.config.ts", "playwright.config.ts", "e2e/**/*.ts"],
     extends: typeChecked,
     languageOptions: {
-      globals: globals.node,
+      globals: { ...globals.node, ...globals.browser },
       parserOptions: { project: "./tsconfig.node.json", tsconfigRootDir: import.meta.dirname },
     },
   },

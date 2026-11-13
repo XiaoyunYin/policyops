@@ -4,8 +4,10 @@
     persist_config off
 }
 :{$POLICYOPS_HTTP_PORT:8080} {
+    @app not path /dex/*
+    # Separate from the deferred block below, so the /dex policy is not overwritten.
+    header @app Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     header {
-        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
         X-Content-Type-Options nosniff
         Referrer-Policy no-referrer
         X-Frame-Options DENY
@@ -15,6 +17,9 @@
         respond "ok" 200
     }
     handle /dex/* {
+        # Dex's pinned login page (image digest in infra/images.json) has one static inline script.
+        # Allow exactly that script by hash on /dex only; the application keeps script-src 'self'.
+        header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-8L66wXkInDnVEdLxlrsFPaRkqIpBKhVd5kdLxX6AvFk='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
         reverse_proxy dex:5556
     }
     handle /api/* {

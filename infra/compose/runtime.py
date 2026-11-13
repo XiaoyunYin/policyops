@@ -7,6 +7,7 @@ identity/case only; Slice B supplies a fresh deterministic proposal through real
 from __future__ import annotations
 
 import argparse
+import base64
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
@@ -18,12 +19,16 @@ import signal
 import sys
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid5
 
 import httpx
 import psycopg
 from sqlalchemy import Engine, create_engine, text
+
+
+if TYPE_CHECKING:
+    from policyops_contracts.seeds import CaseCustomerBinding
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -69,6 +74,48 @@ def own_engine(role: str) -> Iterator[Engine]:
 def demo() -> dict[str, Any]:
     result: dict[str, Any] = json.loads((ROOT / "infra/compose/demo.json").read_bytes())
     return result
+
+
+def browser_case_id(run_id: UUID) -> UUID:
+    """Server-owned local fixture identity: one independent case/simulator per scenario invocation."""
+    return uuid5(UUID(demo()["workspace_id"]), "t38-browser:" + str(run_id))
+
+
+def demo_bindings(app: Engine) -> tuple[CaseCustomerBinding, ...]:
+    """Refresh only this local fixture's bindings; never derive customer authority from browser input."""
+    from policyops.persistence.database import workspace_transaction
+    from policyops_contracts.scalars import CaseScope
+    from policyops_contracts.seeds import CaseCustomerBinding
+
+    if os.environ.get("POLICYOPS_ENV") != "local":
+        raise RuntimeError("demo bindings require the local Compose environment")
+    config = demo()
+    workspace = UUID(config["workspace_id"])
+    bindings = [CaseCustomerBinding(scope=CaseScope(workspace_id=workspace, case_id=UUID(config["case_id"])),
+        seed_id=config["seed_id"], user_id=config["customer_id"], bound_at=datetime(2026, 11, 1, tzinfo=UTC))]
+    with workspace_transaction(app, workspace) as conn:
+        rows = conn.execute(text(
+            "SELECT r.id,c.id,c.created_at FROM app.runs r JOIN app.cases c ON c.id=r.case_id "
+            "AND c.workspace_id=r.workspace_id WHERE c.workspace_id=:w AND c.scenario='retail' "
+            "AND c.customer_user_id=:u AND c.created_by=:p ORDER BY r.id LIMIT 1001"
+        ), {"w": workspace, "u": config["customer_id"], "p": uuid5(workspace, "alice")}).all()
+    if len(rows) > 1000:
+        raise RuntimeError("local browser fixture binding limit exceeded; use a fresh disposable stack")
+    for run_id, case_id, created_at in rows:
+        if case_id == browser_case_id(run_id):
+            bindings.append(CaseCustomerBinding(scope=CaseScope(workspace_id=workspace, case_id=case_id),
+                seed_id=config["seed_id"], user_id=config["customer_id"], bound_at=created_at))
+    return tuple(bindings)
+
+
+def dex_subject(user_id: str) -> str:
+    """Dex v2 local-password connector subject: raw base64url protobuf (user_id=1, conn_id=2).
+
+    demo.json's historical `subject` field is the configured staticPasswords.userID, not the OIDC `sub`.
+    Keep this codec limited to our canonical 36-byte UUID fixtures; never derive identity from email.
+    """
+    raw = str(UUID(user_id)).encode("ascii")
+    return base64.urlsafe_b64encode(b"\x0a\x24" + raw + b"\x12\x05local").decode("ascii").rstrip("=")
 
 
 def bootstrap_app() -> None:
@@ -124,7 +171,8 @@ def seed_demo() -> None:
                 for user in config["users"]:
                     principal = uuid5(workspace, user["name"])
                     repo.create_principal(conn, Principal(id=principal, issuer=os.environ["POLICYOPS_OIDC_ISSUER"],
-                        subject=user["subject"], display_name=user["name"].title() + " (fictional)", created_at=now))
+                        subject=dex_subject(user["subject"]), display_name=user["name"].title() + " (fictional)",
+                        created_at=now))
                     repo.add_membership(conn, Membership(id=uuid5(principal, "membership"), workspace_id=workspace,
                         principal_id=principal, role=user["role"], created_at=now))
         with workspace_transaction(app, workspace) as conn:
@@ -237,16 +285,17 @@ def worker_loop(stop: threading.Event, passes: tuple[Callable[[], Any], ...], *,
         stop.wait(idle)
 
 
-def worker() -> None:
+def worker(*, execution_hooks: Any = None) -> None:
     from policyops.api.serve import SERVE_LOG_CONFIG
     from policyops.runtime.executions import build_execution_dispatcher
     from policyops.runtime.outbox import build_dispatcher
-    from policyops.runtime.review import build_review_runtime
+    from policyops.runtime.review import BoundScopes, build_review_runtime
     from policyops.runtime.worker import build_worker
     from policyops_contracts.retail_service import FIXTURE_SHA256
-    from policyops_contracts.scalars import CaseScope
-    from policyops_contracts.seeds import CaseCustomerBinding
 
+    if execution_hooks is not None and (os.environ.get("POLICYOPS_COMPOSE_DRILL") != "1"
+                                        or os.environ.get("POLICYOPS_ENV") != "local"):
+        raise RuntimeError("execution fault hooks require the explicit local Compose drill")
     logging.config.dictConfig(SERVE_LOG_CONFIG)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda _number, _frame: stop.set())
@@ -254,18 +303,20 @@ def worker() -> None:
     with ExitStack() as owned:
         app = owned.enter_context(own_engine("policyops_app_runtime"))
         discovery = owned.enter_context(own_engine("policyops_worker_discovery"))
-        config = demo()
-        binding = CaseCustomerBinding(scope=CaseScope(workspace_id=UUID(config["workspace_id"]),
-            case_id=UUID(config["case_id"])), seed_id=config["seed_id"], user_id=config["customer_id"],
-            bound_at=datetime(2026, 11, 1, tzinfo=UTC))
-        review = build_review_runtime(env="local", app_engine=app, bindings=(binding,), fixture_sha256=FIXTURE_SHA256,
+        review = build_review_runtime(env="local", app_engine=app, bindings=demo_bindings(app),
+            fixture_sha256=FIXTURE_SHA256,
             retail_origin=os.environ["POLICYOPS_RETAIL_ORIGIN"], retail_key=(SECRETS / "retail_key").read_bytes())
         jobs = build_worker(env="local", app_engine=app, discovery_engine=discovery, review=review,
                             clock=review.executor.clock, batch=1)
-        executions = build_execution_dispatcher(env="local", app_engine=app, discovery_engine=discovery,
+        executions = build_execution_dispatcher(env="local" if execution_hooks is None else "test",
+            app_engine=app, discovery_engine=discovery, hooks=execution_hooks,
             scopes=review.executor.scopes, retail=review.executor.retail, clock=review.executor.clock, batch=1)
         outbox = build_dispatcher(env="local", app_engine=app, discovery_engine=discovery, clock=review.executor.clock)
-        worker_loop(stop, (jobs.run_once, executions.dispatch_once, outbox.dispatch_once))
+        def refresh_bindings() -> None:
+            scopes = BoundScopes(app, demo_bindings(app), FIXTURE_SHA256)
+            review.executor.scopes = executions.executor.scopes = scopes
+
+        worker_loop(stop, (refresh_bindings, jobs.run_once, executions.dispatch_once, outbox.dispatch_once))
 
 
 def main() -> int:

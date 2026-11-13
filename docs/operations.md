@@ -103,15 +103,18 @@ actual login identity and cross-schema SELECT denial, rather than relying on con
 fictional customer `james_johnson_9321` (retail order `#W1006327` is a deterministic fixture candidate).
 Alice (`alice@example.invalid`) is an analyst, Bob is a reviewer and Carol is an auditor; their passwords are the
 separate `alice`, `bob`, `carol` files. Read your selected password locally without recording it in logs. Dex's
-subjects match the seeded principals; there is no test-auth bypass. Do not change an existing seed's IDs/issuer
+OIDC subjects encode the configured static password userID and `local` connector ID; the seed uses that same
+Dex protobuf/base64url subject rather than the raw UUID historically named `subject` in `demo.json`.
+There is no test-auth bypass. **Use a fresh volume for Slice B:** an earlier Slice A volume with raw-UUID
+principal subjects is not repaired by idempotent seeding. Do not change an existing seed's IDs/issuer
 without a fresh volume or an explicit data migration. Seed creation is idempotent, not a repair/overwrite tool.
 The binding ID `retail-demo-9999` denotes this synthetic service fixture, not an upstream benchmark task;
 the stack selects or loads no benchmark task, split, hidden criterion or reference action.
 
 Slice A seeds no preapproved action, consent or receipt. It does not configure a model-driven investigation:
-starting a fresh run returns the existing `runtime.unconfigured` response. Slice B must create a fresh deterministic
-run/proposal using the real gateway/services, initialize the corresponding simulator case, and obtain customer
-consent and staff approval through the UI. The worker's real review/ledger composition can then execute and
+starting a fresh run returns the existing `runtime.unconfigured` response. The Slice B browser scenario creates a
+fresh deterministic run/proposal using the real gateway/services, initializes the corresponding simulator case,
+and obtains customer consent and staff approval through the UI. The worker's real review/ledger composition then executes and
 reconcile that case. No test-only runtime catalog or fake success is used in the deployed services.
 
 The app image uses root `uv.lock`; retail uses the separate evaluator lock and full pinned `tau2[knowledge]`.
@@ -138,7 +141,7 @@ API/retail use Uvicorn's SIGTERM/lifespan handling with a 10-second request-drai
 discovery after the in-flight bounded batch and releases engines; the Compose grace period is 30 seconds
 (PostgreSQL: 60). This is not a universal cancellation guarantee: database socket cleanup and in-flight adapters
 have their own limits. If Docker ultimately kills a process, the durable lease/ledger remains the recovery source.
-The coordinator smoke records normal API/worker stop exit codes; Slice B must exercise actual abrupt kills.
+The coordinator smoke records normal API/worker stop exit codes; the Slice B recovery driver exercises abrupt kills.
 
 ## Consistent backup and separate-database restore
 
@@ -210,6 +213,104 @@ after successful container cleanup; run-tagged images remain for layer/package i
 may remove those exact images after retaining evidence. Supply `DOCKER_CONFIG` for the task-scoped Docker context
 if needed; the driver otherwise uses the external temporary root's `user-data/docker` location.
 
-Slice B owns real Playwright login through Caddy/Dex, browser CSP/header/SSE verification, customer consent →
-staff approval → simulator receipt, two-browser races, coherent separate-database restore and abrupt kill/restart
-reconciliation with no duplicate effects. Passing this smoke alone does not complete T38.
+## Real-browser workbench acceptance
+
+Use a fresh disposable stack started with the variables in **Start and stop**. Install the exact development
+dependencies from `apps/web/package-lock.json` and provision that Playwright version's Chromium separately;
+the application image needs neither Playwright nor a browser. The suite is separate from `npm test` (Vitest).
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = "$env:POLICYOPS_TEMP_DIR/tools/playwright-browsers"
+$env:POLICYOPS_E2E_ORIGIN = "http://127.0.0.1:$env:POLICYOPS_HTTP_PORT"
+$env:POLICYOPS_E2E_RUN = "browser-$env:POLICYOPS_RUN_ID"
+# No Docker/browser needed for collection:
+Push-Location apps/web
+npx --offline playwright test --list
+# The stack must now be healthy; retain its existing project/run/secrets variables:
+npx --offline playwright test
+Pop-Location
+```
+
+The first test initializes the real simulator and creates a fresh, authenticated deterministic run plus a
+presented address-change proposal through runtime repositories, real lookup/facts and `ProposalService`.
+It installs no model, fake provider response, receipt or authorization override. Alice signs in through Dex,
+enters `yes` as an explicitly confirmed **staff-entered customer simulation**, and cannot approve it. Bob
+signs in in an independent browser context, inspects consent/version/digest, confirms the exact decision,
+and the ordinary worker performs the real simulator mutation. The outcome card must contain the operation ID
+and SHA-256 of the actual simulator receipt, equal to the app ledger receipt. Carol is read-only; both Alice
+and Carol's authenticated decision attempts must return typed `403 forbidden` / `auth.role` errors. All three
+must see typed `404 not_found` for an actual case seeded in a foreign workspace.
+
+The test observes `consent.recorded` and `execution.changed` frames in the browser's actual SSE fetch response
+through Caddy (no HTTP mocks), checks DOM and console CSP violations, CSP/nosniff/frame/referrer headers, and
+refuses actual source maps even if a missing `.map` URL returns the SPA's HTML fallback. A second test races
+two independently signed-in Bob contexts with distinct decision reasons: exactly one 201 and one 409, one
+execution and one simulator version increment. It is a same-principal race, not a claim about two reviewers.
+
+Results and sanitized post-login traces are under `POLICYOPS_TEMP_DIR/tests/T38b/<POLICYOPS_E2E_RUN>/`.
+Tracing starts after login; screenshots, DOM snapshots, sources and video are disabled. The sanitizer omits
+all resource bodies, strips headers/cookies/storage/URL queries and known generated secrets, then removes
+the raw ZIP even on parse failure. These limited traces support action/network timing, not full visual replay.
+They remain private review artifacts. A failed scenario may leave an active proposal; inspect/reset that
+disposable stack instead of blindly retrying with a new ambiguous operation.
+The private reporter also removes generated credentials, session-header values and authentication URL queries
+from console/result diagnostics and automatically generated error-context text.
+
+## Automated kill/restart and separate-database restore drills
+
+```powershell
+# Pinned Node must be on PATH; POLICYOPS_PYTHON and browser/temp paths as above.
+# This driver creates/builds its OWN unique project; it never uses the existing demo project.
+& $env:POLICYOPS_PYTHON -B scripts/compose_drills.py --port 18080
+```
+
+Choose an unused loopback port. The driver uses the smoke driver's isolated environment, command exits,
+bounded/redacted failure tails, labels/ownership checks and guarded `down --volumes` cleanup. It builds and
+starts a fresh `policyops-t38b-<run-id>` project. JSON evidence is in
+`POLICYOPS_TEMP_DIR/compose/<run-id>/report.json`; a failure still attempts cleanup and marks the report failed.
+
+1. **Kill/restart:** real-browser Alice/Bob consent and approval run against a separate, explicit local drill
+   worker entrypoint. The existing `ExecutionHooks.after_response` seam pauses for at most 120 seconds after
+   a validated committed response. A marker identifies the operation. The driver verifies one simulator
+   version increment and a remote receipt, kills that exact owned worker ID with SIGKILL, and verifies the
+   app row is still `dispatched` with no local receipt. It recreates the **ordinary** worker, waits for the
+   real 75-second lease (no clock/ledger edits), and requires `succeeded`, `resolved_by=lookup`, attempts=1,
+   the original operation ID and identical retained remote/local receipt hashes, with no new effect.
+2. **Restore:** after that completed operation, a second browser-authorized operation is killed at the same
+   unresolved point. All app/simulator writers stop. `pg_dump -U postgres -Fc` takes one coherent full-database
+   snapshot, preserving both migration-owned schemas, ACLs, RLS, approvals, jobs, state and receipts. The
+   existing cluster roles/passwords remain; the driver creates a uniquely named **separate database** owned
+   by `policyops_app_migrator`, revokes PUBLIC connect and grants the documented runtime/retail roles.
+   `pg_restore -U postgres --exit-on-error` preserves original object owners and grants (no `--no-owner`,
+   `--no-acl` or source cleanup). Before starting writers, row counts/hashes and normalized table/column/schema
+   ACL, owner and policy hashes must match. Both migration versions/owners and actual runtime logins and
+   cross-schema denials are rechecked. Runtime RLS probes require own-scope visibility, unscoped/foreign-tenant
+   denial, foreign retail-case denial, and append-only receipt grants. Services are recreated against the
+   restored DB only. Its unresolved write must recover by lookup with no resend; the prior completed operation
+   must stay identical on another scheduler pass. The stopped source DB's protected rows/catalog must remain
+   unchanged. Source and restored workers never run concurrently.
+
+The normal runtime cannot select the pause hook by setting an environment variable: only the separate drill
+entrypoint supplies it, and composition requires both explicit drill opt-in and the local environment. No
+application migrations, provider calls or alternate auth mode are introduced.
+
+The driver removes owned Compose resources, generated secrets, its override and inventoried nested tool caches.
+It retains the private coherent dump and its hash, safe scenario identifiers, JSON report, sanitized browser
+traces and run-tagged images for review. The dump includes identity/session and fictional case data: retain
+privately, never commit/upload it. Inspect failures before retrying; uncertain cleanup is a failed assertion.
+After review, remove only the exact retained run artifacts/images under the project's normal cleanup rules.
+
+These drills cover one host and Docker Desktop/Linux amd64, a same-cluster separate database and a logical
+backup with stopped writers. They do not prove PITR/WAL recovery, independent-cluster role bootstrap, physical
+backup, host-loss recovery, every crash window, production TLS/egress, real commerce rollback or previous-image/
+schema rollback. X04 remains required for external deployment.
+
+## Verified locally
+
+Slice A's coordinator verified clean Compose deployment, migrations/owners, runtime logins, network/port policy,
+retail outage/recovery and graceful shutdown. Slice B's offline builder checks passed ruff, mypy (373 files),
+web typecheck/lint, 251 Vitest tests, 92 deployment/driver tests and collection of both Playwright flows.
+The full default Python run passed 2,277 tests with only the two previously known sandbox gitleaks subtest
+failures. Actual Slice B browser execution,
+SIGKILL recovery and logical restore are **pending coordinator execution**; runnable definitions and passing
+offline tests are not evidence that those real-service drills passed.

@@ -31,7 +31,7 @@ class FrozenActor(WireModel):
     actor: Actor
     model: Model
     effort: Literal["none", "low"]
-    max_input: Annotated[int, Field(ge=1, le=16000)]
+    max_input: Annotated[int, Field(ge=1, le=32000)]
     max_output: Annotated[int, Field(ge=64, le=2048)]
     logical_calls: Annotated[int, Field(ge=1, le=64)]
     planning_input: Count

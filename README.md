@@ -389,8 +389,10 @@ Study v2 adds paired task/trial blocks with a seeded balanced arm rotation, a fr
 
 V3 declares 32 agent calls, 12 tool steps per turn, two consecutive invalid replies, 64 inference/count requests and $0.20 per scenario, and a $20 study cap. With the draft's unchanged 16,000-input/2,048-output actor ceilings, all-actor preflight estimates $3.6480 and reserves at most $18.8928 (7,200 inference plus 7,200 count requests). The cap was raised from $15 before any v3 data rather than lowering the token ceilings, which would reintroduce trajectory truncation. The guard must pass before any v3 execution.
 
+E03 v4 keeps the v3 tasks, seeds, models, statistics and margin. Before any v4 data, it raises the trial deadline and both agents' input ceiling to address the v3 run's held in-flight call and Haiku input-limit cases; the increases apply equally to Luna and Haiku.
+
 ```powershell
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals preflight --study studies/e03-dev-luna-haiku-v3.json
+python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals preflight --study studies/e03-dev-luna-haiku-v4.json
 # Registration is a separate no-provider DB write. Copy the preflight's registration_payload_sha256
 # into preregistration_sha256 in the reviewed config, then register before a later run:
 python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals preflight --study path/to/registered-v2.json --register

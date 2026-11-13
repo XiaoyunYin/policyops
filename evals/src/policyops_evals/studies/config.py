@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[4]
 class ActorConfig(WireModel):
     model: Name
     effort: Name
-    max_input: Annotated[int, Field(ge=1, le=16000)]
+    max_input: Annotated[int, Field(ge=1, le=32000)]
     max_output: Annotated[int, Field(ge=64, le=2048)]
     logical_calls: Annotated[int, Field(ge=1, le=64)]
     planning_input: Annotated[int, Field(ge=0, le=1_024_000)]
@@ -125,7 +125,8 @@ class Study(WireModel):
             actor = getattr(variant.actors, name)
             actors[name] = ChatActor(name, actor.model, actor.effort, max_input=actor.max_input,
                                      max_output=actor.max_output)
-        return Configuration(actors=actors, caps=self.limits.caps())
+        request_input = max(getattr(variant.actors, name).max_input for name in ACTORS)
+        return Configuration(actors=actors, caps=replace(self.limits.caps(), request_max_input=request_input))
 
     def agent_limits(self, variant: Variant) -> AgentLimits:
         """Legacy schemas retain their recorded implicit limits; v3 requires every field."""
@@ -357,8 +358,8 @@ def preflight(study: Study, *, snapshot: Scope | None = None,
     full_schedule = {v.name: tuple((t, i, seed) for t in study.tasks for i, seed in enumerate(study.seeds))
                      for v in study.variants}
     total_calls, liability, estimate = 0, Decimal(0), Decimal(0)
-    caps = study.limits.caps()
     per_scenario_ok = True
+    caps = study.limits.caps()
     remaining_work: dict[str, Any] = {}
     for variant in study.variants:
         configuration = study.configuration(variant)
@@ -367,6 +368,8 @@ def preflight(study: Study, *, snapshot: Scope | None = None,
         remaining_work[variant.name] = slots
         if not slots:
             continue
+        request_input = max(getattr(variant.actors, name).max_input for name in ACTORS)
+        actor_caps = replace(caps, request_max_input=request_input)
         bounds = tuple(ChatBound(actor=name, model=getattr(variant.actors, name).model,
             effort=getattr(variant.actors, name).effort, max_input=getattr(variant.actors, name).max_input,
             max_output=getattr(variant.actors, name).max_output,
@@ -376,7 +379,7 @@ def preflight(study: Study, *, snapshot: Scope | None = None,
             code_revision="recorded_at_execution", dataset="tau2-retail", dataset_revision=upstream.COMMIT,
             split_id="dev", prompt_revision="minimal-v1-opening", price_revision=study.price_revision,
             tasks=tuple(f"slot-{i}" for i in range(len(slots))), trials_per_task=1, actors=bounds)
-        plan = budget_preflight(manifest, caps, registry=configuration.registry)
+        plan = budget_preflight(manifest, actor_caps, registry=configuration.registry)
         per_scenario_ok &= all(c.ok for c in plan.checks if c.scope == "scenario")
         total_calls += plan.total_calls
         liability += plan.new_study_usd

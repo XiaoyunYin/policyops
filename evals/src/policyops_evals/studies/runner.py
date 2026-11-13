@@ -37,7 +37,8 @@ from policyops_evals import upstream
 from policyops_evals.build import SOURCE, default_manifest_dir, tree_for
 from policyops_evals.canonical import canonical_bytes, load_manifest, sha256_bytes
 from policyops_evals.corpus import write_contained
-from policyops_evals.studies.config import ACTORS, ROOT, Study, Variant, load_study, preflight
+from policyops_evals.harness.timing import CallTimings
+from policyops_evals.studies.config import ACTORS, ROOT, Study, StudyV2, Variant, load_study, preflight
 from policyops_evals.upstream_runtime import installed_package_parity, prepare
 
 
@@ -59,9 +60,13 @@ class RecordedAgentPort(_AgentModelPort):
     """
 
     reports: list[CallReport] = field(default_factory=list)
+    timings: CallTimings | None = None
 
     async def complete(self, request: ModelRequest, *, key: UUID, operation: str, deadline: float) -> CallReport:
-        report = await super().complete(request, key=key, operation=operation, deadline=deadline)
+        from contextlib import nullcontext
+
+        with self.timings.observe("agent", key) if self.timings else nullcontext():
+            report = await super().complete(request, key=key, operation=operation, deadline=deadline)
         self.reports.append(report)
         return report
 
@@ -125,7 +130,7 @@ def persisted_components(details: dict[str, Any]) -> str:
     body: dict[str, Any] = {key: details[key] for key in (
         "models_requested", "models_returned", "call_statuses", "usage",
         "failure_type", "trajectory_sha256", "partial_trajectory_sha256", "agent_snapshot_sha256", "finished_at",
-        "manifest_artifact_sha256", "parity_artifact_sha256")
+        "manifest_artifact_sha256", "parity_artifact_sha256", "timings")
         if key in details}
     environment = details.get("environment")
     if environment is not None:
@@ -208,10 +213,10 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
     from tau2.data_model.simulation import TextRunConfig
     from tau2.runner.build import build_text_orchestrator
 
-    from policyops_evals.harness.actors import ActorBindings, ActorCeilings
+    from policyops_evals.harness.actors import ActorBindings, ActorCeilings, ActorRefused
     from policyops_evals.harness.adapter import FACTORY_NAME, TrialBudget, TrialSlot, register, trial
     from policyops_evals.harness.inprocess import InProcessAgentBridge, OwnedLoop
-    from policyops_evals.studies.scoring import score
+    from policyops_evals.studies.scoring import JudgeRefused, score
 
     deadline = time.monotonic() + study.limits.trial_seconds
     loop = OwnedLoop()
@@ -220,11 +225,13 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
     simulation: Any = None
     result: dict[str, Any] = {"outcome": "error", "reward": None, "error_class": "trial_failed"}
     actors: ActorBindings | None = None
-    agent = RecordedAgentPort(ledger, token.binding, providers, ledger.configuration.reservation("agent").config_sha256)
+    timings = CallTimings(directory, slot.id)
+    agent = RecordedAgentPort(ledger, token.binding, providers,
+        ledger.configuration.reservation("agent").config_sha256, timings=timings)
     try:
         actors = ActorBindings(ledger, token.binding, providers, loop=loop, deadline=deadline,
             ceilings=ActorCeilings(variant.actors.simulator.logical_calls, variant.actors.judge.logical_calls),
-            upstream_seed=slot.seed)
+            upstream_seed=slot.seed, timings=timings)
         bridge = InProcessAgentBridge(ledger.configuration, agent,
             loop=loop, limits=AgentLimits(model_calls=variant.actors.agent.logical_calls,
                                          max_output_tokens=variant.actors.agent.max_output))
@@ -256,6 +263,11 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
     except Exception as error:
         # Only a class name and fixed code, never raw upstream/provider content.
         result["failure_type"] = type(error).__name__[:100]
+        if isinstance(study, StudyV2):
+            if isinstance(error, ActorRefused) and error.actor is not None:
+                result["error_class"] = "simulator_failed" if error.actor == "simulator" else "judge_unavailable"
+            elif isinstance(error, JudgeRefused):
+                result["error_class"] = "judge_unavailable"
     finally:
         if orchestrator is not None:
             try:
@@ -300,13 +312,22 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
         if snapshot.terminal in {"budget", "model_calls_exhausted", "steps_per_turn_exhausted"}:
             result.update(outcome="budget_exceeded", reward=None, error_class="agent_limit")
     result["finished_at"] = datetime.now(UTC).isoformat()
+    result["timings"] = timings.rows
     return result
 
 
 def run_study(study: Study, repository: EvaluationRepository, store: EvalLedgerStore, *, allow_paid: bool = False,
               resume: bool = False, inputs: Mapping[str, TrialInputs] | None = None,
               make_providers: Callable[[Study], Callable[[], Providers]] = provider_factory,
-              make_ledger: Callable[[Variant, EvaluationClaimToken], Ledger] | None = None) -> dict[str, Any]:
+              make_ledger: Callable[[Variant, EvaluationClaimToken], Ledger] | None = None,
+              close_unclaimed: bool = False) -> dict[str, Any]:
+    if isinstance(study, StudyV2):
+        from policyops_evals.studies.runner_v2 import run
+
+        return run(study, repository, store, allow_paid=allow_paid, resume=resume, inputs=inputs,
+                   make_providers=make_providers, make_ledger=make_ledger, close_unclaimed=close_unclaimed)
+    if close_unclaimed:
+        raise StudyRefused("close_unclaimed_requires_v2")
     if study.provider_mode != "scripted" and not allow_paid:
         raise StudyRefused("paid_opt_in_required_before_credentials")
     initial = preflight(study)
@@ -425,8 +446,16 @@ def run_study(study: Study, repository: EvaluationRepository, store: EvalLedgerS
         return summary
 
 
-def command(study_path: Path, *, run: bool, allow_paid: bool = False, resume: bool = False) -> dict[str, Any]:
+def command(study_path: Path, *, run: bool, allow_paid: bool = False, resume: bool = False,
+            register: bool = False, close_unclaimed: bool = False) -> dict[str, Any]:
     study = load_study(study_path)
+    if isinstance(study, StudyV2):
+        from policyops_evals.studies.runner_v2 import command as v2_command
+
+        return v2_command(study, run=run, allow_paid=allow_paid, resume=resume,
+                          register=register, close_unclaimed=close_unclaimed)
+    if register or close_unclaimed:
+        raise StudyRefused("registration_closure_require_v2")
     if run and study.provider_mode != "scripted" and not allow_paid:
         raise StudyRefused("paid_opt_in_required_before_credentials")
     repository = environment_repository()

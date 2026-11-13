@@ -149,6 +149,126 @@ class Study(WireModel):
                 raise ValueError("task outside reviewed calibration allowlist")
 
 
+class Pairing(WireModel):
+    schedule_version: Literal["paired-v1"]
+    order_seed: Annotated[int, Field(ge=0, le=2147483647)]
+    experimental_dimension: Literal["agent.model", "agent.effort"]
+
+
+class Statistics(WireModel):
+    ks: Annotated[tuple[Annotated[int, Field(ge=1, le=32)], ...], Field(min_length=1, max_length=8)]
+    confidence: Literal["0.95"]
+    bootstrap_replicates: Literal[10000]
+    bootstrap_seed: Annotated[int, Field(ge=0, le=2147483647)]
+    algorithm: Literal["task-bootstrap-sha256-v1"]
+    quantile: Literal["linear-r7-v1"]
+
+
+class Decision(WireModel):
+    candidate: Name
+    reference: Name
+    metric: Literal["pass^1"]
+    guard_metrics: tuple[Literal["pass^4"], ...]
+    margin: Decimal
+    direction: Literal["candidate-minus-reference"]
+
+
+class Eligibility(WireModel):
+    allowlist_sha256: Digest
+    source_sha256: dict[Name, Digest]
+    tuning_task_ids: Annotated[tuple[Name, ...], Field(max_length=64)]
+    example_prompt_sha256: Digest
+
+
+class VariantV2(Variant):
+    prompt_sha256: Digest
+    tool_sha256: Digest
+    schema_sha256: Digest
+
+
+class StudyV2(Study):
+    """V1 remains a separate schema. Evaluation membership is not tuning eligibility."""
+
+    schema_version: Literal["policyops.study/v2"]  # type: ignore[assignment]
+    purpose: Literal["dev", "holdout"]  # type: ignore[assignment]
+    domain: Literal["retail", "banking_knowledge"]
+    split_id: Literal["dev", "holdout"]
+    tasks: Annotated[tuple[Name, ...], Field(min_length=1, max_length=128)]
+    seeds: Annotated[tuple[Annotated[int, Field(ge=0, le=2147483647)], ...], Field(min_length=1, max_length=32)]
+    variants: Annotated[tuple[VariantV2, ...], Field(min_length=2, max_length=4)]
+    pairing: Pairing
+    statistics: Statistics
+    decision: Decision
+    eligibility: Eligibility
+    preregistration_sha256: Digest | None
+
+    @model_validator(mode="after")
+    def paired(self) -> StudyV2:
+        if self.domain != "retail":
+            raise ValueError("banking evaluator/eligibility contract unavailable")
+        if self.purpose != self.split_id:
+            raise ValueError("purpose/split mismatch")
+        if self.purpose == "holdout" and (len(self.seeds) != 4 or self.preregistration_sha256 is None):
+            raise ValueError("holdout requires four seeds and preregistration digest")
+        ks = self.statistics.ks
+        if len(set(ks)) != len(ks) or any(k > len(self.seeds) for k in ks):
+            raise ValueError("unsupported k")
+        names = {v.name for v in self.variants}
+        if (self.decision.candidate not in names or self.decision.reference not in names
+                or self.decision.candidate == self.decision.reference
+                or not self.decision.margin.is_finite() or not 0 < self.decision.margin < 1
+                or 1 not in ks or (self.decision.guard_metrics and 4 not in ks)
+                or len(set(self.decision.guard_metrics)) != len(self.decision.guard_metrics)):
+            raise ValueError("invalid frozen decision")
+        if len(self.tasks) * len(self.seeds) * len(self.variants) > 16384:
+            raise ValueError("scheduled workload bound")
+        # Overall plus the partitioned strata visit <=2*T task clusters. Each
+        # arm has strict/complete-case/DB analyses and the pair has two analyses.
+        work = 10000 * 2 * len(self.tasks) * len(ks) * (3 * len(self.variants) + 2)
+        if work > 80_000_000:
+            raise ValueError("bootstrap workload bound")
+        first = self.variants[0].model_dump(mode="json")
+        for variant in self.variants[1:]:
+            other = variant.model_dump(mode="json")
+            left, right = json.loads(json.dumps(first)), json.loads(json.dumps(other))
+            for body in (left, right):
+                body.pop("name")
+                body["actors"]["agent"].pop(self.pairing.experimental_dimension.split(".")[1])
+            if left != right:
+                raise ValueError("undeclared paired variant difference")
+        if len(set(self.eligibility.tuning_task_ids)) != len(self.eligibility.tuning_task_ids):
+            raise ValueError("duplicate tuning identity")
+        return self
+
+    def validate_data(self) -> None:
+        manifests = load_committed(default_manifest_dir())
+        calibration = load_manifest(default_manifest_dir() / CALIBRATION)
+        validate_calibration(calibration, manifests)
+        if (self.dataset_sha256 != manifests[SOURCE]["manifest_sha256"]
+                or self.split_sha256 != manifests[RETAIL_SPLIT]["manifest_sha256"]
+                or self.calibration_sha256 != calibration["manifest_sha256"]
+                or self.eligibility.allowlist_sha256 != calibration["allowlist"]["digest"]
+                or self.eligibility.source_sha256 != calibration["sources"]
+                or not set(self.eligibility.tuning_task_ids) <= set(calibration["allowlist"]["task_ids"])):
+            raise ValueError("frozen eligibility/data mismatch")
+        frame = manifests[RETAIL_SPLIT]["splits"][self.split_id]["task_ids"]
+        if not set(self.tasks) <= set(frame):
+            raise ValueError("task outside official frame")
+        if self.purpose == "holdout" and list(self.tasks) != frame:
+            raise ValueError("holdout must preserve all official IDs and order")
+
+    def schedule(self) -> tuple[tuple[str, str, int, int], ...]:
+        """Seeded rotation: each arm visits every position equally per full cycle."""
+        offset = int(sha256_bytes(canonical_bytes(["paired-v1", self.pairing.order_seed]))[:16], 16)
+        names = [v.name for v in self.variants]
+        rows: list[tuple[str, str, int, int]] = []
+        for t, task in enumerate(self.tasks):
+            for i, seed in enumerate(self.seeds):
+                rotation = (offset + t * len(self.seeds) + i) % len(names)
+                rows.extend((name, task, i, seed) for name in names[rotation:] + names[:rotation])
+        return tuple(rows)
+
+
 def load_study(path: Path) -> Study:
     with path.open("rb") as handle:
         data = handle.read(60001)
@@ -185,7 +305,8 @@ def load_study(path: Path) -> Study:
     # integer/bool and extra-field rejection. Re-encode the checked parse.
     parsed = json.loads(data, object_pairs_hook=pairs, parse_constant=lambda _: (_ for _ in ()).throw(
         ValueError("nonfinite study number")))
-    result = Study.model_validate_json(json.dumps(parsed))
+    kind = StudyV2 if isinstance(parsed, dict) and parsed.get("schema_version") == "policyops.study/v2" else Study
+    result = kind.model_validate_json(json.dumps(parsed))
     result.validate_data()
     return result
 
@@ -241,6 +362,8 @@ def preflight(study: Study, *, snapshot: Scope | None = None,
     prior_calls = 0 if snapshot is None else snapshot.calls_consumed + snapshot.calls_held
     prior_counts = 0 if snapshot is None else snapshot.counts_used
     blocked = snapshot is not None and (snapshot.overrun or snapshot.contract_block is not None)
+    if isinstance(study, StudyV2) and snapshot is not None and (snapshot.held_usd or snapshot.calls_held):
+        blocked = True  # abandoned/unknown billing must be reconciled, never discarded to resume
     ok = (cap_match and not blocked and per_scenario_ok and liability <= caps.invocation_usd
         and total_calls <= caps.invocation_calls and prior_usd + liability <= caps.study_usd
         and prior_calls + total_calls <= caps.study_calls and prior_counts + total_calls <= caps.study_calls)

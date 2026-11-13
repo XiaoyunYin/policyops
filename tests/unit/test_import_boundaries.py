@@ -90,7 +90,11 @@ EVAL_COMPOSITION_IMPORTS = {
 }
 EVAL_COMPOSITION_FILES = {
     "harness/inprocess.py", "harness/actors.py", "studies/config.py", "studies/runner.py",
+    # T32 registration/runtime composition and trusted SQL normalization use
+    # the existing minimal-agent and ledger APIs. Frozen reporting stays pure.
+    "studies/registration.py", "studies/runner_v2.py", "studies/snapshots.py",
 }
+EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persistence.roles"}
 
 
 @pytest.mark.parametrize("subdir", ["src", "tests"])
@@ -99,11 +103,20 @@ def test_evaluator_application_imports_are_limited_to_composition(subdir: str) -
         (str(path.relative_to(REPO)), module)
         for path, module in imported_modules(EVALS / subdir)
         if module.split(".")[0] == "policyops"
-        and (not matches(module, EVAL_COMPOSITION_IMPORTS) or
+        and (not matches(module, EVAL_COMPOSITION_IMPORTS | (EVAL_TEST_ONLY_IMPORTS if subdir == "tests" else set())) or
              (subdir == "src" and path.relative_to(EVALS / "src" / "policyops_evals").as_posix()
               not in EVAL_COMPOSITION_FILES))
     ]
     assert violations == []
+
+
+def test_frozen_reporting_imports_no_application_or_execution_runtime() -> None:
+    files = {"reports.py", "report_models.py", "statistics.py", "bundles.py"}
+    forbidden = {"policyops", "tau2", "httpx", "httpx2", "psycopg", "sqlalchemy", "subprocess",
+                 "policyops_evals.upstream", "policyops_evals.build", "policyops_evals.studies.config",
+                 "policyops_evals.studies.runner", "policyops_evals.studies.runner_v2"}
+    assert [(path.name, module) for path, module in imported_modules(EVALS / "src/policyops_evals/studies")
+            if path.name in files and matches(module, forbidden)] == []
 
 
 def test_evaluator_declares_local_application_composition_dependency() -> None:

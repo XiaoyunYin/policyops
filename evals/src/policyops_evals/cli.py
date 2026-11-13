@@ -171,6 +171,14 @@ def parser() -> argparse.ArgumentParser:
         if name == "run":
             study.add_argument("--allow-paid", action="store_true")
             study.add_argument("--resume", action="store_true")
+            study.add_argument("--close-unclaimed", action="store_true")
+        else:
+            study.add_argument("--register", action="store_true")
+    frozen_report = groups.add_parser("report", help="render a sealed study snapshot without DB/provider/git")
+    frozen_report.add_argument("--study", type=Path, required=True)
+    frozen_report.add_argument("--snapshot")
+    frozen_report.add_argument("--out", type=outside_repository)
+    frozen_report.set_defaults(handler=command_report)
     data = groups.add_parser("data", help="public benchmark data")
     commands = data.add_subparsers(dest="command", required=True)
 
@@ -207,7 +215,8 @@ def command_study(args: argparse.Namespace) -> int:
 
     try:
         result = command(args.study, run=args.group == "run", allow_paid=getattr(args, "allow_paid", False),
-                         resume=getattr(args, "resume", False))
+                         resume=getattr(args, "resume", False), register=getattr(args, "register", False),
+                         close_unclaimed=getattr(args, "close_unclaimed", False))
     except Exception as error:
         # DB/provider exceptions can contain credentials or hidden task text.
         # Emit only the type; fixed StudyRefused codes are safe to display.
@@ -218,6 +227,21 @@ def command_study(args: argparse.Namespace) -> int:
         return 1
     report(result)
     return 0 if result.get("within_caps", True) and result.get("execution_complete", True) else 1
+
+
+def command_report(args: argparse.Namespace) -> int:
+    from policyops_evals.studies.reports import render
+
+    try:
+        out = args.out or args.study.parent / ("report-" + (args.snapshot or "selected"))
+        result = render(args.study, snapshot=args.snapshot, out=out)
+    except Exception:
+        # No bundle payload, untrusted path or validation detail in diagnostics.
+        print("policyops-evals: frozen report integrity refusal", file=sys.stderr)
+        return 1
+    report({"schema_version": result["schema_version"], "snapshot_sha256": result["snapshot_sha256"],
+            "integrity_status": result["integrity_status"]})
+    return 0 if result["integrity_status"] == "valid" else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:

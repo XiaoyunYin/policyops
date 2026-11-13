@@ -1,0 +1,169 @@
+{
+  "cache_mode": "none",
+  "calibration_sha256": "8c204ea3e21d6f9735a2e20628f14f5bc217e09240bdcd2bea1419d7089bb3a2",
+  "dataset_sha256": "fc0f802747a21405053c3ccf1a3124042d7aea10ce8339694ae0c3e515dc877a",
+  "decision": {
+    "candidate": "luna",
+    "direction": "candidate-minus-reference",
+    "guard_metrics": [
+      "pass^4"
+    ],
+    "margin": "0.10",
+    "metric": "pass^1",
+    "reference": "haiku"
+  },
+  "domain": "retail",
+  "eligibility": {
+    "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+    "example_prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+    "source_sha256": {
+      "retail-audit.json": "6582a7e511e1be8996f7d98ec467235ccc47bd2b91cc826b335fa6b2c89fdac3",
+      "retail-split.json": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+      "upstream-verification.json": "08c396e4ea5666adb20cd8947199c57b50f1676e69616152775beccc9662694b"
+    },
+    "tuning_task_ids": []
+  },
+  "limits": {
+    "invocation_calls": 5120,
+    "invocation_counts": 5120,
+    "invocation_usd": "15",
+    "scenario_calls": 32,
+    "scenario_counts": 32,
+    "scenario_usd": "0.10",
+    "study_calls": 5120,
+    "study_counts": 5120,
+    "study_input_tokens": 81920000,
+    "study_output_tokens": 10485760,
+    "study_usd": "15",
+    "trial_seconds": 180
+  },
+  "pairing": {
+    "experimental_dimension": "agent.model",
+    "order_seed": 20261112,
+    "schedule_version": "paired-v1"
+  },
+  "preregistration_sha256": null,
+  "price_revision": "pricing.2026-11-05.v1",
+  "provider_mode": "live",
+  "purpose": "dev",
+  "repairs": 0,
+  "retries": 0,
+  "schema_version": "policyops.study/v2",
+  "seeds": [
+    20261112,
+    20261113,
+    20261114,
+    20261115
+  ],
+  "split_id": "dev",
+  "split_sha256": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+  "statistics": {
+    "algorithm": "task-bootstrap-sha256-v1",
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 20261112,
+    "confidence": "0.95",
+    "ks": [
+      1,
+      4
+    ],
+    "quantile": "linear-r7-v1"
+  },
+  "study_key": "e03-dev-luna-haiku-frozen-draft-v2",
+  "task_list_sha256": "b6ebd5bb36059fd5d6d57cffd3ebf78d926254434bf5d0944a91884c961d4f83",
+  "tasks": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "7",
+    "9",
+    "10",
+    "12",
+    "15",
+    "20",
+    "24",
+    "27",
+    "28",
+    "29",
+    "31",
+    "33",
+    "34",
+    "35"
+  ],
+  "variants": [
+    {
+      "actors": {
+        "agent": {
+          "effort": "low",
+          "logical_calls": 16,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 120000,
+          "planning_output": 4000
+        },
+        "judge": {
+          "effort": "low",
+          "logical_calls": 1,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 16000,
+          "planning_output": 400
+        },
+        "simulator": {
+          "effort": "low",
+          "logical_calls": 12,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 60000,
+          "planning_output": 2000
+        }
+      },
+      "agent_kind": "minimal",
+      "name": "luna",
+      "prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+      "schema_sha256": "bdac9b7b7ee097682c3198cf9632e62b50be1a2bf69395d35f089a67508dd7cd",
+      "tool_sha256": "f2f90a8e75d86c97e6ddc374bf321b6d9e05d292179092212a37e2d2ba14fce1"
+    },
+    {
+      "actors": {
+        "agent": {
+          "effort": "low",
+          "logical_calls": 16,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "claude-haiku-5-5",
+          "planning_input": 120000,
+          "planning_output": 4000
+        },
+        "judge": {
+          "effort": "low",
+          "logical_calls": 1,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 16000,
+          "planning_output": 400
+        },
+        "simulator": {
+          "effort": "low",
+          "logical_calls": 12,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 60000,
+          "planning_output": 2000
+        }
+      },
+      "agent_kind": "minimal",
+      "name": "haiku",
+      "prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+      "schema_sha256": "bdac9b7b7ee097682c3198cf9632e62b50be1a2bf69395d35f089a67508dd7cd",
+      "tool_sha256": "f2f90a8e75d86c97e6ddc374bf321b6d9e05d292179092212a37e2d2ba14fce1"
+    }
+  ]
+}

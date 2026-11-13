@@ -108,6 +108,13 @@ def result_digest(result: EvaluationTrial) -> str:
                                      ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
+def registration_digest(payload: dict[str, Any]) -> str:
+    raw = (json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+    if len(raw) > 60000:
+        raise ClaimRefused("registration_payload_bounds")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _slot(row: Any) -> Slot:
     return Slot(row["id"], row["evaluation_run_id"], row["study_scope"], row["config_sha256"], row["task_id"],
                 row["trial_index"], row["seed"], row["scenario_scope"], row["state"])
@@ -199,6 +206,21 @@ class EvaluationRepository:
             value = connection.execute(text("SELECT config FROM evaluation.evaluation_runs WHERE id = :id"),
                                        {"id": run_id}).scalar_one_or_none()
         return None if value is None else dict(value)
+
+    def study_manifest(self, study_id: UUID) -> str | None:
+        with transaction(self.engine) as connection:
+            value = connection.execute(text(
+                "SELECT manifest_sha256 FROM evaluation.budget_scopes WHERE id = :id AND kind = 'study'"),
+                {"id": study_id}).scalar_one_or_none()
+        return None if value is None else str(value)
+
+    def registration_precedes_claims(self, study_id: UUID, registered_at: datetime) -> bool:
+        with transaction(self.engine) as connection:
+            return bool(connection.execute(text(
+                "SELECT :registered <= clock_timestamp() AND NOT EXISTS "
+                "(SELECT 1 FROM evaluation.trial_claims WHERE study_scope = :id "
+                "AND started_at IS NOT NULL AND started_at < :registered)"),
+                {"id": study_id, "registered": registered_at}).scalar_one())
 
     def claim(self, slot: Slot, invocation_id: UUID, lease: StudyLock) -> EvaluationClaimToken | None:
         if lease.study_id != slot.study_id:
@@ -296,9 +318,92 @@ class EvaluationRepository:
         with transaction(self.engine) as connection:
             return [dict(row) for row in connection.execute(text(
                 "SELECT id, task_id, trial_index, seed, outcome, reward, components, error_class, result_sha256, "
-                "artifact_sha256, cost_status, cost_usd "
+                "artifact_sha256, cost_status, cost_usd, latency_ms, created_at "
                 "FROM evaluation.evaluation_trials WHERE evaluation_run_id = :run ORDER BY task_id, trial_index"
             ), {"run": run_id}).mappings()]
+
+    def register(self, runs: Sequence[EvaluationRun], payload: dict[str, Any], digest: str,
+                 lease: StudyLock) -> dict[str, Any]:
+        """Atomic registration of all arms, before any claim/attempt, with DB UTC time.
+
+        The immutable run config is the existing persistence surface; no new
+        schema or permission is needed. Exact replay returns the original time.
+        """
+        from policyops.persistence.repositories import create_evaluation_run
+
+        if registration_digest(payload) != digest:
+            raise ClaimRefused("registration_digest_mismatch")
+        receipt: dict[str, Any] = {}
+        with transaction(self.engine) as connection:
+            lease.check(connection)
+            if not runs or any(run.study_scope != lease.study_id for run in runs):
+                raise ClaimRefused("registration_study_binding")
+            connection.execute(text("SELECT id FROM evaluation.budget_scopes WHERE id = :id FOR UPDATE"),
+                               {"id": lease.study_id})
+            occupied = connection.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM evaluation.trial_claims WHERE study_scope = :id) OR "
+                "EXISTS (SELECT 1 FROM evaluation.usage_attempts WHERE study_scope_id = :id)"),
+                {"id": lease.study_id}).scalar_one()
+            now = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+            for run in runs:
+                stored = connection.execute(text(
+                    "SELECT config FROM evaluation.evaluation_runs WHERE id = :id"), {"id": run.id}
+                ).scalar_one_or_none()
+                config = json.loads(run.config_json)
+                if stored is not None:
+                    registration = stored.get("registration")
+                    if (registration is None or registration.get("payload") != payload
+                            or registration.get("sha256") != digest
+                            or {k: v for k, v in stored.items() if k != "registration"} != config):
+                        raise ClaimRefused("registration_conflict")
+                else:
+                    if occupied:
+                        raise ClaimRefused("registration_after_claim")
+                    registration = {"payload": payload, "sha256": digest, "created_at": now.isoformat()}
+                    registered_run = run.model_copy(update={
+                        "config_json": json.dumps(config | {"registration": registration})})
+                    create_evaluation_run(connection, EvaluationRun.model_validate(registered_run.model_dump()))
+                if receipt and receipt != registration:
+                    raise ClaimRefused("registration_arm_mismatch")
+                receipt = dict(registration)
+        return receipt
+
+    def export_study(self, study_id: UUID, lease: StudyLock) -> dict[str, Any]:
+        """One bounded repeatable-read snapshot; no transaction spans model work.
+
+        LEFT JOIN begins at claims. The caller fills any not-yet-persisted
+        schedule slots from its immutable manifest, including early crashes.
+        """
+        with (
+            self.engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection,
+            connection.begin(),
+        ):
+            connection.execute(text("SET LOCAL TRANSACTION READ ONLY"))
+            lease.check(connection)
+            connection.execute(text("SET LOCAL statement_timeout = '5000'"))
+            now = connection.execute(text("SELECT transaction_timestamp()")).scalar_one()
+            version = connection.execute(text("SHOW server_version_num")).scalar_one()
+            trials = connection.execute(text(
+                "SELECT c.id, c.evaluation_run_id, c.task_id, c.trial_index, c.seed, c.scenario_scope, "
+                "c.state, c.invocation_scope, c.started_at, c.finished_at, t.outcome, t.reward, "
+                "t.components, t.error_class, "
+                "t.cost_status, t.cost_usd, t.latency_ms, t.artifact_sha256, t.result_sha256 "
+                "FROM evaluation.trial_claims c LEFT JOIN evaluation.evaluation_trials t ON t.id = c.id "
+                "WHERE c.study_scope = :id ORDER BY c.evaluation_run_id, c.task_id, c.trial_index LIMIT 16385"
+            ), {"id": study_id}).mappings().all()
+            attempts = connection.execute(text(
+                "SELECT id, scenario_scope_id, actor, model, state, count_state, actual_usd, reserved_usd, "
+                "usage, contract_block FROM evaluation.usage_attempts WHERE study_scope_id = :id "
+                "ORDER BY id LIMIT 131073"), {"id": study_id}).mappings().all()
+            scopes = connection.execute(text(
+                "SELECT id, kind, spent_usd, held_usd, calls_consumed, calls_held, counts_used, "
+                "overrun, contract_block FROM evaluation.budget_scopes WHERE id = :id OR "
+                "(parent_id = :id AND kind = 'scenario') "
+                "ORDER BY id LIMIT 16386"), {"id": study_id}).mappings().all()
+            if len(trials) > 16384 or len(attempts) > 131072 or len(scopes) > 16385:
+                raise ClaimRefused("study_export_bounds")
+            return {"created_at": now, "db_version": str(version), "trials": [dict(r) for r in trials],
+                "attempts": [dict(r) for r in attempts], "scopes": [dict(r) for r in scopes]}
 
     def usage(self, scenario_id: UUID) -> dict[str, Any]:
         with transaction(self.engine) as connection:

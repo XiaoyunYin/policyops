@@ -25,6 +25,7 @@ from policyops.providers.bounds import preflight
 from policyops.providers.calls import CallLimits, CallReport, Providers, call
 from policyops_contracts.model import Message, ModelRequest, TextPart, ToolResultPart, ToolSpec, ToolUsePart
 from policyops_evals.harness.inprocess import OwnedLoop
+from policyops_evals.harness.timing import CallTimings
 from policyops_evals.harness.tools import CatalogMapping, bounded_copy, map_upstream_tools, to_upstream_arguments
 
 
@@ -37,6 +38,8 @@ MAX_TOTAL = 240_000
 
 class ActorRefused(RuntimeError):
     """Fixed codes; provider/input exceptions must not enter normal diagnostics."""
+
+    actor: Actor | None = None
 
 
 def tripwire(*args: Any, **kwargs: Any) -> Any:
@@ -129,7 +132,7 @@ class ActorCeilings:
 class ActorBindings:
     def __init__(self, ledger: Ledger, binding: EvalBinding, providers: Callable[[], Providers], *,
                  loop: OwnedLoop, deadline: float, ceilings: ActorCeilings,
-                 upstream_seed: int | None = None) -> None:
+                 upstream_seed: int | None = None, timings: CallTimings | None = None) -> None:
         if not isinstance(binding, EvalBinding) or not 0 < deadline - time.monotonic() <= 900:
             raise ActorRefused("binding_invalid")
         self.ledger, self.binding, self.providers = ledger, binding, providers
@@ -140,6 +143,7 @@ class ActorBindings:
         if upstream_seed is not None and type(upstream_seed) is not int:
             raise ActorRefused("seed_invalid")
         self.upstream_seed = upstream_seed
+        self.timings = timings
         self._indices: dict[Actor, int] = {"simulator": 0, "judge": 0}
         self._digests = {actor: ledger.configuration.reservation(actor).config_sha256
                          for actor in ("simulator", "judge")}
@@ -152,6 +156,13 @@ class ActorBindings:
         if not isinstance(config, ChatActor):
             raise ActorRefused("actor_configuration")
         return config
+
+    def _bound_generate(self, actor: Actor, **kwargs: Any) -> Any:
+        try:
+            return self._generate(actor, **kwargs)
+        except ActorRefused as error:
+            error.actor = actor
+            raise
 
     def _generate(self, actor: Actor, *, model: str, messages: object, tools: object = None,
                   call_name: str | None = None, **kwargs: Any) -> Any:
@@ -184,8 +195,11 @@ class ActorBindings:
         self._indices[actor] += 1  # never replay a possibly dispatched call
         key = uuid5(self.binding.scenario_id, f"{actor}:{index}")
         try:
-            report = self.loop.run(call(self.ledger, self.providers(), self.binding, key, f"eval.{actor}",
-                request, actor, deadline=self.deadline, limits=_LIMITS), seconds=left)
+            from contextlib import nullcontext
+
+            with self.timings.observe(actor, key) if self.timings else nullcontext():
+                report = self.loop.run(call(self.ledger, self.providers(), self.binding, key, f"eval.{actor}",
+                    request, actor, deadline=self.deadline, limits=_LIMITS), seconds=left)
         except Exception:
             raise ActorRefused("actor_failed") from None
         self.reports.append((actor, report))  # bounded by explicit actor ceilings; billing survives bad judge output
@@ -246,8 +260,8 @@ class ActorBindings:
             for obj, name in ((llm_utils, "generate"), (llm_utils, "_generate_once"),
                               (llm_utils, "completion"), (litellm, "completion"), (litellm, "acompletion")):
                 replace(obj, name, tripwire)
-            replace(user, "generate", lambda **kw: self._generate("simulator", **kw))
-            replace(nl, "generate", lambda **kw: self._generate("judge", **kw))
+            replace(user, "generate", lambda **kw: self._bound_generate("simulator", **kw))
+            replace(nl, "generate", lambda **kw: self._bound_generate("judge", **kw))
             replace(nl, "DEFAULT_LLM_NL_ASSERTIONS", self.config("judge").model)
             replace(nl, "DEFAULT_LLM_NL_ASSERTIONS_ARGS", {"reasoning_effort": self.config("judge").effort})
             yield self

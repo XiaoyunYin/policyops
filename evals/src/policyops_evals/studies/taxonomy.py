@@ -16,6 +16,7 @@ from policyops_contracts.provider_failures import closed_failure_code
 from policyops_evals.canonical import canonical_bytes, sha256_bytes
 from policyops_evals.studies import bundles
 from policyops_evals.studies.reports import validate
+from policyops_evals.studies.termination import closed_termination
 
 
 ERRORS = frozenset({"trial_failed", "scoring_unavailable", "trial_deadline", "study_interrupted",
@@ -87,18 +88,21 @@ def render(path: Path, *, snapshot: str, out: Path) -> dict[str, Any]:
     study, frozen, study_hash, snapshot_hash = bundles.load(path, snapshot)
     validate(study, frozen)  # includes schedule, identity and stratum checks
     found = inventory(path.parent)
-    counts: Counter[tuple[str, str, str, str]] = Counter()
-    tasks: Counter[tuple[str, str, str, str, str]] = Counter()
+    counts: Counter[tuple[str, str, str, str, str]] = Counter()
+    tasks: Counter[tuple[str, str, str, str, str, str]] = Counter()
     failures: Counter[tuple[str, str, str, str]] = Counter()
     for row in frozen.trials:
         outcome: str = row.status
         terminal = "unavailable"
+        termination = "unavailable"
         error: str = row.failure_class or "none"
         if row.artifact_sha256 is not None:
             raw_result, result_path = linked(found, f"{row.slot_id}-result.json", row.artifact_sha256)
             if not isinstance(raw_result, dict) or raw_result.get("outcome") not in OUTCOMES:
                 raise bundles.BundleRefused("private_result_schema")
             outcome = raw_result["outcome"]
+            if "simulation_termination" in raw_result:
+                termination = closed_termination(raw_result["simulation_termination"])
             normalized = "error" if outcome == "budget_exceeded" else outcome
             # Normalization may convert an invalid scored result to error; it
             # may never turn one into success. Keep both codes in the taxonomy.
@@ -134,14 +138,14 @@ def render(path: Path, *, snapshot: str, out: Path) -> dict[str, Any]:
         if row.status not in {"pending", "running"} and Decimal(row.held_usd) > 0:
             outcome = "error"
             error = "unresolved_billing" if error == "none" else error
-        group_key = (row.variant, outcome, terminal, error)
+        group_key = (row.variant, outcome, terminal, error, termination)
         counts[group_key] += 1
         tasks[(row.task_id, *group_key)] += 1
 
     def rows(counter: Counter[Any], fields: tuple[str, ...]) -> list[dict[str, Any]]:
         return [dict(zip(fields, key, strict=True)) | {"count": count} for key, count in sorted(counter.items())]
 
-    fields = ("variant", "outcome", "agent_terminal_reason", "error_class")
+    fields = ("variant", "outcome", "agent_terminal_reason", "error_class", "simulation_termination")
     result: dict[str, Any] = {"schema_version": "policyops.study-taxonomy/v1", "study_sha256": study_hash,
         "snapshot_sha256": snapshot_hash, "scheduled_trials": len(frozen.trials),
         "counts": rows(counts, fields), "per_task": rows(tasks, ("task_id", *fields)),
@@ -150,6 +154,7 @@ def render(path: Path, *, snapshot: str, out: Path) -> dict[str, Any]:
              "Outcome is the raw result code when available; absent artifacts use the sealed slot status.",
              "Finalized slots with held liability are always errors, including historical snapshots.",
              "Terminal `none` means observed without a terminal; `unavailable` means no linked agent artifact.",
+             "Simulation termination uses closed tau2 codes; absent historical values are `unavailable`.",
              "Unknown error strings map to `unknown_error`. Counts include every scheduled trial.", ""]
     failure_fields = ("variant", "actor", "phase", "reason_code")
     for title, key, columns in (("Counts", "counts", fields), ("Per-task matrix", "per_task", ("task_id", *fields)),

@@ -1,0 +1,192 @@
+{
+  "cache_mode": "none",
+  "calibration_sha256": "8c204ea3e21d6f9735a2e20628f14f5bc217e09240bdcd2bea1419d7089bb3a2",
+  "dataset_sha256": "fc0f802747a21405053c3ccf1a3124042d7aea10ce8339694ae0c3e515dc877a",
+  "decision": {
+    "candidate": "luna",
+    "direction": "candidate-minus-reference",
+    "guard_metrics": [
+      "pass^4"
+    ],
+    "margin": "0.10",
+    "metric": "pass^1",
+    "reference": "haiku"
+  },
+  "domain": "retail",
+  "eligibility": {
+    "allowlist_sha256": "70cdcb18b52e4023623d26bba128979f8f4b064be55946f039148ce481232767",
+    "example_prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+    "source_sha256": {
+      "retail-audit.json": "6582a7e511e1be8996f7d98ec467235ccc47bd2b91cc826b335fa6b2c89fdac3",
+      "retail-split.json": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+      "upstream-verification.json": "08c396e4ea5666adb20cd8947199c57b50f1676e69616152775beccc9662694b"
+    },
+    "tuning_task_ids": []
+  },
+  "limits": {
+    "invocation_calls": 10240,
+    "invocation_counts": 10240,
+    "invocation_usd": "28",
+    "scenario_calls": 64,
+    "scenario_counts": 64,
+    "scenario_usd": "0.20",
+    "study_calls": 10240,
+    "study_counts": 10240,
+    "study_input_tokens": 327680000,
+    "study_output_tokens": 20971520,
+    "study_usd": "28",
+    "trial_seconds": 600,
+    "max_unresolved_attempts": 3,
+    "max_tool_errors": 10
+  },
+  "notes": "Decided before any v3 data: v3 follows the v2 pilot diagnosis of mixed text/tool protocol refusals and censored agent trajectories. Drop accompanying tool text model-neutrally and record an informational notice; raise agent model-call and per-turn step limits. Tasks, seeds, pairing, statistics and decision margin are preserved. The v2 results remain pilot evidence. Coordinator cap decision before v3 data: keep per-call and actor token ceilings unchanged; conservative all-actor admission is $18.8928 at doubled scenario limits, the v2 pilot spent $1.04, and lowering ceilings would reintroduce the truncation confounds v3 is designed to remove. The study and invocation caps are $20. V3 attempt 1 halted at 116/160 when the 180 s trial deadline cancelled an in-flight agent call with unknowable billing; the ledger held the attempt and admission stopped by design. Three Haiku trials exceeded the 16,000-token agent input ceiling. Both are limits, raised model-neutrally before any v4 data: trial_seconds 180 to 600 and agent max_input 16,000 to 32,000 for Luna and Haiku. V4 attempt 1 halted after 6/160 trials on one transient Haiku inference provider failure with an unknown bill held (two token-count failures released their attempts). Before any v5 data, preregister liability-bounded continuation: retain every unknown bill at its full reservation against every scope cap; admit later unclaimed slots only while the next maximum reservation fits every cap and unresolved attempts are at most 3. The fourth unresolved attempt stops admission. No retries, inferred bills or replay of claimed slots. Report finalized unresolved trials as errors and holds as upper-bound spend. Before any v6 data: v5 completed 160/160 with one unresolved bill; 22/160 trials were cut by undocumented max_errors=1. V6 restores upstream default 10 model-neutrally; tasks, seeds, pairing, statistics, margin and all other limits are preserved.",
+  "pairing": {
+    "experimental_dimension": "agent.model",
+    "order_seed": 20261112,
+    "schedule_version": "paired-v1"
+  },
+  "preregistration_sha256": null,
+  "price_revision": "pricing.2026-11-05.v1",
+  "provider_mode": "live",
+  "purpose": "dev",
+  "repairs": 0,
+  "retries": 0,
+  "schema_version": "policyops.study/v3",
+  "seeds": [
+    20261112,
+    20261113,
+    20261114,
+    20261115
+  ],
+  "split_id": "dev",
+  "split_sha256": "61a6d43cc572506a67056e9d2c28715aae3bebaece7a44df826bf6d0e0b10cba",
+  "statistics": {
+    "algorithm": "task-bootstrap-sha256-v1",
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 20261112,
+    "confidence": "0.95",
+    "ks": [
+      1,
+      4
+    ],
+    "quantile": "linear-r7-v1"
+  },
+  "study_key": "e03-dev-luna-haiku-v6",
+  "task_list_sha256": "b6ebd5bb36059fd5d6d57cffd3ebf78d926254434bf5d0944a91884c961d4f83",
+  "tasks": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "7",
+    "9",
+    "10",
+    "12",
+    "15",
+    "20",
+    "24",
+    "27",
+    "28",
+    "29",
+    "31",
+    "33",
+    "34",
+    "35"
+  ],
+  "variants": [
+    {
+      "actors": {
+        "agent": {
+          "effort": "low",
+          "logical_calls": 32,
+          "max_input": 32000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 120000,
+          "planning_output": 4000
+        },
+        "judge": {
+          "effort": "low",
+          "logical_calls": 1,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 16000,
+          "planning_output": 400
+        },
+        "simulator": {
+          "effort": "low",
+          "logical_calls": 12,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 60000,
+          "planning_output": 2000
+        }
+      },
+      "agent_kind": "minimal",
+      "agent_limits": {
+        "consecutive_invalid": 2,
+        "knowledge_steps": 0,
+        "max_output_tokens": 2048,
+        "model_calls": 32,
+        "steps_per_turn": 12,
+        "transcript_bytes": 48000,
+        "transcript_messages": 128
+      },
+      "agent_protocol": "single-tool-drop-text/v1",
+      "name": "luna",
+      "prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+      "schema_sha256": "bdac9b7b7ee097682c3198cf9632e62b50be1a2bf69395d35f089a67508dd7cd",
+      "tool_sha256": "f2f90a8e75d86c97e6ddc374bf321b6d9e05d292179092212a37e2d2ba14fce1"
+    },
+    {
+      "actors": {
+        "agent": {
+          "effort": "low",
+          "logical_calls": 32,
+          "max_input": 32000,
+          "max_output": 2048,
+          "model": "claude-haiku-5-5",
+          "planning_input": 120000,
+          "planning_output": 4000
+        },
+        "judge": {
+          "effort": "low",
+          "logical_calls": 1,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 16000,
+          "planning_output": 400
+        },
+        "simulator": {
+          "effort": "low",
+          "logical_calls": 12,
+          "max_input": 16000,
+          "max_output": 2048,
+          "model": "gpt-6-luna",
+          "planning_input": 60000,
+          "planning_output": 2000
+        }
+      },
+      "agent_kind": "minimal",
+      "agent_limits": {
+        "consecutive_invalid": 2,
+        "knowledge_steps": 0,
+        "max_output_tokens": 2048,
+        "model_calls": 32,
+        "steps_per_turn": 12,
+        "transcript_bytes": 48000,
+        "transcript_messages": 128
+      },
+      "agent_protocol": "single-tool-drop-text/v1",
+      "name": "haiku",
+      "prompt_sha256": "fb5176dcf1112b4aa47e85c0906e1fbad21f96bc6463e03d0f94a15ee25667a0",
+      "schema_sha256": "bdac9b7b7ee097682c3198cf9632e62b50be1a2bf69395d35f089a67508dd7cd",
+      "tool_sha256": "f2f90a8e75d86c97e6ddc374bf321b6d9e05d292179092212a37e2d2ba14fce1"
+    }
+  ]
+}

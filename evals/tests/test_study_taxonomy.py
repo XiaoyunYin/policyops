@@ -16,7 +16,8 @@ from policyops_evals.studies.runner import provider_failures
 from .t32_support import frozen_fixture
 
 
-def fixture(root: Path, *, failures: list[dict[str, str]] | None = None) -> tuple[Path, str, list[Path]]:
+def fixture(root: Path, *, failures: list[dict[str, str]] | None = None,
+            termination: object = None) -> tuple[Path, str, list[Path]]:
     frozen, snapshot = frozen_fixture()
     directory = root / "benchmarks/studies" / str(frozen.study_id)
     invocation = root / "benchmarks" / str(uuid4())
@@ -41,6 +42,8 @@ def fixture(root: Path, *, failures: list[dict[str, str]] | None = None) -> tupl
             "agent_snapshot_sha256": sha256_bytes(target.read_bytes()), "transcript": "RAW_TRANSCRIPT_CANARY"}
         if failures is not None:
             result["provider_failures"] = failures
+        if termination is not None:
+            result["simulation_termination"] = termination
         target = invocation / f"{row.slot_id}-result.json"
         raw = canonical_bytes(result)
         bundles.write(target, raw)
@@ -104,10 +107,26 @@ def test_taxonomy_counts_are_complete_sanitized_and_deterministic(monkeypatch: p
     assert sum(r["count"] for r in result["per_task"]) == 16
     assert any(r["agent_terminal_reason"] == "unavailable" for r in result["counts"])
     assert any(r["error_class"] == "unknown_error" for r in result["counts"])
+    assert {r["simulation_termination"] for r in result["counts"]} == {"unavailable"}
+    assert {r["simulation_termination"] for r in result["per_task"]} == {"unavailable"}
     by_task: Counter[tuple[str, str]] = Counter()
     for row in result["per_task"]:
         by_task[row["task_id"], row["variant"]] += row["count"]
     assert set(by_task.values()) == {4}
+
+
+@pytest.mark.parametrize("code", ["too_many_errors", "user_stop", "PRIVATE_MESSAGE_CANARY", ["user_stop"]])
+def test_simulation_termination_dimension_is_closed_and_hash_linked(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: object) -> None:
+    monkeypatch.setenv("POLICYOPS_TEMP_DIR", str(tmp_path))
+    path, digest, _ = fixture(tmp_path, termination=code)
+    result = taxonomy.render(path, snapshot=digest, out=tmp_path / "out")
+    expected = code if isinstance(code, str) and code in {"too_many_errors", "user_stop"} else "unknown"
+    for dimension in ("counts", "per_task"):
+        assert sum(r["count"] for r in result[dimension] if r["simulation_termination"] == expected) == 15
+        assert sum(r["count"] for r in result[dimension] if r["simulation_termination"] == "unavailable") == 1
+    markdown = (tmp_path / "out/taxonomy.md").read_bytes()
+    assert b"simulation_termination" in markdown and b"CANARY" not in markdown
 
 
 @pytest.mark.parametrize("damage", ["result", "agent", "inventory_hash", "missing", "snapshot", "link", "path"])

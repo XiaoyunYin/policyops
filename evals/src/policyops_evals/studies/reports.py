@@ -16,7 +16,7 @@ from policyops_evals.studies import statistics as stats
 from policyops_evals.studies.report_models import AttemptRow, FrozenStudy, Snapshot
 
 
-VERSION = "policyops.study-reporter/2"
+VERSION = "policyops.study-reporter/3"
 LIMITATIONS = [
     "pass^k estimates all k trials succeeding; it is not pass@k.",
     "Complete-case results are missingness-sensitive diagnostics and cannot select a release.",
@@ -205,7 +205,9 @@ def build(study: FrozenStudy, snapshot: Snapshot, bundle_hash: str, snapshot_has
             study.registered_at.isoformat(), "snapshot_at": snapshot.created_at.isoformat(),
             "db_version": snapshot.db_version, "protocol": study.protocol,
             "environment": study.environment.model_dump(mode="json"),
-            "limits": study.limits.model_dump(mode="json"), "prices": study.prices.model_dump(mode="json")},
+            "limits": study.limits.model_dump(mode="json") | {
+                "max_tool_errors": 1 if study.limits.max_tool_errors is None else study.limits.max_tool_errors},
+            "prices": study.prices.model_dump(mode="json")},
         "variants": variants, "metrics": metrics, "paired_differences": differences,
         "accounting": {"discrepancies": discrepancies, **amounts(list(snapshot.attempts))},
         "decision": {**study.decision.model_dump(mode="json"), "status": stats.decision(lower_endpoints,

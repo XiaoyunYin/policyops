@@ -88,6 +88,35 @@ def test_three_slot_real_upstream_scored_study(composed: Any) -> None:
     assert not routes.outputs
 
 
+@pytest.mark.parametrize("limit", [None, 1, 10, 100])
+def test_runner_builds_configured_tool_error_limit_and_records_termination(
+        composed: Any, monkeypatch: pytest.MonkeyPatch, limit: int | None) -> None:
+    from tau2.data_model.simulation import TerminationReason, TextRunConfig
+    from tau2.runner import build
+
+    from policyops_evals.studies.termination import SIMULATION_TERMINATIONS
+
+    study, _, _, _, run = composed
+    assert {reason.value for reason in TerminationReason} == SIMULATION_TERMINATIONS
+    body = study.model_dump(mode="json")
+    if limit is not None:
+        body["limits"]["max_tool_errors"] = limit
+    config = Study.model_validate_json(json.dumps(body))
+    original = build.build_text_orchestrator
+    built: list[TextRunConfig] = []
+
+    def observe(config: TextRunConfig, *args: Any, **kwargs: Any) -> Any:
+        built.append(config)
+        assert config.max_errors == (1 if limit is None else limit)
+        return original(config, *args, **kwargs)
+
+    monkeypatch.setattr(build, "build_text_orchestrator", observe)
+    summary = run(config)
+    assert len(built) == 3
+    for path in Path(summary["output"]).glob("*-result.json"):
+        assert json.loads(path.read_bytes())["simulation_termination"] == "user_stop"
+
+
 def test_resume_skips_finished_slots_with_no_new_inference(composed: Any) -> None:
     _, repository, store, _, run = composed
     run()
@@ -98,6 +127,24 @@ def test_resume_skips_finished_slots_with_no_new_inference(composed: Any) -> Non
     assert len(store.attempts) == count and not routes.seen
     with pytest.raises(runner.StudyRefused, match="existing_study_requires_resume"):
         run()
+
+
+@pytest.mark.parametrize("limit", [1, 10])
+def test_first_tool_error_is_recorded_and_recoverable_only_with_room(composed: Any, limit: int) -> None:
+    study, _, _, outputs, run = composed
+    body = study.model_dump(mode="json")
+    body["limits"]["max_tool_errors"] = limit
+    config = Study.model_validate_json(json.dumps(body))
+    bad_tool = tool("get_user_details", {"user_id": "fictional_missing_user"})
+    trajectory = [outputs[0], bad_tool] + (outputs[1:] if limit == 10 else [])
+    routes = Routes(trajectory * 3)
+    summary = run(config, route=routes)
+    results = [json.loads(p.read_bytes()) for p in Path(summary["output"]).glob("*-result.json")]
+    assert len(results) == 3 and not routes.outputs
+    assert {r["simulation_termination"] for r in results} == {"user_stop" if limit == 10 else "too_many_errors"}
+    assert summary["successes"] == (3 if limit == 10 else 0)
+    if limit == 1:
+        assert all(r["environment"].get("db_check") is None for r in results)
 
 
 def test_interrupted_trial_records_abort_and_all_scheduled_slots_in_denominator(
@@ -116,6 +163,8 @@ def test_interrupted_trial_records_abort_and_all_scheduled_slots_in_denominator(
     assert summary["strict_success_lower_bound"] == 0 and summary["complete_case_success"] is None
     assert all(r.reward is None for r in repository.terminals.values())
     assert all(s.state == "finalized" for s in repository.schedule_rows.values())
+    artifacts = list(Path(summary["output"]).glob("*-result.json"))
+    assert artifacts and all(json.loads(p.read_bytes())["simulation_termination"] == "unknown" for p in artifacts)
 
 
 def test_restart_aborts_abandoned_claim_without_replaying_it(composed: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,3 +282,4 @@ def test_offline_paired_v2_runs_real_upstream_and_rerenders(composed: Any, monke
     assert all(row.status == "success" for row in snapshot.trials)
     result = taxonomy.render(path, snapshot=digest, out=tmp_path / "paired-taxonomy")
     assert result["scheduled_trials"] == sum(row["count"] for row in result["counts"]) == 16
+    assert {row["simulation_termination"] for row in result["counts"]} == {"user_stop"}

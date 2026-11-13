@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, StringConstraints, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from policyops.budget.config import DEFAULT_ACTORS, Caps, ChatActor, Configuration
 from policyops.budget.ledger import Scope
@@ -56,6 +56,7 @@ class Variant(WireModel):
 
 class Limits(WireModel):
     # Absent in legacy specifications: preserve their canonical bytes/digests.
+    max_tool_errors: Annotated[int | None, Field(ge=1, le=100, exclude_if=lambda v: v is None)] = None
     max_unresolved_attempts: Annotated[int | None, Field(ge=0, le=1000, exclude_if=lambda v: v is None)] = None
     scenario_usd: Decimal
     invocation_usd: Decimal
@@ -71,6 +72,18 @@ class Limits(WireModel):
     # bound is accepted, so a smaller claimed token limit cannot be misleading.
     study_input_tokens: Annotated[int, Field(ge=1)]
     study_output_tokens: Annotated[int, Field(ge=1)]
+
+    @field_validator("max_tool_errors", mode="before")
+    @classmethod
+    def integer_tool_errors(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("max_tool_errors must be an integer when present")
+        return value
+
+    @property
+    def tool_error_limit(self) -> int:
+        """Only an absent field selects the recorded legacy protocol value."""
+        return 1 if self.max_tool_errors is None else self.max_tool_errors
 
     def caps(self) -> Caps:
         if (self.scenario_calls != self.scenario_counts or self.invocation_calls != self.invocation_counts
@@ -419,6 +432,7 @@ def preflight(study: Study, *, snapshot: Scope | None = None,
         "inference_ceiling": total_calls, "count_ceiling": total_calls, "physical_requests_ceiling": 2 * total_calls,
         "study_input_token_ceiling": study.limits.study_input_tokens,
         "study_output_token_ceiling": study.limits.study_output_tokens,
+        "max_tool_errors": study.limits.tool_error_limit,
         "price_revision": study.price_revision, "study_cap_usd": str(caps.study_usd),
         "prior": "unverified" if snapshot is None else "ledger_snapshot",
         "prior_spent_and_held_usd": None if snapshot is None else str(prior_usd),

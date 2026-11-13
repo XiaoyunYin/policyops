@@ -20,6 +20,7 @@ from policyops.providers.calls import Providers
 from policyops_evals.canonical import canonical_bytes, sha256_bytes
 from policyops_evals.studies import bundles, registration, runner, snapshots
 from policyops_evals.studies.config import ROOT, Study, StudyV2, Variant, preflight
+from policyops_evals.studies.termination import closed_termination
 
 
 def source_provenance() -> dict[str, Any]:
@@ -216,6 +217,7 @@ def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore
                                            error_class=details["error_class"] or "unresolved_billing")
                         details["usage"] = {k: str(v) if isinstance(v, Decimal) else v for k, v in usage.items()}
                         details["actor_attempts"] = repository.actor_attempts(slot.scenario_id)
+                        details["simulation_termination"] = closed_termination(details.get("simulation_termination"))
                         failures = {f["attempt_id"]: f["reason_code"] for f in details.get("provider_failures", [])}
                         for attempt in details["actor_attempts"]:
                             if attempt["id"] in failures:

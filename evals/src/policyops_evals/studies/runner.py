@@ -38,6 +38,7 @@ from policyops_evals.canonical import canonical_bytes, load_manifest, sha256_byt
 from policyops_evals.corpus import write_contained
 from policyops_evals.harness.timing import CallTimings
 from policyops_evals.studies.config import ACTORS, ROOT, Study, StudyV2, Variant, load_study, preflight
+from policyops_evals.studies.termination import closed_termination
 from policyops_evals.upstream_runtime import installed_package_parity, prepare
 
 
@@ -222,7 +223,8 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
     bridge: InProcessAgentBridge | None = None
     orchestrator: Any = None
     simulation: Any = None
-    result: dict[str, Any] = {"outcome": "error", "reward": None, "error_class": "trial_failed"}
+    result: dict[str, Any] = {"outcome": "error", "reward": None, "error_class": "trial_failed",
+                              "simulation_termination": "unknown"}
     actors: ActorBindings | None = None
     timings = CallTimings(directory, slot.id)
     agent = RecordedAgentPort(ledger, token.binding, providers,
@@ -240,7 +242,8 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
                 llm_user=variant.actors.simulator.model,
                 llm_args_user={"reasoning_effort": variant.actors.simulator.effort}, seed=slot.seed,
                 max_steps=2 * (variant.actors.agent.logical_calls + variant.actors.simulator.logical_calls) + 2,
-                max_errors=1, timeout=float(study.limits.trial_seconds), max_concurrency=1, num_trials=1)
+                max_errors=study.limits.tool_error_limit, timeout=float(study.limits.trial_seconds),
+                max_concurrency=1, num_trials=1)
             with trial(TrialSlot(slot.id, "retail", bridge, TrialBudget(deadline, time.monotonic, 0, 2))):
                 orchestrator = build_text_orchestrator(config, inputs.task, seed=slot.seed, simulation_id=str(slot.id))
             simulation = orchestrator.run()
@@ -284,9 +287,11 @@ def execute_trial(study: Study, variant: Variant, slot: Slot, ledger: Ledger, to
         if loop.cleanup_unconfirmed or (bridge is not None and bridge.cleanup_unconfirmed):
             result.update(outcome="error", reward=None, error_class="cleanup_unconfirmed", stop=True)
     if simulation is not None:
+        result["simulation_termination"] = closed_termination(getattr(simulation, "termination_reason", None))
         result["trajectory_sha256"] = artifact(directory, f"{slot.id}-trajectory.json",
                                                 simulation.model_dump(mode="json"))
     elif orchestrator is not None:
+        result["simulation_termination"] = closed_termination(getattr(orchestrator, "termination_reason", None))
         # Upstream may throw before returning a SimulationRun. Preserve whatever
         # messages were accepted before failure, in the private artifact only.
         messages = getattr(orchestrator, "messages", [])
@@ -417,6 +422,7 @@ def run_study(study: Study, repository: EvaluationRepository, store: EvalLedgerS
                 details["usage"] = {key: str(value) if isinstance(value, Decimal) else value
                                     for key, value in usage.items()}
                 details["actor_attempts"] = repository.actor_attempts(slot.scenario_id)
+                details["simulation_termination"] = closed_termination(details.get("simulation_termination"))
                 stop = bool(details.get("stop") or usage["held_usd"] or usage["overrun"] or usage["contract_block"])
                 artifact_hash = artifact(directory, f"{slot.id}-result.json", details)
                 known = not usage["held_usd"] and not usage["calls_held"]

@@ -12,7 +12,7 @@
                                                       offline: server-only seed customer bindings (private file)
 
 Every directory argument for data, caches or extracted text must lie outside the
-repository. No command calls a model, simulator, judge or embedding API.
+repository. Judge calibration calls providers only with explicit paid opt-in and caps.
 """
 
 from __future__ import annotations
@@ -164,6 +164,36 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="policyops-evals", description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
     groups = root.add_subparsers(dest="group", required=True)
+    judge = groups.add_parser("judge-calibration", help="G6 evaluation-only claim-support calibration")
+    judge_commands = judge.add_subparsers(dest="judge_command", required=True)
+    for judge_name in ("sample", "preflight", "run", "report", "select"):
+        sub = judge_commands.add_parser(judge_name)
+        sub.set_defaults(handler=command_judge_calibration)
+        sub.add_argument("--manifest", type=Path)
+        if judge_name in ("sample", "run"):
+            sub.add_argument("--data", type=outside_repository, required=True)
+        if judge_name == "sample":
+            sub.add_argument("--check", action="store_true")
+        if judge_name in ("preflight", "run"):
+            from decimal import Decimal
+
+            sub.add_argument("--split", choices=("dev", "test"), required=True)
+            sub.add_argument("--selection", type=outside_repository)
+            sub.add_argument("--config", type=Path)
+            sub.add_argument("--max-usd", type=Decimal, required=True)
+            sub.add_argument("--max-calls", type=int, required=True)
+            sub.add_argument("--max-counts", type=int, required=True)
+            sub.add_argument("--max-seconds", type=int, required=True)
+            if judge_name == "preflight":
+                sub.add_argument("--register", action="store_true")
+            else:
+                sub.add_argument("--execute-paid", action="store_true")
+                sub.add_argument("--out", type=outside_repository, required=True)
+        if judge_name in ("report", "select"):
+            sub.add_argument("--run", type=outside_repository, required=True)
+            sub.add_argument("--out", type=outside_repository, required=True)
+            if judge_name == "select":
+                sub.add_argument("--config-out", type=Path, required=True)
     qa = groups.add_parser("qa-study", help="validate, digest or preflight a frozen QA contract")
     qa_commands = qa.add_subparsers(dest="qa_command", required=True)
     for qa_name in ("validate", "digest", "preflight"):
@@ -221,6 +251,58 @@ def parser() -> argparse.ArgumentParser:
     add("seed-bindings", command_seed_bindings, "derive server-only seed customer bindings").add_argument(
         "--out", type=outside_repository, required=True, help="private output directory outside the repository")
     return root
+
+
+def command_judge_calibration(args: argparse.Namespace) -> int:
+    from policyops_evals.qa_studies import calibration as g6
+
+    try:
+        manifest_path = args.manifest or g6.PUBLIC_MANIFEST
+        if args.judge_command == "sample":
+            sample = g6.build_sample(args.data)
+            payload = canonical_bytes(sample)
+            if len(payload) >= 1_000_000:
+                raise ValueError("G6 public manifest exceeds size bound")
+            if args.check:
+                if payload != manifest_path.read_bytes():
+                    raise ValueError("G6 sample rebuild differs")
+            else:
+                # The only public write allowed by this command is the assigned manifest.
+                if manifest_path.resolve() != g6.PUBLIC_MANIFEST:
+                    raise ValueError("G6 public manifest path is fixed")
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                manifest_path.write_bytes(payload)
+            result = {"manifest_sha256": sample["manifest_sha256"], "counts": sample["counts"],
+                      "exclusions": sample["exclusions"], "bytes": len(payload)}
+        else:
+            sample = g6.load_sample(manifest_path)
+            if args.judge_command in ("preflight", "run"):
+                receipt = g6.selection(args.selection, sample) if args.selection else None
+                result = g6.planning(sample, args.split, max_usd=args.max_usd, max_calls=args.max_calls,
+                    max_counts=args.max_counts, max_seconds=args.max_seconds, receipt=receipt)
+                if args.judge_command == "run" or args.register:
+                    result = g6.command_run(sample, result, receipt,
+                        directory=getattr(args, "data", Path()), output=getattr(args, "out", Path()),
+                        execute_paid=getattr(args, "execute_paid", False), config_path=args.config,
+                        register_requested=getattr(args, "register", False))
+            else:
+                result = g6.report_run(sample, args.run)
+                if args.judge_command == "select":
+                    result = g6.select_arm(result, sample)
+                    if args.config_out.resolve().parent != g6.PUBLIC_MANIFEST.parent:
+                        raise ValueError("G6 test config must be in the assigned manifest directory")
+                    g6.write_private(args.out, result, exclusive=True)
+                    with args.config_out.open("xb") as handle:
+                        handle.write(canonical_bytes(g6.test_configuration(sample, result)))
+                    result = {"selection_receipt_sha256": g6.digest(result), "binding": result["binding"]}
+                else:
+                    g6.write_private(args.out, result, exclusive=True)
+    except Exception as error:
+        # No untrusted data, Pydantic inputs, provider messages or DB credentials.
+        print(f"policyops-evals: judge calibration refused: {type(error).__name__}", file=sys.stderr)
+        return 1
+    report(result)
+    return 0
 
 
 def command_qa_study(args: argparse.Namespace) -> int:

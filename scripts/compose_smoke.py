@@ -1,4 +1,4 @@
-"""Coordinator-only Docker smoke: fresh secrets, build, deploy, inspect, fault, scoped down -v.
+"""Manual Docker smoke: fresh secrets, build, deploy, inspect, fault, scoped down -v.
 
 Run with Python 3.12 and POLICYOPS_TEMP_DIR. POLICYOPS_PYTHON can name the frozen
 application interpreter for secret generation. Docker Compose v2.24+ is required.
@@ -274,7 +274,7 @@ class Driver:
         require(not self.secrets.exists(), "partial secret generation retained; inspect its private directory")
         self.report["cleanup"]["secrets_removed"] = True
         (self.root / "tmp").rmdir()
-        self.report["cleanup"]["images_retained"] = "run-tagged images retained for coordinator layer/package audit"
+        self.report["cleanup"]["images_retained"] = "run-tagged images retained for operator layer/package audit"
 
     def save(self) -> Path:
         path = self.root / "report.json"

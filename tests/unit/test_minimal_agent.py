@@ -751,7 +751,7 @@ def test_a_ledger_configuration_changed_after_binding_sends_and_reserves_nothing
 
 # -- the optional visible opening (T29 runtime opening) ----------------------------------------------------------
 
-# Recorded BEFORE the opening change: the builder's golden receipt (sha256 b0b2151ecf6250cb…), computed on clean HEAD
+# Recorded BEFORE the opening change: the reference receipt (sha256 b0b2151ecf6250cb…), computed on clean HEAD
 # 049d52d by a generator driving exactly the scenarios below through the real T11 `prepare`. Copied, not derived.
 GOLDEN_CONVERSATION = UUID("0f2a9c3e-5d41-4b7a-9e1f-2c8d6b4a7e90")
 GOLDEN: dict[str, tuple[str, str, list[str]]] = {  # case: (config digest, prompt digest, request body SHA-256s)

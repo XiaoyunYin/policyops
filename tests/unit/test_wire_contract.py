@@ -480,7 +480,7 @@ def test_the_wire_module_imports_only_stdlib_pydantic_and_contracts_and_does_no_
     assert not calls & {"open", "exec", "eval", "compile", "__import__"}
 
 
-# -- review regressions (reviewer/draft-findings-1.md) ----------------------------------------------------------------
+# -- review regression cases -----------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("kind", [[], {}, 1, None], ids=["array", "object", "number", "null"])
 def test_a_malformed_discriminator_is_a_fixed_refusal_in_both_directions(kind: Any) -> None:

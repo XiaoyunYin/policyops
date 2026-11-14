@@ -164,7 +164,7 @@ def test_engine_cleanup_preserves_setup_error(runtime: Any, monkeypatch: pytest.
 
 def test_secrets_generation_is_fresh_and_never_overwrites(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Validate generated cryptographic material. Windows ACL enforcement is separately checked below;
-    # the sandbox cannot establish host-wide permissions on behalf of a coordinator.
+    # the sandbox cannot establish host-wide permissions on behalf of an operator.
     monkeypatch.setattr(compose_secrets, "private_directory", lambda path: path.mkdir(mode=0o700))
     target = tmp_path / "secrets"
     names = compose_secrets.generate(target, "test-run")

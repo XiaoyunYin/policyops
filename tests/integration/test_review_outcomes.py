@@ -1,6 +1,6 @@
 """T22 Slice B: real runtime-role PostgreSQL, real retail simulator, controlled clocks.
 
-Collection has no container side effects. The coordinator executes these PG cases.
+Collection has no container side effects; these cases run in the PostgreSQL suite (`pytest -m postgres`).
 """
 
 from contextlib import closing

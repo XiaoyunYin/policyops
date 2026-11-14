@@ -165,7 +165,7 @@ def test_openai_request_is_the_exact_contracted_body() -> None:
         prepared(configuration=long_cache)
 
 
-# The approved smoke's exact cases (reviewer/live-approved-20261105-1 plan.json; builder live-smoke-v3.1 smoke.cases()),
+# The approved smoke's exact cases (live-smoke-v3.1 smoke.cases()),
 # with the request and count fingerprints that the frozen T11 source (93afd3b) produced and the ledger recorded.
 SMOKE_ANSWER = json.dumps({"type": "object", "properties": {"decision": {"type": "string", "enum": ["approve", "deny"]},
                                                             "reason": {"type": "string", "maxLength": 200}},

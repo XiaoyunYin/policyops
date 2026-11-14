@@ -1,4 +1,4 @@
-"""Offline driver safety tests. Real Docker/browser/recovery acceptance belongs to the coordinator."""
+"""Offline driver safety tests. Run real Docker/browser/recovery acceptance manually."""
 
 from __future__ import annotations
 

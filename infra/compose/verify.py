@@ -1,4 +1,4 @@
-"""In-container assertions used by the coordinator smoke driver; stdout is safe JSON only."""
+"""In-container assertions used by the manual smoke driver; stdout is safe JSON only."""
 
 from __future__ import annotations
 

@@ -35,7 +35,7 @@ def test_v3_preserves_design_and_enforces_explicit_agent_limits(monkeypatch: pyt
     plan = preflight(study)
     assert {r["actor"] for r in plan["actors"]} == {"agent", "simulator", "judge"}
     assert plan["inference_ceiling"] == plan["count_ceiling"] == 7200
-    # The coordinator must resolve the reservation conflict without undercounting actors.
+    # The run must resolve the reservation conflict without undercounting actors.
     assert Decimal(plan["admission_ceiling_usd"]) == Decimal("18.8928")
     assert plan["within_caps"]
     registration.validate_implementation(study)

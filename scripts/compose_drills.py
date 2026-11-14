@@ -1,4 +1,4 @@
-"""Coordinator-only real-browser recovery drills. Never run against an existing/demo project.
+"""Operator-run real-browser recovery drills. Never run against an existing/demo project.
 
 Builds a uniquely owned disposable Compose project, exercises browser authority, kills at the after-response seam,
 then restores one coherent logical backup to a fresh separate database. Always attempts guarded cleanup.

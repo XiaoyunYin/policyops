@@ -164,6 +164,14 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="policyops-evals", description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
     groups = root.add_subparsers(dest="group", required=True)
+    qa = groups.add_parser("qa-study", help="validate, digest or preflight a frozen QA contract")
+    qa_commands = qa.add_subparsers(dest="qa_command", required=True)
+    for qa_name in ("validate", "digest", "preflight"):
+        qa_command = qa_commands.add_parser(qa_name)
+        qa_command.add_argument("--study", type=Path, required=True)
+        qa_command.set_defaults(handler=command_qa_study)
+        if qa_name == "preflight":
+            qa_command.add_argument("--register", action="store_true")
     for name in ("preflight", "run"):
         study = groups.add_parser(name, help="plan or execute a durable dev study")
         study.add_argument("--study", type=Path, required=True)
@@ -213,6 +221,29 @@ def parser() -> argparse.ArgumentParser:
     add("seed-bindings", command_seed_bindings, "derive server-only seed customer bindings").add_argument(
         "--out", type=outside_repository, required=True, help="private output directory outside the repository")
     return root
+
+
+def command_qa_study(args: argparse.Namespace) -> int:
+    from policyops_evals.qa_studies.config import load_study
+    from policyops_evals.qa_studies.registration import command, registration_digest, source_provenance
+
+    try:
+        study = load_study(args.study)
+        if args.qa_command == "validate":
+            study.validate_data()
+            result = {"valid": True, "study_id": str(study.study_id), "example": study.example,
+                      "registered": False}
+        elif args.qa_command == "digest":
+            result = {"registration_payload_sha256": registration_digest(study, source_provenance()),
+                      "registered": False}
+        else:
+            result = command(study, register_requested=args.register)
+    except Exception as error:
+        # Never print DB exceptions, credentials, or a Pydantic input payload.
+        print(f"policyops-evals: QA study refused: {type(error).__name__}", file=sys.stderr)
+        return 1
+    report(result)
+    return 0 if result.get("within_caps", True) else 1
 
 
 def command_study(args: argparse.Namespace) -> int:

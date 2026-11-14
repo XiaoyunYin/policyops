@@ -213,3 +213,93 @@ separators included. Second, a provider's count endpoint returns a preflight est
 the exact serialized request that was counted. Third, the usage a provider returns with an actual response is the billing
 evidence. The local counts are neither of the other two, and a count-endpoint result is not the billed amount. None of
 these is evidence of retrieval quality or of what a model can use.
+
+## MultiDoc2Dial v1.0
+
+The additional document-grounded QA dataset is **MultiDoc2Dial v1.0** (IBM), by Song Feng, Siva Sankalp Patel,
+Hui Wan and Sachindra Joshi. Cite *MultiDoc2Dial: Modeling Dialogues Grounded in Multiple Documents*, EMNLP 2021
+([paper](https://arxiv.org/abs/2109.12595), [dataset homepage](https://doc2dial.github.io/multidoc2dial/)).
+The accepted provenance review found conflicting licensing metadata: the Hugging Face YAML tag says Apache-2.0,
+while its licensing section and the Doc2Dial card say [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
+PolicyOps treats the data as CC BY 3.0, retains attribution, and describes its transformations here. The conflict
+is disclosed rather than interpreted as an additional Apache grant.
+
+The archive obtained from doc2dial.github.io on 2026-11-14 is 6,868,509 bytes, SHA-256
+`f0c034c249663d7b3cb08b19cf2cc2c3d101372485be982621d4711931a1ce00`. This identifies archive bytes, not an upstream
+Git commit. The [manifest](../evals/manifests/multidoc2dial-v1/manifest.json) pins each consumed member and records
+source identities, algorithms, tokenizer, rights, domain/act counts and compact audit summaries. It lists sorted
+dialogue IDs for dev, retrieval, answers and full context, retaining their design hashes. The G8 pool is defined
+by rule, counts and hashes, without listing its IDs. No document or dialogue text or per-query qrels are published.
+Source archives, derived text stores, human replies and execution traces remain private.
+
+The offline [builder](../evals/src/policyops_evals/datasets/multidoc2dial.py) reads the ZIP directly, without
+extracting files or executing HTML. It checks archive/member SHA-256, an explicit member allowlist, safe relative
+paths, regular-file types, bounded sizes, compression ratios and duplicate names. Apple resource forks are ignored
+after structural safety checks. The dummy official test member is not parsed. Document/span identities, exact
+text slices and every reference are checked; unknown references fail the build.
+
+`md2d.title-runs/v1` sorts documents by domain/document ID and spans by start/end/integer span ID, then keeps
+maximal consecutive runs of equal titles. Bodies are exact source slices; headings join the first span's parent
+titles and title with ` > `. Repeated titles in separate runs retain separate identities. The result is **4,110
+passages**, including **537 heading-only runs**, from 488 documents. Passage IDs bind domain, original document ID
+and one-based run ordinal, with separate content hashes. Matching the paper's passage count does not establish
+identical upstream preprocessing.
+
+Queries target agent turns immediately after user turns, excluding `respond_no_solution`: **21,451 train / 4,201
+validation** queries. The train count differs from the paper by two; the denominator is disclosed rather than
+adjusted. `respond_no_solution` is not treated as an unanswerable label. Every eligible target here has references,
+so natural-unanswerable accuracy is **N/A**. Target references map to deduplicated passage IDs; the mapper supports
+multiple spans, passages, documents and domains even though each eligible target in this pin maps to one passage.
+
+Retrieval inputs contain the current user turn and at most four previous individual turns, newest first, using
+`user:`/`agent:` labels separated by ` [SEP] `. The oldest history is dropped first above 1,024 local cl100k tokens;
+an overlong current utterance fails rather than being silently shortened. Generation history contains the same
+retained turns chronologically. A last-user-turn-only variant is also materialized. Target replies, acts and qrels
+are stored separately from model inputs. The tokenizer is the existing offline, hash-pinned cl100k vocabulary with
+tiktoken 0.14.0; its complete identity is in the manifest. These counts are not provider request or billing counts.
+
+The official validation split serves as sealed test because the official test file is a dummy. Dialogue ranking
+uses SHA-256 of `g0/v1|20261114|{domain}|{dial_id}`. Dev takes the first 80 train dialogues (500 queries); G8 starts
+with the remaining 3,394 (20,951 queries). Retrieval takes the first 300 validation dialogues (1,940 queries).
+Within retrieval, prefix `g0/answers/v1` selects 200 dialogues (1,302 queries); within answers, `g0/full/v1` selects
+six (42 queries). Each ranking breaks ties by domain/ID. The answer set has 1,038 responding turns (the three
+`respond_solution` variants) and 264 clarification turns (`query_condition`). Cohorts and their four design hashes
+reproduce the accepted design without using model outcomes.
+
+Exact UTF-8 query-hash audits compare dev, the G8 pool and **all** validation queries. G8 training excludes 1,713
+query IDs sharing either a rendered retrieval input or last-user-turn input with another partition, leaving
+**19,238 eligible training queries**. This does not change frozen cohort membership. The manifest records the
+exclusion count and sorted query-ID hash, plus cross-partition group counts and hashes (37 retrieval-input
+groups, 196 last-turn groups). Passage overlap
+is audited by body and heading-plus-body hash (872 and 911 groups respectively); shared source passages are
+intentional corpus reuse and alone do not exclude training queries. These exact-match checks do not detect all
+semantic overlap, and public benchmark/model-training contamination cannot be excluded. Human grounding qrels
+may omit other valid evidence, and human replies are not exact-match answer-correctness labels.
+
+An independent coordinator probe of 200 random queries found every gold span inside a qrel passage body
+(zero misses). Three target replies also occurred in the inputs because the human agent had said the same text
+earlier in the dialogue. This natural repetition is a data property, not pipeline target leakage; the probe
+does not establish exhaustive corpus coverage.
+
+The compact public manifest binds full derivations with SHA-256: the complete passage identity/span/content-hash
+list (canonical JSON sorted by passage ID), all qrels (canonical JSONL sorted by query ID, each with sorted
+passage IDs), sorted query-ID lists for every cohort, and the sorted G8 exclusion list. Canonical JSON uses
+sorted keys, ASCII escaping and compact separators. JSONL and ID lists include a trailing LF; canonical JSON
+lists do not. Exact private `passages.jsonl`, `queries.jsonl` and `references.jsonl` byte hashes are also pinned.
+The four registerable cohorts (`dev`, `retrieval`, `answers`, `full_context`) publish their sorted `query_ids`
+alongside `query_ids_sha256`; both the dataset verifier and QA contract check their agreement. The G8 pool
+remains hash-only. Dialogue IDs are also listed for the four registerable cohorts.
+Downstream consumers read per-query qrels from private `references.jsonl` and verify its manifest-bound hash.
+The committed manifest uses compact JSON with a trailing LF, targets at most 300 KB and must stay below 1 MB.
+
+To materialize privately, run through the configured development environment:
+
+```text
+python -B scripts/devenv.py uv --project evals run --offline --frozen -- python -B -m policyops_evals.datasets.multidoc2dial build --archive <private-archive.zip> --out <new-directory-under-POLICYOPS_TEMP_DIR>
+```
+
+The command verifies the complete derivation against the committed manifest before writing `passages.jsonl`,
+`queries.jsonl`, `references.jsonl` and a private manifest copy. Output must be a new directory below the absolute
+`POLICYOPS_TEMP_DIR` and outside the repository; existing output is never overwritten. Set
+`POLICYOPS_MD2D_ARCHIVE` to the private archive path to enable the real-archive test, which rebuilds and compares
+every field, count and hash of the manifest. Default synthetic tests require no dataset download or provider calls.

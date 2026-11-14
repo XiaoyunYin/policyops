@@ -93,6 +93,9 @@ EVAL_COMPOSITION_FILES = {
     # T32 registration/runtime composition and trusted SQL normalization use
     # the existing minimal-agent and ledger APIs. Frozen reporting stays pure.
     "studies/registration.py", "studies/runner_v2.py", "studies/snapshots.py",
+    # G0: the dataset builder counts query tokens with the app tokenizer, and the QA contract prices and registers
+    # through the existing budget/evaluation ledger APIs (no new application modules).
+    "datasets/multidoc2dial.py", "qa_studies/config.py", "qa_studies/registration.py",
 }
 EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persistence.roles"}
 

@@ -1,0 +1,207 @@
+{
+  "schema_version": "policyops.qa-study/v1",
+  "study_id": "f312ebc0-c86d-41d3-a026-d406bdc938fb",
+  "name": "g1-dev-example-v1",
+  "purpose": "dev",
+  "protocol_version": "g0.qa-protocol-v1",
+  "registration_sha256": null,
+  "example": true,
+  "data": {
+    "dataset": "multidoc2dial-v1",
+    "archive_sha256": "f0c034c249663d7b3cb08b19cf2cc2c3d101372485be982621d4711931a1ce00",
+    "revision": "v1.0-archive-20261114",
+    "members": [
+      {
+        "name": "multidoc2dial/multidoc2dial_doc.json",
+        "sha256": "7205be05b7c260fd3c0eda4d98a4abddf7af66c364238f1be509aa139414012d"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_train.json",
+        "sha256": "c9a6ef2e0be22306429e0affa51c2ca164b2808a89a999e7756700170ed15d96"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_validation.json",
+        "sha256": "ce063938b53d96f6128275d76c0ba967a435e3d865d011aaeb6461c2538b2ce4"
+      }
+    ],
+    "corpus": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "passages": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "queries": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "qrels": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "references": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "splits": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "sampling": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "eligibility_version": "md2d.adjacent-agent-exclude-no-solution-v1"
+  },
+  "arms": [
+    {
+      "kind": "retrieval_only",
+      "name": "fts",
+      "retrieval": {
+        "method": "fts",
+        "query_profile": "history-four-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "kind": "retrieval_only",
+      "name": "rrf",
+      "retrieval": {
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ],
+  "judge": null,
+  "schedule": {
+    "cohorts": [
+      {
+        "name": "dev",
+        "manifest": {
+          "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+          "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+        },
+        "split": "train",
+        "question_count": 500,
+        "dialogue_count": 80,
+        "optional": false,
+        "included": true,
+        "manifest_cohort": "dev"
+      }
+    ],
+    "assignments": [
+      {
+        "arm": "fts",
+        "cohort": "dev"
+      },
+      {
+        "arm": "rrf",
+        "cohort": "dev"
+      }
+    ],
+    "repetitions": 1,
+    "balanced_order_seed": 20261114,
+    "order_algorithm": "sha256-rotation-v1",
+    "slot_algorithm": "uuid5-study-cohort-question-arm-repetition-v1"
+  },
+  "analysis": {
+    "comparisons": [
+      {
+        "name": "rrf-vs-fts",
+        "candidate": "rrf",
+        "reference": "fts",
+        "cohort": "dev",
+        "stratum": "all",
+        "required_questions": 500,
+        "estimand": "recall_at_5",
+        "denominator": "scheduled-questions-strict-non-success",
+        "decision": "superiority",
+        "margin": "0",
+        "direction": "candidate-minus-reference",
+        "alpha": "0.0125",
+        "compound": null
+      }
+    ],
+    "estimand_version": "g0.qa-estimands-v1",
+    "bootstrap_algorithm": "sha256-whole-dialogue-question-weighted-ratio-v1",
+    "bootstrap_seed": 20261114,
+    "bootstrap_replicates": 10000,
+    "ordinary_interval": "two-sided-95-percent",
+    "multiplicity": "bonferroni-directional-intersection-union-v1",
+    "familywise_alpha": "0.05",
+    "missingness": "strict-non-success",
+    "judge_gate": {
+      "min_kappa": "0.6",
+      "lower_kappa_exclusive": "0.4",
+      "max_false_pass": "0.10",
+      "require_complete": true,
+      "transfer_limitation": "benchmark-agreement-not-domain-calibration"
+    }
+  },
+  "execution": {
+    "price_snapshot_id": "pricing.2026-11-05.v1",
+    "stages": [
+      {
+        "name": "shared-query-embedding",
+        "arm": null,
+        "cohort": "dev",
+        "role": "embedding",
+        "model": "text-embedding-3-small",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "max_input_tokens": 1024,
+        "max_output_tokens": 0,
+        "cache_policy": "none",
+        "caps": {
+          "usd": "1",
+          "calls": 1000,
+          "counts": 1000,
+          "input_tokens": 1000000,
+          "output_tokens": 1000000,
+          "seconds": 3600
+        }
+      }
+    ],
+    "cumulative_caps": {
+      "usd": "5",
+      "calls": 1000,
+      "counts": 1000,
+      "input_tokens": 1000000,
+      "output_tokens": 1000000,
+      "seconds": 3600
+    },
+    "program_ledger_key": "gap-program-v1",
+    "program_cap_usd": "46",
+    "retries": 0,
+    "repairs": 0,
+    "request_deadline_seconds": 30,
+    "unresolved_liability_policy": "hold-worst-case-block-decisions-and-resume-no-reissue",
+    "artifact_max_observations": 10000
+  },
+  "provenance": {
+    "source_revision": null,
+    "dirty_sha256": null,
+    "locks": [
+      {
+        "path": "uv.lock",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "path": "evals/uv.lock",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "machine": "EXAMPLE: replace with measured machine metadata",
+    "database": "EXAMPLE: replace with owned PostgreSQL identity",
+    "runtime": "EXAMPLE: replace with Python, DB, tokenizer and adapter versions",
+    "development_selection_receipts": []
+  }
+}

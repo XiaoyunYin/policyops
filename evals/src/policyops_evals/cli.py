@@ -302,7 +302,7 @@ def command_judge_calibration(args: argparse.Namespace) -> int:
         print(f"policyops-evals: judge calibration refused: {type(error).__name__}", file=sys.stderr)
         return 1
     report(result)
-    return 0
+    return 1 if result.get("complete") is False else 0
 
 
 def command_qa_study(args: argparse.Namespace) -> int:

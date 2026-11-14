@@ -39,11 +39,14 @@ from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.providers.calls import CallLimits, CallReport, Providers, call
 from policyops.providers.canonical import canonical_bytes as provider_bytes
 from policyops.providers.contract import require_clean_environment
+from policyops.providers.results import STOP_REASONS
 from policyops.providers.serialize import prepare
 from policyops.providers.tokenizer import InputRefused, Tokenizer, load
+from policyops_contracts.provider_failures import failure_code
 from policyops_evals.canonical import canonical_bytes, sha256_bytes, verify_self_digest, with_self_digest
 from policyops_evals.qa_studies.judges import (
     ARMS,
+    ELIGIBILITY_MAX_INPUT,
     MAX_INPUT,
     MAX_OUTPUT,
     JudgeArm,
@@ -185,7 +188,7 @@ def _count_template(arm: JudgeArm) -> tuple[bytes, bytes]:
     not document fragments. Tests compare this with actual prepare on both
     providers; execution prepares every selected request through call as usual.
     """
-    req = request(arm, "__G6_DOCUMENT__", "__G6_STATEMENT__")
+    req = request(arm, "__G6_DOCUMENT__", "__G6_STATEMENT__", frozen_sampling=True)
     config = configuration(arm, "dev", Decimal("3"), 1200, 7200)
     prepared = prepare(req, config, "judge")
     marker = provider_bytes(req.messages[0].parts[0].model_dump()["text"])
@@ -195,7 +198,9 @@ def _count_template(arm: JudgeArm) -> tuple[bytes, bytes]:
 
 
 def count_projection(arm: JudgeArm, row: Row) -> bytes:
-    req = request(arm, row.document, row.claim)
+    # The published sample is frozen to v1 prompt/schema projections. Runtime
+    # v2 prompts and provider caps are bound separately in planning().
+    req = request(arm, row.document, row.claim, frozen_sampling=True)
     body, marker = _count_template(arm)
     return body.replace(marker, provider_bytes(req.messages[0].parts[0].model_dump()["text"]), 1)
 
@@ -207,7 +212,7 @@ def eligibility(row: Row, tokenizer: Tokenizer) -> tuple[dict[str, int], str | N
             counts[arm.name] = local_count(tokenizer, count_projection(arm, row))
     except (InputRefused, ValueError):
         return {}, "local_bounds"
-    return counts, "envelope" if any(admitted_tokens(n) > MAX_INPUT for n in counts.values()) else None
+    return counts, "envelope" if any(admitted_tokens(n) > ELIGIBILITY_MAX_INPUT for n in counts.values()) else None
 
 
 def build_sample(directory: Path, tokenizer: Tokenizer | None = None) -> dict[str, Any]:
@@ -346,6 +351,7 @@ def planning(sample: dict[str, Any], split: str, *, max_usd: Decimal, max_calls:
         "caps": {"usd": str(max_usd), "calls": max_calls, "counts": max_counts, "seconds": max_seconds,
                  "stage_usd": str(STAGE_USD[split]), "total_usd": "5", "retries": 0, "repairs": 0},
         "local_count_output_ceiling_usd": str(local_estimate), "reservation_ceiling_usd": str(worst),
+        "local_estimate_basis": "frozen v1 sampling projections; not a runtime/provider token ceiling",
         "actor_preflights": plans, "within_caps": True, "authorizes_paid_execution": False}
 
 
@@ -412,11 +418,58 @@ def require_registration(repository: EvaluationRepository, scope: UUID, payload:
 
 def verdict_record(report: CallReport) -> tuple[bool | None, bool]:
     result = report.result
-    settled = bool(report.attempts) and all(a.fate == "settled" for a in report.attempts)
+    settled = bool(report.attempts) and all(a.fate == "settled" or (
+        a.fate == "released" and not a.dispatch_granted and a.evidence is None) for a in report.attempts)
     parsed = (parse_verdict(result.structured_json) if report.status == "result" and result is not None
               and result.outcome == "structured" and not result.tool_calls else None)
-    valid = parsed is not None and settled and not report.cleanup_unconfirmed
+    valid = (parsed is not None and all(a.fate == "settled" for a in report.attempts) and settled
+             and not report.cleanup_unconfirmed)
     return (parsed.supported if valid and parsed else None), settled and not report.cleanup_unconfirmed
+
+
+def invalidity_diagnostics(report: CallReport) -> dict[str, Any]:
+    """Bounded metadata only. Output length is billed tokens, never output text.
+
+    The provider adapter discards invalid payloads. Its closed schema keyword
+    codes distinguish the causes without retaining content or schema paths.
+    """
+    result = report.result
+    category = None
+    if result is None:
+        category = "count_refused" if report.reason in {"count_rejected", "count_not_admitted"} else "call_error"
+    elif result.outcome == "refused":
+        category = "refusal"
+    elif result.outcome == "truncated":
+        category = "max_tokens" if result.stop_reason in {"max_tokens", "max_output_tokens"} else "truncated"
+    elif result.tool_calls or result.reason_code in {"unknown_tool", "duplicate_tool_call", "too_many_tool_calls",
+            "tool_call_malformed", "tool_arguments_not_json", "tool_arguments_schema", "tool_call_invalid",
+            "tool_arguments_too_large"}:
+        category = "tool_call"
+    elif result.reason_code is not None or result.outcome != "structured":
+        category = {"output_not_json": "not_json", "output_schema_required": "schema_missing_field",
+                    "output_schema_type": "wrong_type", "output_schema_max_length": "reason_overlength"
+                    }.get(result.reason_code or "", "invalid_output")
+    elif parse_verdict(result.structured_json) is None:
+        # Covers strict DTO checks beyond JSON Schema (e.g. whitespace-only).
+        category = "invalid_output"
+    return {"category": category, "output_tokens": None if result is None else result.usage.output,
+            "stop_reason": None if result is None or result.stop_reason not in STOP_REASONS else result.stop_reason}
+
+
+def safe_reason(reason: str | None) -> str | None:
+    """Do not serialize arbitrary exception/provider strings as diagnostics."""
+    allowed = {"count_rejected", "count_failed", "count_not_admitted", "count_cap", "count_unclaimed",
+        "blocked_by_overrun", "blocked_by_contract", "configuration_changed", "request_mismatch",
+        "legacy_intent", "run_not_active", "accounting_unconfirmed", "deadline", "deadline_already_passed",
+        "output_schema", "output_schema_required", "output_schema_type", "output_schema_max_length",
+        "output_not_json", "timeout", "cancelled", "count.attempt_timeout"}
+    if reason is None or reason in allowed:
+        return reason
+    # Existing closed provider failure codes retain count-phase attribution.
+    code = failure_code(reason)
+    if code is None:
+        return "other"
+    return ("count." if reason.startswith("count.") else "") + code
 
 
 def plain(value: Any, depth: int = 0) -> Any:
@@ -439,16 +492,17 @@ def plain(value: Any, depth: int = 0) -> Any:
 
 def billing_record(report: CallReport) -> dict[str, Any]:
     return {"status": report.status, "failure_code": report.failure_code,
+        "reason": safe_reason(report.reason),
         "usage": None if report.result is None else report.result.usage.model_dump(mode="json"),
         "attempts": [{"id": str(a.attempt_id), "fate": a.fate, "count_granted": a.count_granted,
-            "dispatch_granted": a.dispatch_granted,
+            "dispatch_granted": a.dispatch_granted, "reason": safe_reason(a.reason),
             "usage_evidence": None if a.evidence is None else plain(a.evidence)}
             for a in report.attempts]}
 
 
 async def execute(repository: EvaluationRepository, scope: UUID, lease: StudyLock,
                   sample: dict[str, Any], plan: dict[str, Any], receipt: dict[str, Any] | None,
-                  directory: Path, output: Path) -> None:
+                  directory: Path, output: Path) -> dict[str, Any]:
     schedule = scheduled(sample, plan["split"], receipt)
     wanted = {i["id"]: i for _, i in schedule}
     # Verify source bytes and every selected row BEFORE reading a credential.
@@ -485,6 +539,7 @@ async def execute(repository: EvaluationRepository, scope: UUID, lease: StudyLoc
     providers = Providers(credentials, lambda _: httpx2.AsyncHTTPTransport(trust_env=False))
     deadline = time.monotonic() + cap["seconds"]
     failure = None
+    executed = 0
     primary: BaseException | None = None
     try:
         with (output / "predictions.jsonl").open("xb") as handle:
@@ -507,18 +562,31 @@ async def execute(repository: EvaluationRepository, scope: UUID, lease: StudyLoc
                 predicted, settled = verdict_record(result)
                 record = {"id": item["id"], "arm": arm.name, "predicted": predicted,
                     "accounting_settled": settled, "cost_usd": None,
-                    "billing": billing_record(result)}
+                    "billing": billing_record(result), "invalidity": invalidity_diagnostics(result)}
                 try:
                     state = store.scope(scenario)
                     record["cost_usd"] = None if state is None else str(state.spent_usd)
+                    if (state is None or state.held_usd or state.calls_held or state.overrun or state.contract_block
+                            or (any(a.fate == "released" for a in result.attempts) and state.spent_usd)):
+                        failure = failure or "scenario_accounting_unconfirmed"
+                        record["accounting_settled"] = False
+                    study = store.scope(scope)
+                    if (study is None or study.held_usd or study.calls_held or study.overrun or study.contract_block):
+                        failure = failure or "study_accounting_unconfirmed"
+                        record["accounting_settled"] = False
                 except Exception:
                     # Keep available normalized billing evidence even if the DB
                     # is unavailable after a response/failed settlement.
                     failure = failure or "scenario_accounting_unavailable"
                     record["accounting_settled"] = False
+                if not record["accounting_settled"]:
+                    record["predicted"] = None
                 handle.write((json.dumps(record, sort_keys=True) + "\n").encode())
                 handle.flush()
                 os.fsync(handle.fileno())
+                executed += 1
+                if result.status in {"budget", "deadline", "contract_gap"}:
+                    failure = failure or "call_" + result.status
                 if failure or not settled or result.cleanup_unconfirmed:
                     failure = failure or "unsettled_or_cleanup_unconfirmed"
                     break
@@ -530,6 +598,9 @@ async def execute(repository: EvaluationRepository, scope: UUID, lease: StudyLoc
         try:
             try:
                 position = store.scope(scope)
+                if (position is None or position.held_usd or position.calls_held
+                        or position.overrun or position.contract_block):
+                    failure = failure or "study_accounting_unconfirmed"
             except Exception:
                 position = None
                 failure = failure or "study_accounting_unavailable"
@@ -539,6 +610,8 @@ async def execute(repository: EvaluationRepository, scope: UUID, lease: StudyLoc
             if primary is None:
                 raise
             primary.add_note("G6 settlement artifact unavailable; inspect the persisted ledger")
+    return {"complete": executed == len(schedule) and failure is None,
+            "executed": executed, "scheduled": len(schedule), "failure": failure}
 
 
 def command_run(sample: dict[str, Any], plan: dict[str, Any], receipt: dict[str, Any] | None, *,
@@ -570,11 +643,13 @@ def command_run(sample: dict[str, Any], plan: dict[str, Any], receipt: dict[str,
             registration = require_registration(repository, scope, payload) if payload is not None else None
             target = private_path(output)
             target.mkdir(parents=True, exist_ok=False)
-            write_private(target / "run.json", {"schema_version": "policyops.g6-run/v1", "plan": plan,
+            header = {"schema_version": "policyops.g6-run/v1", "plan": plan,
                 "source": source, "scope_id": str(scope), "registration": registration,
-                "started_at": datetime.now(UTC).isoformat(), "selection": receipt}, exclusive=True)
-            asyncio.run(execute(repository, scope, lease, sample, plan, receipt, directory, target))
-            return {"run": str(target), "within_caps": True}
+                "started_at": datetime.now(UTC).isoformat(), "selection": receipt, "complete": False}
+            write_private(target / "run.json", header, exclusive=True)
+            outcome = asyncio.run(execute(repository, scope, lease, sample, plan, receipt, directory, target))
+            write_private(target / "run.json", header | outcome)
+            return {"run": str(target), "within_caps": True, **outcome}
     finally:
         repository.engine.dispose()
 
@@ -634,7 +709,10 @@ def report_run(sample: dict[str, Any], run: Path, *, replicates: int = 10000,
         complete = (len(predictions) > 0 and all(p is not None for p in predictions) and accounting
                     and len(costs) == len(items) and all(c is not None for c in costs)
                     and settlement is not None and settlement["failure"] is None)
-        arms[arm.name] = {"binding": arm.binding(), "complete": complete, "pooled": pooled,
+        arms[arm.name] = {"binding": next(b for b in plan["bindings"] if b["arm"] == arm.name),
+            "complete": complete, "pooled": pooled,
+            "count_refused": sum(r.get("invalidity", {}).get("category") == "count_refused"
+                                 for (name, _), r in recorded.items() if name == arm.name),
             "constituents": constituents, "macro_balanced_accuracy": None if macro is None else str(macro),
             "cost_usd": str(sum((Decimal(c) for c in costs if c is not None), Decimal(0))),
             "missing": sum((arm.name, i["id"]) not in recorded for i in items)}
@@ -665,6 +743,7 @@ def report_run(sample: dict[str, Any], run: Path, *, replicates: int = 10000,
 def select_arm(report: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
     if (report["split"] != "dev" or report["sample_sha256"] != sample["manifest_sha256"]
             or set(report["arms"]) != {a.name for a in ARMS} or report["replicates"] != 10000
+            or any(report["arms"][a.name]["binding"] != a.binding() for a in ARMS)
             or any(not v["complete"] or v["macro_balanced_accuracy"] is None for v in report["arms"].values())):
         raise ValueError("G6 selection requires all three complete dev arms")
     def rank(name: str) -> tuple[Decimal, Decimal, Decimal, str]:

@@ -233,7 +233,16 @@ def _structured(prepared: PreparedRequest, text: str) -> tuple[str | None, str |
         return None, "output_not_unicode"
     if len(canonical.encode()) > MAX_JSON:
         return None, "structured_too_large"
-    if validation_errors(prepared.output, value):
+    errors = validation_errors(prepared.output, value)
+    if errors:
+        # Closed keywords only; retain neither paths nor model-supplied values.
+        # Callers need to distinguish missing/wrong fields from length failures
+        # after this adapter discards the invalid payload.
+        keywords = {error.split("@", 1)[0] for error in errors}
+        for keyword, code in (("required", "output_schema_required"), ("type", "output_schema_type"),
+                              ("maxLength", "output_schema_max_length")):
+            if keyword in keywords:
+                return None, code
         return None, "output_schema"
     return canonical, None
 

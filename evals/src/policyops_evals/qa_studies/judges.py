@@ -19,10 +19,13 @@ from policyops_contracts.model import Message, ModelRequest, OutputSpec, TextPar
 from policyops_evals.canonical import canonical_bytes, sha256_bytes
 
 
-MAX_INPUT = 6000
+ELIGIBILITY_MAX_INPUT = 6000
+# Provider counts differ from cl100k. This runtime ceiling is independently
+# reserved/priced; it must never change the frozen sampling rule below.
+MAX_INPUT = 10_000
 MAX_OUTPUT = 512
 MAX_TEXT_CHARS = 100_000
-MAX_VERDICT_BYTES = 2048
+MAX_VERDICT_BYTES = 8192
 COUNT_HEADROOM_PERCENT = 10
 COUNT_HEADROOM_MIN = 256
 
@@ -54,12 +57,26 @@ at most 240 characters). Do not copy long passages or restate the statement.
 """
 
 
-class Verdict(BaseModel):
+class SamplingVerdictV1(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True, hide_input_in_errors=True)
     supported: bool
     reason: Annotated[str, StringConstraints(min_length=1, max_length=240, strip_whitespace=True)]
 
 
+SAMPLING_SCHEMA_JSON = canonical_bytes(
+    SamplingVerdictV1.model_json_schema() | {"title": "Verdict"}).decode()
+UPSTREAM_ADAPTATION_V2 = UPSTREAM_ADAPTATION_V1.replace(
+    "a short explanation for your classification (at most 240 characters)",
+    "one or two sentences explaining your classification (at most 1,000 characters)")
+ENTAILMENT_RUBRIC_V2 = ENTAILMENT_RUBRIC_V1.replace(
+    "a short explanation,\nat most 240 characters", "one or two sentences,\nat most 1,000 characters")
+
+
+class Verdict(SamplingVerdictV1):
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=1000, strip_whitespace=True)]
+
+
+SCHEMA_VERSION = "claim_support_v2"
 SCHEMA_JSON = canonical_bytes(Verdict.model_json_schema()).decode()
 SCHEMA_SHA256 = sha256_bytes(SCHEMA_JSON.encode())
 
@@ -79,14 +96,14 @@ class JudgeArm:
     def binding(self) -> dict[str, str | int]:
         return {"arm": self.name, "model": self.model, "effort": self.effort,
                 "prompt_version": self.prompt_version, "prompt_sha256": self.prompt_sha256,
-                "schema_sha256": SCHEMA_SHA256, "max_input_tokens": MAX_INPUT,
+                "schema_version": SCHEMA_VERSION, "schema_sha256": SCHEMA_SHA256, "max_input_tokens": MAX_INPUT,
                 "max_output_tokens": MAX_OUTPUT, "cache_policy": "none"}
 
 
 ARMS = (
-    JudgeArm("luna-upstream-adaptation", "gpt-6-luna", "low", UPSTREAM_ADAPTATION_V1, "tau2-adaptation/v1"),
-    JudgeArm("luna-entailment", "gpt-6-luna", "low", ENTAILMENT_RUBRIC_V1, "entailment/v1"),
-    JudgeArm("haiku-entailment", "claude-haiku-5-5", "low", ENTAILMENT_RUBRIC_V1, "entailment/v1"),
+    JudgeArm("luna-upstream-adaptation", "gpt-6-luna", "low", UPSTREAM_ADAPTATION_V2, "tau2-adaptation/v2"),
+    JudgeArm("luna-entailment", "gpt-6-luna", "low", ENTAILMENT_RUBRIC_V2, "entailment/v2"),
+    JudgeArm("haiku-entailment", "claude-haiku-5-5", "low", ENTAILMENT_RUBRIC_V2, "entailment/v2"),
 )
 
 
@@ -97,23 +114,27 @@ def arm_named(name: str) -> JudgeArm:
     raise ValueError("unknown G6 judge arm")
 
 
-def request(arm: JudgeArm, document: str, statement: str) -> ModelRequest:
+def request(arm: JudgeArm, document: str, statement: str, *, frozen_sampling: bool = False) -> ModelRequest:
     """Accept text only: there is deliberately no label/row/metadata argument."""
     for value in (document, statement):
         if (not value.strip() or len(value) > MAX_TEXT_CHARS or "\x00" in value
                 or len(value.encode("utf-8")) > 200_000):
             raise ValueError("judge text outside bounds")
     payload = json.dumps({"document": document, "statement": statement}, ensure_ascii=False, sort_keys=True)
-    return ModelRequest(instructions=arm.prompt,
+    prompt = arm.prompt
+    if frozen_sampling:
+        prompt = UPSTREAM_ADAPTATION_V1 if arm.name == ARMS[0].name else ENTAILMENT_RUBRIC_V1
+    return ModelRequest(instructions=prompt,
         messages=(Message(role="user", parts=(TextPart(text=payload),)),), tool_choice="none",
-        output=OutputSpec(name="claim_support_v1", answer_schema_json=SCHEMA_JSON), max_output_tokens=MAX_OUTPUT)
+        output=OutputSpec(name="claim_support_v1" if frozen_sampling else SCHEMA_VERSION,
+            answer_schema_json=SAMPLING_SCHEMA_JSON if frozen_sampling else SCHEMA_JSON), max_output_tokens=MAX_OUTPUT)
 
 
 def local_count(tokenizer: Tokenizer, count_body: bytes) -> int:
     """Count the complete provider count projection, including schema and wrapper.
 
     This is cl100k, not a claim of exact provider billing. Runtime still uses the
-    official count endpoint and independently enforces the same actor bounds.
+    official count endpoint and independently enforces the larger runtime cap.
     """
     return tokenizer.count(count_body.decode("utf-8"))
 

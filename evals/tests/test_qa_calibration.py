@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -11,7 +12,7 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID, uuid4, uuid5
 
 import pytest
@@ -146,7 +147,7 @@ def test_preflight_arithmetic_and_stage_partition(sample: dict[str, Any]) -> Non
     assert plan["caps"]["retries"] == plan["caps"]["repairs"] == 0
     assert plan["price_revision"] == "pricing.2026-11-05.v1"
     assert plan["authorizes_paid_execution"] is False
-    assert Decimal(plan["reservation_ceiling_usd"]) == Decimal("24") * Decimal("0.000856")
+    assert Decimal(plan["reservation_ceiling_usd"]) == Decimal("24") * Decimal("0.001256")
     assert Decimal(plan["local_count_output_ceiling_usd"]) == Decimal(24) * Decimal("0.0003816")
     assert sum(g6.STAGE_USD.values()) == Decimal(5)
     assert g6.scope_key(sample, "dev") != g6.scope_key(sample, "test")
@@ -294,9 +295,10 @@ def test_real_statistics_adapter_reports_errors_and_confusion(sample: dict[str, 
                                     "true_positive": 4, "error_negative": 0, "error_positive": 0}
 
 
-@pytest.mark.parametrize("mode", ["settled", "unresolved", "accounting-error"])
+@pytest.mark.parametrize("mode", ["settled", "unresolved", "accounting-error", "released", "held", "unknown",
+                                  "budget", "cleanup", "study-held", "count-failed", "deadline", "released-spent"])
 def test_offline_run_driver_caps_and_stop_on_unsettled(sample: dict[str, Any], tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch, mode: Literal["settled", "unresolved", "accounting-error"]) -> None:
+        monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=24, max_counts=24, max_seconds=7200)
     scope_id = uuid4()
     states = {scope_id: Scope(scope_id, "study", Decimal(3), 24, Decimal(0), Decimal(0), 0, 0, False)}
@@ -331,6 +333,7 @@ def test_offline_run_driver_caps_and_stop_on_unsettled(sample: dict[str, Any], t
         binding = args[2]
         assert args[3] == uuid5(scope_id, "g6-invocation/v1")
         assert args[6] == "judge"
+        assert kwargs["limits"].repairs == 0
         invoked.append(args[4])
         states[binding.scenario_id] = replace(states[binding.scenario_id], spent_usd=Decimal(".0002"))
         states[scope_id] = replace(states[scope_id], spent_usd=Decimal(".0002") * len(invoked),
@@ -339,22 +342,55 @@ def test_offline_run_driver_caps_and_stop_on_unsettled(sample: dict[str, Any], t
             structured_json='{"supported":false,"reason":"A brief fixture reason."}',
             usage=ReportedUsage(state="known", input_total=1000, cache_read=0, output=50)),
             "result", None, [AttemptRecord(uuid4(), args[4], None,
-                                          fate="settled" if mode == "settled" else "unresolved")])
+                                          fate="unresolved" if mode in {"unresolved", "accounting-error"}
+                                          else "settled")])
+        if mode in {"released", "count-failed", "budget", "cleanup", "deadline", "released-spent"} \
+                and len(invoked) == 1:
+            reason = report_reason(mode)
+            report = CallReport(None, "budget" if mode == "budget" else "deadline" if mode == "deadline"
+                else "failed", reason,
+                [AttemptRecord(uuid4(), args[4], None, fate="released", reason=reason,
+                    count_granted=mode != "budget", cleanup_confirmed=mode != "cleanup")])
+            if mode != "released-spent":
+                states[binding.scenario_id] = replace(states[binding.scenario_id], spent_usd=Decimal(0))
+        if mode == "held":
+            states[binding.scenario_id] = replace(states[binding.scenario_id], held_usd=Decimal(".01"))
+        if mode == "unknown":
+            del states[binding.scenario_id]
+        if mode == "study-held":
+            states[scope_id] = replace(states[scope_id], held_usd=Decimal(".01"))
         if mode == "accounting-error":
             raise AccountingUnconfirmed(report)
         return report
     monkeypatch.setattr(g6, "call", fake_call)
     repository: Any = SimpleNamespace(engine=object())
     lease: Any = SimpleNamespace()
-    asyncio.run(g6.execute(repository, scope_id, lease, sample, plan, None, tmp_path, tmp_path))
+    outcome = asyncio.run(g6.execute(repository, scope_id, lease, sample, plan, None, tmp_path, tmp_path))
     predictions = [json.loads(line) for line in (tmp_path / "predictions.jsonl").read_bytes().splitlines()]
-    assert len(invoked) == (24 if mode == "settled" else 1)
+    finishes = mode in {"settled", "released", "count-failed"}
+    # A held study is also checked before continuing, not just on finalization.
+    assert len(invoked) == (24 if finishes else 1)
     assert len(set(invoked)) == len(invoked)
     assert len(predictions) == len(invoked)
-    assert all(p["predicted"] is False if mode == "settled" else p["predicted"] is None for p in predictions)
-    assert predictions[0]["billing"]["usage"]["input_total"] == 1000
+    assert outcome["complete"] is finishes
+    assert outcome["executed"] == len(invoked) and outcome["scheduled"] == 24
+    if mode in {"released", "count-failed", "budget", "cleanup", "deadline"}:
+        assert predictions[0]["predicted"] is None and predictions[0]["cost_usd"] == "0"
+        assert predictions[0]["billing"]["reason"] == report_reason(mode)
+        assert all(p["predicted"] is False for p in predictions[1:])
+        assert predictions[0]["invalidity"]["category"] == ("count_refused" if mode == "released" else "call_error")
+    elif mode == "settled":
+        assert all(p["predicted"] is False for p in predictions)
+        assert predictions[0]["billing"]["usage"]["input_total"] == 1000
+    else:
+        assert predictions[0]["accounting_settled"] is False
     assert "Document dev" not in (tmp_path / "predictions.jsonl").read_text(encoding="utf-8")
     assert "fixture reason" not in (tmp_path / "predictions.jsonl").read_text(encoding="utf-8")
+
+
+def report_reason(mode: str) -> str:
+    return {"released": "count_rejected", "count-failed": "count.http_429", "budget": "count_cap",
+            "cleanup": "count.attempt_timeout", "deadline": "deadline", "released-spent": "count_rejected"}[mode]
 
 
 def test_persisted_admission_precedes_key_read(sample: dict[str, Any], tmp_path: Path,
@@ -394,6 +430,57 @@ def test_cli_preflight_and_opt_in_refusal(capsys: pytest.CaptureFixture[str]) ->
     assert '"authorizes_paid_execution": false' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("complete", [False, True])
+def test_cli_and_run_header_reflect_stage_completion(sample: dict[str, Any], tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch, complete: bool) -> None:
+    monkeypatch.setattr(g6, "load_sample", lambda _: sample)
+    monkeypatch.setattr(g6, "source_provenance", lambda: {})
+    disposed = []
+    repository = SimpleNamespace(engine=SimpleNamespace(dispose=lambda: disposed.append(True)),
+                                 study_lock=lambda _: nullcontext())
+    monkeypatch.setattr(g6, "environment_repository", lambda: repository)
+    monkeypatch.setattr(g6, "EvalLedgerStore", lambda *_, **__: SimpleNamespace(ensure_study=lambda *_, **__: uuid4()))
+    async def execute(*args: Any) -> dict[str, Any]:
+        header = g6.read_json(args[-1] / "run.json")
+        assert header["complete"] is False
+        return {"complete": complete, "executed": 24 if complete else 1, "scheduled": 24,
+                "failure": None if complete else "unsettled_or_cleanup_unconfirmed"}
+    monkeypatch.setattr(g6, "execute", execute)
+    target = tmp_path / "run"
+    assert main(["judge-calibration", "run", "--split", "dev", "--max-usd", "3", "--max-calls", "24",
+        "--max-counts", "24", "--max-seconds", "7200", "--data", str(tmp_path), "--out", str(target),
+        "--execute-paid"]) == (0 if complete else 1)
+    assert g6.read_json(target / "run.json")["complete"] is complete
+    assert disposed == [True]
+
+
+def test_count_refused_is_an_error_in_the_full_denominator(sample: dict[str, Any], tmp_path: Path) -> None:
+    run = fake_run(tmp_path / "dev", sample)
+    predictions = [json.loads(line) for line in (run / "predictions.jsonl").read_bytes().splitlines()]
+    predictions[0].update(predicted=None, invalidity={"category": "count_refused"}, cost_usd="0")
+    (run / "predictions.jsonl").write_bytes(b"".join((json.dumps(r) + "\n").encode() for r in predictions))
+    report = g6.report_run(sample, run, calculate=stub_agreement)
+    arm = report["arms"][ARMS[0].name]
+    assert arm["count_refused"] == arm["pooled"]["errors"] == 1
+    assert arm["pooled"]["n"] == 8 and arm["missing"] == 0
+
+
+def test_old_prompt_bindings_cannot_be_selected_as_v2(sample: dict[str, Any], tmp_path: Path) -> None:
+    run = fake_run(tmp_path / "dev", sample)
+    header = g6.read_json(run / "run.json")
+    header["plan"]["bindings"][0]["prompt_version"] = "tau2-adaptation/v1"
+    (run / "run.json").write_bytes(canonical_bytes(header))
+    report = g6.report_run(sample, run, calculate=stub_agreement)
+    assert report["arms"][ARMS[0].name]["binding"]["prompt_version"] == "tau2-adaptation/v1"
+    with pytest.raises(ValueError, match="complete"):
+        g6.select_arm(report, sample)
+
+
+def test_billing_reason_is_allowlisted() -> None:
+    report = CallReport(None, "failed", "private customer output", [])
+    assert g6.billing_record(report)["reason"] == "other"
+
+
 def test_billing_record_serializes_frozen_ledger_evidence() -> None:
     # Regression (coordinator, first paid G6 dev call): asdict() deep-copied MappingProxyType fields of the real
     # Usage/Diagnostic evidence and raised TypeError after a settled call, aborting the stage.
@@ -407,7 +494,8 @@ def test_billing_record_serializes_frozen_ledger_evidence() -> None:
                         None, Diagnostic(("usage_malformed",), {}))
     attempt = SimpleNamespace(attempt_id=uuid4(), fate="settled", count_granted=True, dispatch_granted=True,
                               evidence=evidence)
-    report = SimpleNamespace(status="result", failure_code=None, result=None, attempts=(attempt,))
+    attempt.reason = None
+    report = SimpleNamespace(status="result", failure_code=None, reason=None, result=None, attempts=(attempt,))
     record = billing_record(report)  # type: ignore[arg-type]
     usage = record["attempts"][0]["usage_evidence"]
     assert usage["usage"]["cache_writes"] == {"30m": 10}

@@ -3,15 +3,24 @@
 from dataclasses import replace
 from decimal import Decimal
 import json
+from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from policyops.providers.calls import AttemptRecord, CallReport
+from policyops.providers.results import Evidence, anthropic_result, openai_result
+from policyops.providers.schema import check_schema
 from policyops.providers.serialize import prepare
 from policyops_contracts.model import ModelResult, ReportedUsage
 from policyops_evals.canonical import sha256_bytes
-from policyops_evals.qa_studies.calibration import Row, configuration, count_projection, verdict_record
+from policyops_evals.qa_studies.calibration import (
+    Row,
+    configuration,
+    count_projection,
+    invalidity_diagnostics,
+    verdict_record,
+)
 from policyops_evals.qa_studies.judges import (
     ARMS,
     ENTAILMENT_RUBRIC_V1,
@@ -63,7 +72,7 @@ def test_hashes_and_real_serializers() -> None:
         config = configuration(arm, "dev", Decimal("3"), 1200, 7200)
         prepared = prepare(request(arm, "The color is blue.", "The color is blue."), config, "judge")
         assert prepared.output is not None
-        assert prepared.max_input == 6000 and prepared.max_output == 512
+        assert prepared.max_input == 10000 and prepared.max_output == 512
         assert b"blue" in prepared.count_body
         assert arm.binding()["schema_sha256"] == SCHEMA_SHA256
 
@@ -75,7 +84,7 @@ def test_sampling_count_projection_equals_actual_serializer(document: str, claim
     row = Row("dev", 1, "Wice", document, claim, True)
     for arm in ARMS:
         config = configuration(arm, "dev", Decimal("3"), 1200, 7200)
-        actual = prepare(request(arm, document, claim), config, "judge").count_body
+        actual = prepare(request(arm, document, claim, frozen_sampling=True), config, "judge").count_body
         assert count_projection(arm, row) == actual
 
 
@@ -84,7 +93,7 @@ def test_sampling_count_projection_equals_actual_serializer(document: str, claim
     '{"supported":true,"reason":"  "}', '{"supported":true,"reason":"ok","label":1}',
     '{"supported":false,"supported":true,"reason":"ok"}',
     '{"supported":true,"reason":NaN}', "```json\n{}\n```",
-    json.dumps({"supported": True, "reason": "x" * 241}), "x" * 2049, "\ud800"])
+    json.dumps({"supported": True, "reason": "x" * 1001}), "x" * 8193, "\ud800"])
 def test_invalid_verdict_is_none(payload: str | None) -> None:
     assert parse_verdict(payload) is None
 
@@ -114,3 +123,87 @@ def test_headroom_rounds_up() -> None:
     assert admitted_tokens(5001) == 5502
     assert admitted_tokens(5454) == 6000
     assert admitted_tokens(5455) == 6001
+
+
+@pytest.mark.parametrize("size", [241, 1000])
+def test_generous_reason_bound_is_identical_across_arms(size: int) -> None:
+    for arm in ARMS:
+        assert "one or two sentences" in arm.prompt
+        assert arm.prompt_version.endswith("/v2")
+        assert request(arm, "doc", "claim").output.name == "claim_support_v2"  # type: ignore[union-attr]
+    assert parse_verdict(json.dumps({"supported": False, "reason": "x" * size})) is not None
+    assert parse_verdict(json.dumps({"supported": False, "reason": "\u00e9" * size})) is not None
+
+
+@pytest.mark.parametrize("arm_index", [0, 2])
+@pytest.mark.parametrize("category", [None, "not_json", "schema_missing_field", "reason_overlength", "wrong_type",
+                                      "tool_call", "refusal", "max_tokens", "invalid_output"])
+def test_invalidity_diagnostics_on_both_provider_shapes(arm_index: int, category: str | None) -> None:
+    arm = ARMS[arm_index]
+    prepared = prepare(request(arm, "private document", "private claim"),
+                       configuration(arm, "dev", Decimal(3), 1200, 7200), "judge")
+    payload = {
+        None: '{"supported":false,"reason":"A short explanation."}',
+        "not_json": "non-JSON private output",
+        "schema_missing_field": '{"reason":"A short explanation."}',
+        "reason_overlength": json.dumps({"supported": True, "reason": "x" * 1001}),
+        "wrong_type": '{"supported":"true","reason":"A short explanation."}',
+        "invalid_output": '{"supported":true,"reason":"ok","extra":"private"}',
+    }.get(category, "")
+    evidence = Evidence(None, ReportedUsage(state="known", input_total=1455, cache_read=0, output=89),
+                        None, None)
+    if arm_index == 0:
+        raw: dict[str, Any] = {"status": "completed", "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": payload}]}]}
+        stop = "completed"
+        if category == "tool_call":
+            raw["output"] = [{"type": "function_call", "call_id": "call-1", "name": "unknown", "arguments": "{}"}]
+        elif category == "refusal":
+            raw["output"] = [{"type": "message", "content": [{"type": "refusal", "refusal": "private"}]}]
+            stop = "refusal"
+        elif category == "max_tokens":
+            raw = {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}
+            stop = "max_output_tokens"
+        normalized = openai_result(raw, prepared, evidence)
+    else:
+        content: list[dict[str, object]] = [{"type": "text", "text": payload}]
+        stop = "end_turn"
+        if category == "tool_call":
+            content = [{"type": "tool_use", "id": "call-1", "name": "unknown", "input": {}}]
+            stop = "tool_use"
+        elif category in {"refusal", "max_tokens"}:
+            stop = category
+        normalized = anthropic_result({"content": content, "stop_reason": stop}, prepared, evidence)
+    report = CallReport(normalized, "result", normalized.reason_code,
+                        [AttemptRecord(uuid4(), "judge", None, fate="settled")])
+    assert invalidity_diagnostics(report) == {"category": category, "output_tokens": 89, "stop_reason": stop}
+    assert verdict_record(report) == (False if category is None else None, True)
+    # The full local schema is authoritative; neither provider wire schema
+    # promises to enforce explanation length.
+    schema = check_schema(SCHEMA_JSON)
+    assert "maxLength" in schema.projected_away
+    assert b"maxLength" not in schema.wire
+    assert json.loads(schema.domain)["required"] == ["supported", "reason"]
+
+
+def test_release_requires_no_dispatch_evidence_or_unconfirmed_cleanup() -> None:
+    attempt = AttemptRecord(uuid4(), "judge", None, fate="released", count_granted=True,
+                            cleanup_confirmed=True, reason="count_rejected")
+    report = CallReport(None, "failed", "count_rejected", [attempt])
+    assert verdict_record(report) == (None, True)
+    assert invalidity_diagnostics(report)["category"] == "count_refused"
+    attempt.dispatch_granted = True
+    assert verdict_record(report) == (None, False)
+    attempt.dispatch_granted = False
+    attempt.evidence = Evidence(None, ReportedUsage(state="unknown"), None, None)
+    assert verdict_record(report) == (None, False)
+    attempt.evidence = None
+    attempt.cleanup_confirmed = False
+    assert verdict_record(report) == (None, False)
+
+
+def test_diagnostics_discard_unknown_stop_reasons() -> None:
+    report = result('{"supported":true,"reason":"ok"}')
+    assert report.result is not None
+    report.result = report.result.model_copy(update={"stop_reason": "private output"})
+    assert invalidity_diagnostics(report)["stop_reason"] is None

@@ -1,12 +1,15 @@
 # PolicyOps
 
+[![CI](https://github.com/XiaoyunYin/policyops/actions/workflows/ci.yml/badge.svg)](https://github.com/XiaoyunYin/policyops/actions/workflows/ci.yml)
+
 PolicyOps is an AI operations workbench for investigating fictional retail support cases,
 reviewing cited proposals, and approving simulated order changes.
 It separates model suggestions from deterministic authorization, then uses durable operation
 IDs and receipts to reconcile writes whose responses are lost.
 
 **Status:** local showcase, verified locally including real-browser E2E on the Compose stack;
-not deployed. Hosted CI has not run yet: the code was built and checked locally before its first push.
+not deployed. GitHub Actions runs the offline gates on Ubuntu and Windows and the
+PostgreSQL/Dex integration suites on Ubuntu, with no secrets or model calls.
 The default Compose stack leaves model-driven investigation unconfigured. Its browser demo
 starts from a deterministic proposal and exercises real consent, approval and simulator execution.
 

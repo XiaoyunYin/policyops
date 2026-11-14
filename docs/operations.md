@@ -314,8 +314,9 @@ approval, receipt-backed execution and a same-reviewer two-context race. Kill-af
 reconciled by lookup without resend; the stopped-writer same-cluster separate-database
 restore passed its selected data, grants, ownership, RLS and replay checks.
 See [the evidence report](evaluation.md#recovery-and-e07-correctness) for scope and limits.
-The default stack does not install model-driven investigation. Hosted CI, external TLS
-deployment, host-loss recovery and broader accessibility review remain unverified.
+The default stack does not install model-driven investigation. The Compose stack and browser
+flows are not part of hosted CI. External TLS deployment, host-loss recovery and broader
+accessibility review remain unverified.
 
 ## Development setup
 
@@ -451,10 +452,10 @@ Teardown removes the container by ID after checking its labels and fails if it i
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs on Ubuntu and Windows without secrets or model API keys: publication guard plus gitleaks over full history, both Python environments (frozen sync, lint, strict type checks, tests) and the web checks. Before the application tests, a setup step provisions the pinned cl100k_base vocabulary with `scripts/fetch_tokenizer_vocab.py` (one fixed URL, hash-checked, at most 2 MiB); the tests themselves never download. An Ubuntu-only job pulls the pinned PostgreSQL and Dex images by digest, runs the application's `pytest -m postgres` (database, authentication and real-issuer tests) and the evaluator's (retail simulator database tests), and then fails if an owned container or a new Docker volume remains; Windows runners have no Linux container engine. That job's timeout is 45 minutes (the local full application PostgreSQL run took about 23 minutes on Windows; the hosted job has not been run). Its temporary root is `$RUNNER_TEMP/policyops`, outside the checkout, and each job finishes with `scripts/check_repo_artifacts.py`, which lists every untracked or ignored path individually (including inside ignored directories) and fails on files left in the checkout. The web job records the tree `npm ci` installed (failing if the install wrote anywhere else) and afterwards fails on any new path, including new files under `node_modules/`; it also checks the generated API types against the OpenAPI document. The PostgreSQL job installs the web dependencies the same way, for the TypeScript response check. Actions are pinned to commit SHAs. Container image pins (PostgreSQL 17 with pgvector, Dex, Caddy) are recorded by digest in `infra/images.json`; Compose and Dockerfiles are implemented under `infra/` and at the repository root.
+`.github/workflows/ci.yml` runs on Ubuntu and Windows without secrets or model API keys: publication guard plus gitleaks over full history, both Python environments (frozen sync, lint, strict type checks, tests) and the web checks. Before the application tests, a setup step provisions the pinned cl100k_base vocabulary with `scripts/fetch_tokenizer_vocab.py` (one fixed URL, hash-checked, at most 2 MiB); the tests themselves never download. An Ubuntu-only job pulls the pinned PostgreSQL and Dex images by digest, runs the application's `pytest -m postgres` (database, authentication and real-issuer tests) and the evaluator's (retail simulator database tests), and then fails if an owned container or a new Docker volume remains; Windows runners have no Linux container engine. That job's timeout is 45 minutes (the local full application PostgreSQL run took about 23 minutes on Windows). Its temporary root is `$RUNNER_TEMP/policyops`, outside the checkout, and each job finishes with `scripts/check_repo_artifacts.py`, which lists every untracked or ignored path individually (including inside ignored directories) and fails on files left in the checkout. The web job records the tree `npm ci` installed (failing if the install wrote anywhere else) and afterwards fails on any new path, including new files under `node_modules/`; it also checks the generated API types against the OpenAPI document. The PostgreSQL job installs the web dependencies the same way, for the TypeScript response check. Actions are pinned to commit SHAs. Container image pins (PostgreSQL 17 with pgvector, Dex, Caddy) are recorded by digest in `infra/images.json`; Compose and Dockerfiles are implemented under `infra/` and at the repository root.
 
 The application has no `policyops eval` command; evaluation is the separate
 `policyops-evals preflight|run|report|taxonomy` CLI described in [evaluation](evaluation.md).
 The API does not automatically load `.env`; export explicit configuration or use mounted
-secrets. Hosted CI has not run. Local tests and workflow definitions do not establish a
-hosted green build.
+secrets. Hosted CI covers the workflow above; it does not build or run the Compose stack,
+the real-browser flows or any paid evaluation.

@@ -2,9 +2,9 @@
 
 The retail model comparison, authorization fixtures and recovery drills answer different
 questions. The registered holdout does **not** establish Luna's non-inferiority to Haiku;
-the deterministic safety suites passed their specified acceptance checks. All execution
-reported here was local. Hosted CI has not run, and no production or real-customer outcome
-is claimed. Raw trajectories, database dumps and execution bundles are not published.
+the deterministic safety suites passed their specified acceptance checks. All paid and
+recovery execution reported here was local; hosted CI runs only the offline and PostgreSQL
+test suites. No production or real-customer outcome is claimed. Raw trajectories, database dumps and execution bundles are not published.
 
 ## Method
 

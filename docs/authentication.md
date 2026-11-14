@@ -1,7 +1,7 @@
 # Authentication and authorization
 
-This page describes the implementation in `packages/policyops/src/policyops/{settings.py,auth/,api/auth.py}` and its tests. The real-issuer path was exercised only on Windows Docker Desktop: the pinned Dex image together with pinned PostgreSQL, via `pytest -m postgres`. Local Compose browser flows now also exercise Caddy/Dex sign-in; see [operations](operations.md#real-browser-workbench-acceptance).
-Linux hosts, hosted CI, macOS and external HTTPS deployment have not been exercised.
+This page describes the implementation in `packages/policyops/src/policyops/{settings.py,auth/,api/auth.py}` and its tests. The real-issuer path is exercised with the pinned Dex image and pinned PostgreSQL via `pytest -m postgres`, locally on Windows Docker Desktop and in the Ubuntu CI job. Local Compose browser flows now also exercise Caddy/Dex sign-in; see [operations](operations.md#real-browser-workbench-acceptance).
+macOS and external HTTPS deployment have not been exercised.
 
 ## Flow
 
@@ -179,7 +179,7 @@ Memberships for fictional users are provisioned explicitly by trusted code, neve
 
 ## Limits
 
-- **Not exercised.** Linux-host Docker, hosted CI and deployment behind HTTPS. Real-browser
+- **Not exercised.** Deployment behind HTTPS. Real-browser
   loopback HTTP sign-in is covered by the Compose scenarios; HTTPS cookie prefixes and production SameSite behavior are not established by those scenarios.
 - **Logging.** Access-log redaction applies only when uvicorn uses the provided log configuration. The local reverse proxy disables access logging; external deployment must review proxy diagnostics too.
 - **Cross-tab binding evidence.** It comes from the test client against real PostgreSQL as the runtime roles, plus jsdom with a fake API. The SSE cases also use loopback HTTP with uvicorn running in the test process and a fake identity provider. Native `EventSource` cannot supply the required headers.

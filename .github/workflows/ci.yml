@@ -119,7 +119,7 @@ jobs:
     name: PostgreSQL and Dex integration (ubuntu-24.04)
     runs-on: ubuntu-24.04
     # A bounded allowance for the application suite plus the evaluator's environment and PostgreSQL cases (the
-    # local full application PostgreSQL run took about 23 minutes on Windows; this job has not been run).
+    # local full application PostgreSQL run took about 23 minutes on Windows).
     timeout-minutes: 45
     defaults:
       run:

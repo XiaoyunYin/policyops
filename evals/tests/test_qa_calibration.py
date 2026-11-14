@@ -392,3 +392,24 @@ def test_cli_preflight_and_opt_in_refusal(capsys: pytest.CaptureFixture[str]) ->
     assert main(["judge-calibration", "preflight", "--split", "dev", "--max-usd", "3", "--max-calls", str(count),
                  "--max-counts", str(count), "--max-seconds", "7200"]) == 0
     assert '"authorizes_paid_execution": false' in capsys.readouterr().out
+
+
+def test_billing_record_serializes_frozen_ledger_evidence() -> None:
+    # Regression (coordinator, first paid G6 dev call): asdict() deep-copied MappingProxyType fields of the real
+    # Usage/Diagnostic evidence and raised TypeError after a settled call, aborting the stage.
+    from policyops.budget.ledger import Diagnostic
+    from policyops.budget.pricing import Usage
+    from policyops.providers.results import Evidence
+    from policyops_evals.qa_studies.calibration import billing_record
+
+    evidence = Evidence(Usage(input_total=1000, cache_read=0, cache_writes={"30m": 10}, output=50),
+                        ReportedUsage(state="known", input_total=1000, cache_read=0, output=50), "req-1", "gpt-6-luna",
+                        None, Diagnostic(("usage_malformed",), {}))
+    attempt = SimpleNamespace(attempt_id=uuid4(), fate="settled", count_granted=True, dispatch_granted=True,
+                              evidence=evidence)
+    report = SimpleNamespace(status="result", failure_code=None, result=None, attempts=(attempt,))
+    record = billing_record(report)  # type: ignore[arg-type]
+    usage = record["attempts"][0]["usage_evidence"]
+    assert usage["usage"]["cache_writes"] == {"30m": 10}
+    assert usage["diagnostic"] == {"codes": ["usage_malformed"], "counts": {}}
+    assert json.loads(json.dumps(record)) == record

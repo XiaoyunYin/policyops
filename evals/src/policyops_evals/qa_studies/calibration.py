@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
-from dataclasses import asdict, dataclass, replace
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
@@ -26,7 +26,7 @@ import unicodedata
 from uuid import UUID, uuid5
 
 import httpx2
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
 
 from policyops.budget.config import DEFAULT_ACTORS, Caps, ChatActor, Configuration
 from policyops.budget.ledger import EvalBinding
@@ -419,12 +419,30 @@ def verdict_record(report: CallReport) -> tuple[bool | None, bool]:
     return (parsed.supported if valid and parsed else None), settled and not report.cleanup_unconfirmed
 
 
+def plain(value: Any, depth: int = 0) -> Any:
+    """JSON-ready copy of billing evidence. `dataclasses.asdict` deep-copies field values, and the ledger's frozen
+    `Usage.cache_writes`/`Diagnostic.counts` are `MappingProxyType`, which cannot be copied, so convert explicitly."""
+    if depth > 8:
+        raise ValueError("G6 billing evidence nesting bound")
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: plain(getattr(value, f.name), depth + 1) for f in fields(value)}
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return {str(k): plain(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [plain(v, depth + 1) for v in value]
+    return str(value)
+
+
 def billing_record(report: CallReport) -> dict[str, Any]:
     return {"status": report.status, "failure_code": report.failure_code,
         "usage": None if report.result is None else report.result.usage.model_dump(mode="json"),
         "attempts": [{"id": str(a.attempt_id), "fate": a.fate, "count_granted": a.count_granted,
             "dispatch_granted": a.dispatch_granted,
-            "usage_evidence": None if a.evidence is None else json.loads(json.dumps(asdict(a.evidence), default=str))}
+            "usage_evidence": None if a.evidence is None else plain(a.evidence)}
             for a in report.attempts]}
 
 

@@ -90,11 +90,12 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertEqual(job.count(evaluator_setup), 1)
         self.assertIn("label=policyops.owner=policyops-tests", job)
         self.assertIn("if: always()", job)
-        # Both commands run after the pinned pulls and the volume baseline and before the always-run teardown;
-        # the evaluator's frozen environment is created before its command.
-        self.assertLess(job.index("volumes-before.txt"), job.index(app_command))
-        self.assertLess(job.index(app_command), job.index(evaluator_setup))
-        self.assertLess(job.index(evaluator_setup), job.index(evaluator_command))
+        # Both commands run after the pinned pulls and the volume baseline and before the always-run teardown.
+        # The evaluator's frozen environment is created before BOTH commands: the application's retail-client and
+        # execution cases start the evaluator-owned simulator from it.
+        self.assertLess(job.index("volumes-before.txt"), job.index(evaluator_setup))
+        self.assertLess(job.index(evaluator_setup), job.index(app_command))
+        self.assertLess(job.index(app_command), job.index(evaluator_command))
         self.assertLess(job.index(evaluator_command), job.index("if: always()"))
         self.assertLess(job.index(evaluator_command), job.index("volumes-after.txt"))
         step = job[job.index("      - name: Evaluator PostgreSQL"):]

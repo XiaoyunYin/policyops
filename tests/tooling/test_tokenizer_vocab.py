@@ -10,6 +10,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import sys
 import tempfile
 import threading
 from typing import Any
@@ -28,7 +29,7 @@ DATA = b"YQ== 0\n"
 
 def link_directory(link: Path, target: Path) -> None:
     """A directory link: a real junction on Windows (no privilege needed), a symlink elsewhere."""
-    if os.name == "nt":
+    if sys.platform == "win32":  # mypy narrows platform-only APIs on this check
         import _winapi
 
         _winapi.CreateJunction(str(target), str(link))

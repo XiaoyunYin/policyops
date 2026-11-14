@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 from typing import Any
 
@@ -210,7 +211,7 @@ def test_stderr_tail_keeps_bounded_lines_and_marks_truncation() -> None:
 
 
 def make_junction(link: Path, target: Path) -> None:
-    if os.name == "nt":
+    if sys.platform == "win32":  # mypy narrows platform-only APIs on this check
         import _winapi
         _winapi.CreateJunction(str(target), str(link))  # needs no symlink privilege
     else:

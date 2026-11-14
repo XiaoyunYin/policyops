@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -21,7 +21,7 @@ COMMITTED = REPO / "evals/manifests/tau2-19f13ea3/ingest-corpora.json"
 
 def link_directory(link: Path, target: Path) -> None:
     """A real junction on Windows (no privilege needed), a symlink elsewhere."""
-    if os.name == "nt":
+    if sys.platform == "win32":  # mypy narrows platform-only APIs on this check
         import _winapi
 
         _winapi.CreateJunction(str(target), str(link))

@@ -167,10 +167,11 @@ jobs:
           --write-baseline "$POLICYOPS_TEMP_DIR/reports/web-installed.txt" --installed apps/web/node_modules
       - name: Provision the pinned cl100k_base vocabulary (hash-checked; the tests never download)
         run: python3 -B scripts/fetch_tokenizer_vocab.py
-      - name: PostgreSQL integration tests
-        run: python3 -B scripts/devenv.py uv run --frozen pytest -m postgres
+      # The application's retail-client and execution cases start the evaluator-owned simulator from its environment.
       - name: Evaluator environment (separate frozen lock)
         run: python3 -B scripts/devenv.py uv sync --project evals --frozen
+      - name: PostgreSQL integration tests
+        run: python3 -B scripts/devenv.py uv run --frozen pytest -m postgres
       - name: Evaluator PostgreSQL integration tests (retail simulator database)
         working-directory: evals
         run: python3 -B ../scripts/devenv.py uv run --frozen pytest -m postgres

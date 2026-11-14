@@ -127,6 +127,25 @@ class Manifest(_Strict):
 
 
 @dataclass(frozen=True)
+class StructuralOrigin:
+    domain: str
+    document_id: str
+    start: int
+    end: int
+    heading: str
+    heading_only: bool
+
+
+class ArchiveMetadata(_Strict):
+    corpus_key: str
+    domain: str
+    publisher: str
+    license: str
+    license_scope: str
+    render: Literal["identity"] = "identity"
+
+
+@dataclass(frozen=True)
 class SourceDocument:
     document_key: str
     source_uri: str
@@ -136,6 +155,7 @@ class SourceDocument:
     raw_bytes: int
     body: str
     version_sha256: str  # SHA-256 of the rendered body's UTF-8 bytes
+    origin: StructuralOrigin | None = None
 
 
 @dataclass(frozen=True)
@@ -143,8 +163,11 @@ class SourceCorpus:
     manifest_sha256: str  # the exact manifest file bytes
     corpus_manifest_sha256: str  # this corpus's entry (canonical JSON), the generation's source digest
     revision: SourceRevision
-    corpus: ManifestCorpus
+    corpus: ManifestCorpus | ArchiveMetadata
     documents: tuple[SourceDocument, ...]
+    parser_version: str = "policyops.md/v1"
+    chunk_config: str = "chunk.cl100k-512-nooverlap/v1"
+    archive_sha256: str | None = None
 
 
 def source_uri(domain: str, document_key: str) -> str:

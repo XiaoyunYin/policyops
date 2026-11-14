@@ -60,6 +60,8 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Invariants enforced by the database
 
+Revision `0017` raises generation document counts to 0..5000 and membership ordinals to 0..4999 for the 4,110-passage structural corpus; chunks stay capped at 10,000, Markdown v1 stays capped at 2,000 documents, and downgrade atomically refuses rows outside the old bounds without altering data.
+
 - **Append-only records.** Messages, run events, consents, decisions, presentations, audit events, usage events, citations, traces and the request-idempotency ledger get `INSERT`/`SELECT` only. Other tables get column-level `UPDATE` grants, and nothing gets `DELETE`.
 - **Proposals.** A proposal's bound content cannot change. A trigger, which fires even for the owner and superusers, allows only setting the presentation time once and forward status moves.
 - **The binding chain.** Proposal, presentation, consent and decision records store every contract field and reconstruct to the exact contracts. Composite keys tie each record to the previous one: the same case, run, proposal version, action digest and presentation digest. They also tie each record to the referenced message's stored case, sequence, text digest, source and author. A record whose recorded evidence disagrees with the referenced row is rejected.

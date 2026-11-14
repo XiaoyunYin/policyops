@@ -6,6 +6,8 @@ remaining provider work. It writes nothing, reserves nothing, reads no credentia
 allows writes. Provider work (at least one cache miss) additionally needs explicit paid caps (`PaidCaps`): model,
 dimensions, USD, calls, input tokens and seconds, each bounded by `CEILINGS`. Without them an execute with misses is
 refused before any write. An all-cached import publishes locally without paid caps.
+`preflight` builds the same expected set and packs all distinct inputs assuming an empty cache, checks explicit
+caps, and returns before any database connection, credential read or request.
 
 **Paid preflight** (before any credential read, reservation or request), over the complete remaining miss plan
 (the frozen plan of an existing job, otherwise the plan the foundation would freeze):
@@ -43,6 +45,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Connection, Engine
 
 from policyops.budget.config import Caps, Configuration, EmbeddingActor
+from policyops.budget.pricing import Usage, cost
 from policyops.persistence.budget import build_app_ledger
 from policyops.persistence.corpora import (
     CorpusStore,
@@ -55,6 +58,7 @@ from policyops.persistence.embeddings import TERMINAL, EmbeddingStore, JobConfli
 from policyops.providers.calls import Providers
 from policyops.providers.embedding_calls import EmbedLimits, pack, prepare_job, run_job_sync
 from policyops.providers.tokenizer import Tokenizer
+from policyops.retrieval import archive_sources
 from policyops.retrieval.corpus import CorpusRefused, Expected, build_expected
 from policyops.retrieval.parse import CHUNK_CONFIG, PARSER_VERSION, ParseRefused
 from policyops.retrieval.sources import SourceRefused, read_corpus
@@ -70,7 +74,7 @@ PREPARE_SECONDS = 600.0
 MAX_USD_CEILING = Decimal("1.00")
 INT_CEILINGS: dict[str, int] = {"max_calls": 1000, "max_input_tokens": 5_120_000, "max_seconds": 3600}
 CEILINGS: dict[str, str] = {"max_usd": str(MAX_USD_CEILING), **{k: str(v) for k, v in INT_CEILINGS.items()}}
-Mode = Literal["plan", "execute"]
+Mode = Literal["plan", "execute", "preflight"]
 EXIT = {"planned": 0, "unchanged": 0, "activated": 0, "refused": 2, "embedding_incomplete": 3,
         "stale_activation": 4, "verification_failed": 1, "failed": 1}
 
@@ -132,6 +136,7 @@ class Request:
     acquisition_root: Path
     mode: Mode = "plan"
     paid: PaidCaps | None = None
+    profile: Literal["markdown", "structural"] = "markdown"
 
 
 def _base_actor() -> EmbeddingActor:
@@ -153,18 +158,21 @@ def ingest(request: Request, *, engine: Engine, tokenizer: Tokenizer, providers:
     if request.paid is not None and (request.paid.model, request.paid.dimensions) != (actor.model, actor.dimensions):
         return Outcome("refused", "paid_model_or_dimensions_mismatch", details)
     try:
-        corpus = read_corpus(request.manifest_raw, request.manifest_sha256, request.corpus_key,
-                             request.acquisition_root)
+        reader = archive_sources.read_corpus if request.profile == "structural" else read_corpus
+        corpus = reader(request.manifest_raw, request.manifest_sha256, request.corpus_key, request.acquisition_root)
         expected = build_expected(corpus, tokenizer, tokenizer_sha256=tokenizer.identity_sha256, model=actor.model,
                                   dimensions=actor.dimensions, deadline=time.monotonic() + PREPARE_SECONDS)
     except (SourceRefused, CorpusRefused) as exc:
         return Outcome("refused", exc.code, details | {"detail": exc.detail})
     except ParseRefused as exc:
         return Outcome("refused", exc.code, details | {"offset": exc.offset})
-    details |= {"render": corpus.corpus.render, "corpus_manifest_sha256": corpus.corpus_manifest_sha256,
+    details |= {"profile": request.profile, "parser": corpus.parser_version, "chunk_config": corpus.chunk_config,
+                "render": corpus.corpus.render, "corpus_manifest_sha256": corpus.corpus_manifest_sha256,
                 "generation_key_sha256": expected.generation_key_sha256,
                 "expected_set_sha256": expected.expected_set_sha256, "documents": len(expected.documents),
                 "chunks": len(expected.chunks), "distinct_inputs": len(expected.inputs)}
+    if request.mode == "preflight":
+        return offline_preflight(request, expected, tokenizer, details)
     corpora = CorpusStore(engine, request.workspace_id)
     embeddings = EmbeddingStore(engine, request.workspace_id, env=env, clock=clock)
     if not corpora.workspace_visible():
@@ -219,8 +227,30 @@ def ingest(request: Request, *, engine: Engine, tokenizer: Tokenizer, providers:
 
 def _estimate(batches: int, tokens: int) -> dict[str, Any]:
     worst = Configuration().reservation("embedding").worst_usd
-    return {"batches": batches, "local_tokens": tokens, "worst_usd": str(worst * batches),
+    return {"batches": batches, "local_tokens": tokens,
+            "local_estimated_usd": str(cost(Configuration().price("embedding"), Usage(tokens)).usd),
+            "worst_usd": str(worst * batches),
             "worst_seconds": batches * (INGEST_LIMITS.attempt_seconds + SETTLE_MARGIN_SECONDS)}
+
+
+def offline_preflight(request: Request, expected: Expected, tokenizer: Tokenizer, details: dict[str, Any]) -> Outcome:
+    """Conservative empty-cache plan through the actual packer; no database/credentials/provider access."""
+    prepared = prepare_job(EmbeddingJob(purpose=PURPOSE, subject_key=expected.subject_key, inputs=expected.inputs),
+                           Configuration(), tokenizer, deadline=time.monotonic() + PREPARE_SECONDS)
+    plans = pack(prepared, Configuration())(uuid4(), frozenset())
+    tokens = sum(p.local_tokens for p in plans)
+    estimate = _estimate(len(plans), tokens)
+    details |= {"offline": True, "cache_assumption": "empty", "estimate": estimate,
+                "all_passage_tokens": sum(c.tokens for c in expected.chunks)}
+    paid = request.paid
+    if paid is None:
+        return Outcome("refused", "preflight_requires_explicit_caps", details)
+    checks = {"usd": Decimal(estimate["worst_usd"]) <= paid.max_usd,
+              "calls": len(plans) <= paid.max_calls, "tokens": tokens <= paid.max_input_tokens,
+              "seconds": estimate["worst_seconds"] <= paid.max_seconds}
+    details["within_caps"] = checks
+    return Outcome("planned" if all(checks.values()) else "refused",
+                   None if all(checks.values()) else "preflight_exceeds_caps", details)
 
 
 SETTLED_BATCH_STATES = frozenset({"published", "satisfied_by_cache"})

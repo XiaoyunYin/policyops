@@ -862,6 +862,17 @@ text or secrets). Exit codes: 0 planned, unchanged or activated; 1 verification 
 only); 2 refused; 3 embedding incomplete; 4 stale activation. The connection uses the libpq environment, and the role
 must be `policyops_app_runtime`.
 
+**Structural (archive-derived) profile.** A second ingest profile (`--profile structural`) sits alongside the Markdown
+one. It accepts a bounded, hash-verified title-run passages JSONL and a metadata manifest, such as the MultiDoc2Dial
+materialization from `policyops_evals.datasets.multidoc2dial`. Each passage becomes one document with one complete chunk,
+keeping its heading, body and original domain/document/offset mapping. The profile refuses more than 5,000 passages or
+any chunk over 20,000 code points or 8,192 embedding tokens; it never truncates. Generation identities bind the
+profile's parser and chunk versions, the derivation Git identity and the archive provenance, so a Git field never claims
+an upstream dataset commit. The existing cache, runtime-role/RLS verification, staged activation and FTS/dense/RRF/rerank
+semantics are reused unchanged; ranked documents are passages. Migration `0017` raises the per-generation document and
+ordinal bounds to 5,000 for this profile. Its downgrade refuses, without changing data, while larger generations exist.
+`--offline-preflight` reports the empty-cache plan and checks explicit caps without a database or provider call.
+
 ## Retrieval steps
 
 retrieval: an internal, programmatic retrieval step (`policyops.retrieval` `search.py`, `rank.py`, `counting.py`; `persistence/retrieval.py`; `policyops_contracts/retrieval.py`) on revision `0011`. It has been exercised on synthetic fixture corpora with synthetic vectors and scripted transport, and verified locally on Windows with Docker Desktop (lint, type checks, the application default and PostgreSQL suites, the evaluator default suite, the scanner and static checks), and its PostgreSQL cases run in hosted CI. The configured investigation adapter calls it; the default Compose stack leaves investigation unconfigured; the optional rerank stage and the citation grounding that build on it are described under **Reranking and citation grounding**, and it makes no quality, latency or cost claim.

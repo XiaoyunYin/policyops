@@ -34,6 +34,7 @@ from policyops.retrieval.parse import (
     embed_input,
 )
 from policyops.retrieval.sources import SourceCorpus, SourceDocument, canonical_json, sha256_hex
+from policyops.retrieval.structural import chunk_passage
 
 
 MAX_CHUNKS = 10_000  # the embedding job's input limit; also bounds the single publish transaction
@@ -90,9 +91,10 @@ class Expected:
 
 
 def chunk_identity(source_uri: str, version_sha256: str, start: int, end: int, heading: str, section_ordinal: int,
-                   section_start: int, section_end: int, text_sha256: str) -> str:
+                   section_start: int, section_end: int, text_sha256: str, *, parser: str = PARSER_VERSION,
+                   chunk_config: str = CHUNK_CONFIG) -> str:
     return sha256_hex(canonical_json({
-        "v": "policyops.chunk/v1", "parser": PARSER_VERSION, "chunk_config": CHUNK_CONFIG,
+        "v": "policyops.chunk/v1", "parser": parser, "chunk_config": chunk_config,
         "source_uri": source_uri, "version_sha256": version_sha256, "start": start, "end": end, "heading": heading,
         "section_ordinal": section_ordinal, "section_start": section_start, "section_end": section_end,
         "text_sha256": text_sha256}))
@@ -127,13 +129,17 @@ def build_expected(corpus: SourceCorpus, counter: TokenCounter, *, tokenizer_sha
     spec = corpus.corpus
     header = {"corpus_key": spec.corpus_key, "domain": spec.domain, "render": spec.render,
               "corpus_manifest_sha256": corpus.corpus_manifest_sha256,
-              "source": corpus.revision.model_dump(mode="json"), "parser": PARSER_VERSION,
-              "chunk_config": CHUNK_CONFIG, "embed_input": EMBED_INPUT_FORMAT, "tokenizer_sha256": tokenizer_sha256,
+              "source": corpus.revision.model_dump(mode="json"), "parser": corpus.parser_version,
+              "chunk_config": corpus.chunk_config, "embed_input": EMBED_INPUT_FORMAT,
+              "tokenizer_sha256": tokenizer_sha256,
               "request_config_sha256": config, "model": model, "dimensions": dimensions}
+    if corpus.archive_sha256 is not None:
+        header["archive_sha256"] = corpus.archive_sha256
     documents: list[ExpectedDocument] = []
     chunks: list[ExpectedChunk] = []
     for ordinal, source in enumerate(corpus.documents):
-        found = chunk_document(source.body, counter, deadline=deadline, clock=clock)
+        found = (chunk_passage(source, counter, deadline=deadline, clock=clock) if source.origin is not None
+                 else chunk_document(source.body, counter, deadline=deadline, clock=clock))
         for chunk in found:
             text_digest = sha256_hex(chunk.text.encode("utf-8"))
             submitted = embed_input(chunk.heading, chunk.text)
@@ -141,7 +147,8 @@ def build_expected(corpus: SourceCorpus, counter: TokenCounter, *, tokenizer_sha
                 source.source_uri, source.version_sha256, chunk.start, chunk.end, chunk.heading,
                 chunk.section_ordinal, chunk.section_start, chunk.section_end, chunk.text, text_digest,
                 chunk_identity(source.source_uri, source.version_sha256, chunk.start, chunk.end, chunk.heading,
-                               chunk.section_ordinal, chunk.section_start, chunk.section_end, text_digest),
+                               chunk.section_ordinal, chunk.section_start, chunk.section_end, text_digest,
+                               parser=corpus.parser_version, chunk_config=corpus.chunk_config),
                 submitted, input_sha256(submitted), chunk.tokens))
             if len(chunks) > MAX_CHUNKS:
                 raise CorpusRefused("corpus_exceeds_single_transaction_bounds", "chunks")

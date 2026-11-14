@@ -51,7 +51,6 @@ from policyops.persistence.database import verify_runtime_role, workspace_transa
 from policyops.persistence.embeddings import vector_text
 from policyops.persistence.roles import APP_RUNTIME
 from policyops.retrieval.corpus import Expected, chunk_entry, chunk_identity, set_digest
-from policyops.retrieval.parse import CHUNK_CONFIG, PARSER_VERSION
 
 
 MAX_CITATION_CODE_POINTS = 20_000
@@ -227,13 +226,15 @@ class CorpusStore:
             "VALUES (:id, app.current_workspace(), :policy, :parser, :model, :dimensions, 'building', now(), :key, "
             ":repository, :commit, :tree, :source_manifest, :corpus_manifest, :license_scope, :render, "
             ":chunk_config, :tokenizer, :config, :expected_set, :generation_key, :documents, :chunks)"),
-            {"id": generation, "policy": expected.corpus.corpus_manifest_sha256, "parser": PARSER_VERSION,
+            {"id": generation, "policy": expected.corpus.corpus_manifest_sha256,
+             "parser": expected.corpus.parser_version,
              "model": header["model"], "dimensions": header["dimensions"], "key": spec.corpus_key,
              "repository": expected.corpus.revision.repository, "commit": expected.corpus.revision.commit,
              "tree": expected.corpus.revision.tree,
              "source_manifest": expected.corpus.revision.source_manifest_sha256,
              "corpus_manifest": expected.corpus.corpus_manifest_sha256, "license_scope": spec.license_scope,
-             "render": spec.render, "chunk_config": CHUNK_CONFIG, "tokenizer": expected.tokenizer_sha256,
+             "render": spec.render, "chunk_config": expected.corpus.chunk_config,
+             "tokenizer": expected.tokenizer_sha256,
              "config": expected.request_config_sha256, "expected_set": expected.expected_set_sha256,
              "generation_key": expected.generation_key_sha256, "documents": len(expected.documents),
              "chunks": len(expected.chunks)})
@@ -420,7 +421,9 @@ class CorpusStore:
                 raise VerificationMismatch("text_digest_mismatch")
             recomputed = chunk_identity(row["source_uri"], row["version_sha256"], row["start_offset"],
                                         row["end_offset"], row["heading"], row["section_ordinal"],
-                                        row["section_start"], row["section_end"], row["text_sha256"])
+                                        row["section_start"], row["section_end"], row["text_sha256"],
+                                        parser=expected.corpus.parser_version,
+                                        chunk_config=expected.corpus.chunk_config)
             if row["sha256"] != recomputed or row["sha256"] != want.sha256:
                 raise VerificationMismatch("chunk_identity_mismatch")
             if row["embed_input_sha256"] != want.embed_input_sha256:

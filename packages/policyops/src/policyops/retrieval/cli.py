@@ -9,6 +9,9 @@ check (like the synthetic importer). There is no HTTP endpoint and no worker.
                     --max-seconds S]]
 
 - Without `--execute` the run is a read-only plan (no write, reservation, credential read or request).
+- `--profile structural` selects the archive-derived title-run JSONL manifest; Markdown is the default.
+- `--offline-preflight --paid` with all six caps verifies and prices an empty-cache plan without connecting
+  to PostgreSQL. It cannot be combined with `--execute`; the paid flags record caps, and authorize no requests.
 - `--execute` allows writes; any provider work also needs `--paid` with every cap given explicitly (no defaults),
   each within the ingestion ceilings. An all-cached import needs no `--paid`.
 - The database connection uses the standard libpq environment (`PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`,
@@ -60,6 +63,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--manifest", required=True, type=Path)
     run.add_argument("--manifest-sha256", required=True)
     run.add_argument("--acquisition-root", required=True, type=Path)
+    run.add_argument("--profile", choices=("markdown", "structural"), default="markdown")
+    run.add_argument("--offline-preflight", action="store_true")
     run.add_argument("--execute", action="store_true")
     run.add_argument("--paid", action="store_true")
     run.add_argument("--model")
@@ -80,8 +85,10 @@ def _paid(args: argparse.Namespace) -> PaidCaps | None:
         if given:
             raise _Usage("caps are only accepted with --paid")
         return None
-    if not args.execute:
+    if not args.execute and not args.offline_preflight:
         raise _Usage("--paid requires --execute")
+    if args.offline_preflight and args.execute:
+        raise _Usage("--offline-preflight cannot execute")
     missing = [name for name in PAID_FLAGS if getattr(args, name) is None]
     if missing:
         raise _Usage(f"--paid requires every cap explicitly: missing {', '.join(missing)}")
@@ -124,7 +131,8 @@ def main(argv: Sequence[str] | None = None, *, connect: Callable[[], psycopg.Con
     except OSError:
         return _emit(out, Outcome("refused", "manifest_unreadable"))
     request = Request(args.workspace, args.corpus_key, manifest, args.manifest_sha256, args.acquisition_root,
-                      "execute" if args.execute else "plan", paid)
+                      "preflight" if args.offline_preflight else "execute" if args.execute else "plan", paid,
+                      args.profile)
     engine = make_engine(connect or (lambda: psycopg.connect(connect_timeout=10, options=(
         "-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=1000 "
         "-c idle_in_transaction_session_timeout=5000"))), pool_size=4)

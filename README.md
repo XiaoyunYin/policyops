@@ -1,648 +1,202 @@
 # PolicyOps
 
-An evidence-grounded AI operations workbench for investigating customer-service cases, inspecting policy citations, and approving simulated business actions.
+PolicyOps is an AI operations workbench for investigating fictional retail support cases,
+reviewing cited proposals, and approving simulated order changes.
+It separates model suggestions from deterministic authorization, then uses durable operation
+IDs and receipts to reconcile writes whose responses are lost.
 
-**Status.** Implemented and tested locally; nothing here has run in hosted CI, and no model-quality, retrieval or performance results are claimed.
+**Status:** local showcase, verified locally including real-browser E2E on the Compose stack;
+not deployed. Hosted CI has not run yet: the code was built and checked locally before its first push.
+The default Compose stack leaves model-driven investigation unconfigured. Its browser demo
+starts from a deterministic proposal and exercises real consent, approval and simulator execution.
 
-Implemented:
-- A case/run workbench with bounded activity replay, run discovery/start/cancel, exact proposal inspection and historical evidence excerpts (UI Slice A; approval controls follow).
-- Locked development environments, publication safeguards and reviewed public-data acquisition.
-- Typed retail, consent and approval contracts, and the deterministic policy and tool gateway: scoped lookups, reads and computed, non-actionable write previews, and an execution precheck that loads persisted authority records by reference. It dispatches no write. The persisted decision store, execution dispatcher and reconciliation are implemented (T18/T19/T22); the retail simulator's receipts are described below.
-- PostgreSQL persistence (fifteen revisions), an OIDC/session authentication API, the case/message API, and run start/cancel with leased, fenced background jobs, a durable outbox and replayable event streaming, with the OpenAPI document and generated TypeScript types.
-- A model registry with dated prices, an exact cost calculator and a durable usage-budget ledger.
-- Provider adapters for the OpenAI Responses and Anthropic Messages APIs. User-approved, capped live smokes on 2026-11-05 verified the text, tool and structured-output paths for both providers. The Anthropic paths were verified only after the request stopped sending the optional `speed` field named by a diagnostic of the earlier HTTP 400 refusals, which remain recorded. The investigation runtime uses explicitly configured adapters; default tests use scripted responses.
-- An evals-owned retail-simulator HTTP service with durable per-case state, versions and receipts, its own migration chain and roles, and a typed client tested against the pinned retail fixture.
-- T12 so far: an accounted and cached embedding foundation (local cl100k counting, one ledger-granted request per frozen batch, exact evidence, a per-workspace vector cache) with one bounded live compatibility smoke on 2026-11-05 (below), and a corpus-ingestion command: section-aware parser, source manifest, atomic generation publish, revision `0010`, and an operator CLI whose default is a read-only plan.
-- T13 (internal, programmatic): a retrieval step over one corpus's current generation with four modes: the retail-domain full-policy control, PostgreSQL full-text search, exact pgvector cosine and document-level reciprocal-rank fusion. It delivers bounded, formatted evidence under a whole-string cl100k budget, charges its query embedding to the run's shared budget, and records an immutable per-step intent and a trace with historical replay. It has been exercised on synthetic fixtures with scripted transport, and verified locally on Windows with Docker Desktop (lint, type checks, the application default and PostgreSQL suites, the evaluator default suite, the scanner and static checks); hosted CI has not been run.
-- T14 (internal, programmatic): an optional, off-by-default rerank stage over a step's first fused documents, deterministic validation of a model's cited answer against the run's own stored traces, and atomic citation recording with historical reconciliation, with per-invocation work reporting that keeps ledger grants apart from physical counts. It has been exercised on synthetic fixtures with scripted transports and local PostgreSQL.
-- T15a (internal, offline): the machinery for a later retrieval evaluation, with no study run. It has typed planning contracts (a proposed manifest, a separate selection decision, trajectory records and a report), a pure evaluator-side metric engine, dev-only label access, an authoritative read-only export of stored retrieval steps into records, and two named local query-plan diagnostics. The metrics keep the delivered evidence set, the candidate set and the full ranking apart, and report strict, observed-progress and complete-case variants with paired, task-weighted uncertainty. It has been exercised on synthetic fixtures and local PostgreSQL; no quality, coverage, cost or performance result exists. See [docs/architecture.md](docs/architecture.md#retrieval-evaluation-machinery-t15a).
-- T18 (internal services plus four reviewer routes): sealed, digest-bound proposals, customer consent kept separate from staff approval, and version- and digest-bound approve/reject decisions. Proposal creation/presentation remain internal graph operations; staff-entered customer replies can produce persisted consent. T19/T22 own dispatch, reconciliation and receipt projections. See [Proposal review](#proposal-review-t18).
-- T20 (internal, programmatic): a minimal, bounded, half-duplex agent baseline that owns one private conversation and talks to explicitly injected model, tool and optional read-only knowledge ports. The retail domain runs with the full policy in the prompt; a read-only knowledge-search interface exists but its Retriever-backed adapter is T15b. Invalid model replies leave only fixed notices, a tool outcome stays unknown until a validated matching result arrives, and cancellation and late replies are terminal. It builds no client and makes no count or provider request when constructed. It has been exercised with scripted ports and transports over synthetic data, including the real SDK and budget ledger on local PostgreSQL (multi-turn history, cancellation of an in-flight call, a shared budget and late replies), and nothing calls it: it is not the investigation graph, and starting a run requires an installed investigation runtime. No quality, performance, cost or grounded-answer result is claimed. See [docs/architecture.md](docs/architecture.md#minimal-agent-baseline-t20).
+## Workflow
 
-Not built yet:
-- Claim-support (entailment) checking, retrieval-quality results on real queries, ANN/HNSW indexes, and the remaining approval UI. Investigation and evidence services supply run/case authorization for the implemented internal retrieval/citation integration.
-- The retrieval evaluation itself (T15b): genuine development trajectories, a study controller, the visible-query sidecar, arm selection, frozen gates and any result. It depends on the read-only knowledge tool and the simulator bridge (T20, T29) and on a separate recorded approval for paid work.
-- A composed deployment and browser verification of the investigation runtime. The graph and worker integration are implemented; starting succeeds with a configured runtime and otherwise returns 503 `runtime.unconfigured`. The benchmark harness and real-query scores are T29 and later.
-- Approval inbox/detail/decision controls and the full outcome card in the web UI. The investigation graph, internal proposal/consent services, review continuation and execution receipt projections are implemented; browser verification remains pending.
-
-## Intended architecture
-
-React and TypeScript will provide a case queue, evidence viewer, agent activity stream, and approval controls. Core evaluation comparisons will use CLI reports; an interactive evaluation explorer is planned as an extension. A Python/FastAPI service and durable worker will share domain services; PostgreSQL will store cases, approvals, execution records, and policy vectors. LangGraph will coordinate bounded investigations and human review. Business mutations will pass through an authorization and idempotency gateway to a separate retail simulator service.
+An operator opens a case. A configured, bounded investigation agent reads business facts
+and policy evidence, then presents a cited proposal. The customer must consent to its exact
+terms, and a separate authorized staff member must approve the sealed version. The execution
+service rechecks authority, sends the write to the retail simulator, and records a receipt
+or an explicit unresolved outcome.
 
 ```mermaid
 flowchart LR
-  UI[React workbench] --> API[FastAPI]
-  API --> DB[(PostgreSQL / pgvector)]
-  Worker[Python / LangGraph worker] --> DB
-  Worker --> Models[Low-cost model APIs]
-  Worker --> Gateway[Authorized tool gateway]
-  Gateway --> Simulator[Simulated retail service]
-  API --> Events[Durable case events / SSE]
-  Events --> UI
+  UI[React workbench / Caddy] --> API[FastAPI: cases and review]
+  API <-->|OIDC + PKCE| Dex[Dex: fictional users]
+  API <-->|cases, jobs, approvals, SSE events| DB[(PostgreSQL / pgvector)]
+  DB --> Worker[Python worker]
+  Worker --> Agent[Bounded LangGraph investigation]
+  Agent <--> Evidence[Policy retrieval and citations]
+  Evidence --> DB
+  Agent <--> Models[Configured model provider]
+  Agent --> Proposal[Sealed proposal]
+  Proposal --> Consent[Customer consent]
+  Consent --> Approval[Separate staff approval]
+  Approval --> Gate[Deterministic authorization + operation ledger]
+  Worker --> Gate
+  Gate <-->|stable operation ID / lookup / fence| Retail[HTTP retail simulator]
+  Retail --> State[(Retail state and receipts)]
+  Gate --> DB
+  DB --> API
 ```
 
-## Evaluation approach
+The graph and provider composition are implemented and tested separately from the default
+Compose demo. The browser flow uses staff-entered simulated customer consent; it is not
+evidence of real customer consent or a model-driven browser investigation.
+See [runtime composition](docs/architecture.md#investigation-graph-and-checkpoints) and
+[the browser acceptance scope](docs/operations.md#real-browser-workbench-acceptance).
 
-The planned evaluation uses pinned public [Sierra τ-bench resources](https://github.com/sierra-research/tau2-bench), with separate reporting for upstream task outcomes, retrieval experiments, and application safety tests. Database checks and invariant tests will be distinguished from model-based judgments. Adapted tasks and changed simulator or judge settings will be identified explicitly.
+## Results at a glance
 
-Retrieval experiments will compare full-policy context, PostgreSQL full-text search, dense vectors, hybrid rank fusion, and bounded reranking. Recovery and authorization tests will check duplicate writes, stale approvals, tenant isolation, and interrupted runs. The offline machinery for these comparisons exists (see T15a above) but no comparison has been run. No accuracy, performance, or cost improvements are claimed at this stage.
+- **E03, registered holdout:** Luna strict pass^1 0.700 vs Haiku 0.750; difference −0.050 [−0.135, 0.035], 44% lower settled all-actor cost. Decision: `descriptive`; non-inferiority not shown. Dev v6: 0.7125 vs 0.7875. [Method and results](docs/evaluation.md#e03-model-comparison).
+- **E04, recovery:** 100 paired fault cases; ledger 83 completed once + 17 fenced without effect, zero duplicate effects. Naive retry misreported all 20 committed lost-response writes as failures. Acceptance passed within this fixture scope. [Recovery study](docs/evaluation.md#e04-operation-ledger-versus-naive-retry).
+- **E05, authorization:** final live sample: gateway 0/48 attack effects, prompt-only Luna 2/48; false blocks 0/12 vs 6/12. Acceptance passed; this is a controlled authority test, not general injection resistance. [Attack study](docs/evaluation.md#e05-gateway-versus-prompt-only).
+- **Browser and recovery drills:** 2/2 Playwright flows passed; kill-after-commit recovered by receipt lookup without resend, and a stopped-writer separate-database restore passed. Correctness acceptance passed; no load/performance claim. [Exact scope](docs/evaluation.md#recovery-and-e07-correctness).
 
-## Contracts and domain rules
+Intervals are paired task-bootstrap 95% intervals. E03 uses the minimal agent with the full
+retail policy, not the workbench graph or a retrieval variant. Raw trajectories are not
+published; the [evidence report](docs/evaluation.md) records configs, snapshot identities,
+failures, spending and reproduction commands.
 
-`packages/policyops_contracts` defines the typed, strict wire contracts: retail tool calls and state snapshots, exact minor-unit money, displayed effects and their server-rendered confirmation text, action proposals bound by one SHA-256 digest, case messages with explicit provenance, customer consent, separate staff approval, agent steps, run events, errors, demo seeds and the clause-anchored pinned retail policy rule table. `packages/policyops/.../domain` holds the deterministic rules that use them. [docs/architecture.md](docs/architecture.md) explains the scope, policy interpretations, consent and approval binding, and the dev calibration allowlist. Deterministic business-policy checks are implemented in the gateway. Proposal creation and presentation are internal graph operations, and staff-entered customer replies are classified for consent by the message service; authentication and workspace-role dependencies are described below.
+## Engineering decisions
 
-## Authentication
-
-OIDC authorization code flow with PKCE through the backend, durable browser-bound login state, opaque server-side sessions (digest-only storage, absolute and idle expiry, rotation, revocation), synchronizer CSRF tokens with exact origin checks, and a reusable `require_action` dependency that reads the principal's current workspace membership on every request. Every workspace-bound operation also requires `PolicyOps-Expected-Principal` and `PolicyOps-Expected-Workspace` headers copied from the client's `/me`. The server refuses with 409 `context_changed`, applying nothing, when the shared session cookie now belongs to another principal or workspace, for example after a switch in another tab. This is a pre-release contract change: older clients that omit the headers get 400. Local identity is the pinned Dex with fictional users (`infra/dex/config.yaml.tmpl`). [docs/authentication.md](docs/authentication.md) describes the flow, validation rules, cookie and deployment settings, tests and limits.
-
-To serve the API locally, use `python -m policyops.api.serve` (loopback only, default `127.0.0.1:8000`) with explicit `POLICYOPS_*` variables. These are the authentication settings plus `POLICYOPS_DB_*`, with separate passwords for the auth and app runtime roles (see `.env.example`). Nothing is read from `.env`. Startup verifies both runtime logins and creates no schema or data. Run bootstrap and migrations separately first. [docs/authentication.md](docs/authentication.md#serving-the-api-local) covers configuration, lifetime, logging and limits.
-
-## Case and message API
-
-Workspace-scoped routes to list, create and read cases, change their status and post staff notes or operator-entered customer turns. Every write takes an `Idempotency-Key`, replays its original response on retry and commits the change, its audit row and the stored response together; status changes and messages also need the case's strong `If-Match` version. The queue uses typed cursors over the immutable creation order, and request bodies are bounded to 64 KiB as received. [docs/architecture.md](docs/architecture.md#case-and-message-api) describes the routes, idempotency, preconditions, pagination, limits and the OpenAPI/TypeScript contract.
-
-## Runs and event streaming
-
-Starting a run (idempotent, bound to the case version, at most one active run per case) creates the run, its first event and outbox intent, a queued (not yet leased) execute job and an audit row in one transaction; a worker leases the job when it claims it, and cancelling fences out any in-flight work. Workers discover jobs through a narrow role, claim them with `SKIP LOCKED` under the database clock, and fence every write with a stable claim ID, the run generation and the current lease; exhausted, expired or unsupported work is dead-lettered with typed codes. Events are replayed over server-sent events from a durable high-water mark, with reconnect, explicit retention gaps and a session/membership check on every poll. No investigation runtime is installed yet, so starting a run answers 503; T21 adds it. [docs/architecture.md](docs/architecture.md#runs-leased-jobs-and-event-streaming) has the details and limits.
-
-## Proposal review (T18)
-
-A proposal is a sealed record of one exact write: its computed effect and exact confirmation text, policy, resource and evidence versions, and an expiry of at most 15 minutes, all bound by one SHA-256 `action_digest`. Customer consent comes only from a customer message that follows the presentation of that exact version. Staff approval is a separate decision by a current reviewer in the workspace; the admin role alone is not enough.
-
-| Route | Required permission | Notes |
+| Decision | Trade-off and rejected alternative | Evidence |
 |---|---|---|
-| `GET /api/v1/approvals` | decide proposal | Reviewer inbox: presented versions with current consent and no decision, oldest first |
-| `GET /api/v1/cases/{id}/proposals` | view case | Every version in the case, bounded and paginated |
-| `GET /api/v1/proposals/{id}?version=` | view case | One version as sealed, with its derived state and server time; no `ETag` |
-| `POST /api/v1/proposals/{id}/decision` | decide proposal | Approve or reject one exact version; body carries `proposal_version` and `action_digest`; CSRF and Origin checked |
+| The model proposes; deterministic services authorize | More explicit rules and refusal paths; prompt-only policy enforcement cannot close expiry/revocation races | [Gateway](docs/architecture.md#policy-and-tool-gateway), [E05](docs/evaluation.md#e05-gateway-versus-prompt-only) |
+| Consent and staff approval bind immutable versions and digests | Changes require a fresh decision; a generic approval flag cannot bind arguments, evidence, terms and expiry | [Review contracts](docs/architecture.md#proposal-review-t18), [race tests](tests/integration/test_proposal_decisions.py) |
+| Stable operation IDs, a ledger and reconciliation | Ambiguous writes may remain unknown or be fenced without effect; checkpoint replay or blind retry cannot establish a remote outcome | [Execution](docs/architecture.md#approved-execution-and-reconciliation-t19), [E04](docs/evaluation.md#e04-operation-ledger-versus-naive-retry) |
+| Forced RLS with separate migration/runtime roles | More grants and transaction scope management; application filters alone leave query mistakes exposed | [Database roles](docs/database.md#roles), [runtime-role tests](tests/integration/test_app_tenancy.py) |
+| Reserve worst-case cost and retain unknown bills | Conservative holds reduce availability; estimating a missing bill as zero would permit unaccounted spending | [Budget ledger](docs/architecture.md#model-configuration-and-usage-budgets), [accounting tests](tests/integration/test_budget_ledger.py) |
+| Prespecified dev studies, registered holdout, strict pass^k | Errors remain failures in headline metrics; dropping errored trials or changing gates after results would bias selection | [Evaluation method](docs/evaluation.md#method), [statistics](evals/src/policyops_evals/studies/statistics.py) |
+| PostgreSQL jobs and a tenant-bound JSON checkpointer | Fewer services, explicit fencing and serializer maintenance; Redis/Celery and unrestricted object checkpoints add dependencies or authority | [Runtime](docs/architecture.md#investigation-graph-and-checkpoints), [checkpoint tests](tests/integration/test_checkpoints.py) |
 
-- **Decisions.** A new decision returns `201`. For a new decision, a digest mismatch, a second different decision on a decided version, a superseded or expired version, or a missing current consent returns `409`; rejection also needs a current consent. An identical request by the same reviewer (same version, digest, decision and reason) returns `200` with the original canonical record and `Idempotent-Replayed: true`. This is equality of those fields, not raw HTTP body byte equality: the returned record bytes are identical. The reviewer role and membership are checked before any replay. An identical persisted request can still replay after its version expires, is superseded or its run ends, provided the current role, membership and digest still pass; the presentation, status, policy, expiry and consent checks apply to new decisions only.
-- **Unknown outcome.** A failure raised by COMMIT returns `503 api.decision_outcome_unknown` with `retryable: true`. Resending the identical request replays the original if it committed. Lock waits and COMMIT are not interrupted by a deadline, so an acknowledged decision can already be past its own expiry when the response arrives.
-- **Derived state.** Reviewer states (for example `awaiting_consent`, `approved`, `rejected`, `superseded`, `expired`) are computed at read time from persisted records and the server clock. `approved` means only that a bound, unexpired decision exists; nothing has been executed.
-- **Limits.** A proposal whose exact text would not fit one 4000-character case message is refused by the internal create and present operations, never truncated. Stale or inconsistent evidence is refused. No public route creates, presents, collects consent for or executes a proposal. This component performs no business mutation and emits no execution receipt; graph resume and a completed user workflow are not built.
+## Stack
 
-Source: [`api/proposals.py`](packages/policyops/src/policyops/api/proposals.py), [`services/proposals.py`](packages/policyops/src/policyops/services/proposals.py), [`services/decisions.py`](packages/policyops/src/policyops/services/decisions.py), [`services/proposal_views.py`](packages/policyops/src/policyops/services/proposal_views.py) and [`gateway/stores.py`](packages/policyops/src/policyops/gateway/stores.py). Tests: [`test_proposal_review.py`](tests/unit/test_proposal_review.py), [`test_decision_service.py`](tests/unit/test_decision_service.py), [`test_proposal_api.py`](tests/integration/test_proposal_api.py), [`test_proposal_decisions.py`](tests/integration/test_proposal_decisions.py) and [`test_proposal_evidence.py`](tests/integration/test_proposal_evidence.py). The design details are in [docs/architecture.md](docs/architecture.md#proposal-review-t18).
+- **Backend:** Python 3.12, FastAPI, Pydantic, SQLAlchemy, Alembic, psycopg;
+  LangGraph investigation with a custom PostgreSQL checkpointer.
+- **Persistence:** PostgreSQL 17, pgvector, full-text search, immutable evidence versions,
+  leased jobs, transactional outbox, execution and usage ledgers.
+- **Web:** React, strict TypeScript, Vite, React Router, React Aria Components;
+  generated OpenAPI types and fetch-based SSE replay.
+- **Identity and operations:** OIDC authorization code + PKCE, server-side sessions,
+  Dex, Caddy, Docker Compose, opt-in OpenTelemetry and allowlisted JSON logging.
+- **Evaluation:** separately locked τ²-bench runtime, bounded OpenAI/Anthropic SDK adapters,
+  pytest, Vitest and Playwright. Default tests use fake providers and block network access.
 
-## Model configuration and usage budgets
+Exact versions are in [the app lock](uv.lock), [the evaluator lock](evals/uv.lock),
+[the web lock](apps/web/package-lock.json) and [image pins](infra/images.json).
 
-`policyops.budget` holds the allowed models and a dated, primary-source price snapshot (no fallback model). It
-prices usage exactly, at the whole-prompt tier, with cache reads and writes per lifetime. It also holds the
-server-owned actor configuration and caps: per request, per run, per scenario, per invocation, per study and per
-non-run operation.
+## Quickstart
 
-A durable ledger in PostgreSQL reserves the worst case in every applicable scope atomically. It grants at most one
-dispatch per attempt, keeps unknown results held, settles at the original price revision, and blocks a scope after
-any overrun or contract violation. The typed offline preflight bounds an evaluation study and never authorizes
-paid execution. [docs/architecture.md](docs/architecture.md#model-configuration-and-usage-budgets) has the rules and
-limits.
+Use Git, a helper Python interpreter (3.10+), uv 0.13.x (verified with 0.13.7),
+Node 26.13.0 and Docker with Linux amd64 containers and Compose 2.24+.
+Dependency installation, tokenizer provisioning and image builds need network access;
+the checks below run offline after provisioning. Commands start at the repository root.
 
-## Provider adapters
-
-`policyops.providers` prepares one exact, fingerprinted request per physical attempt. It counts it once through the
-provider's count endpoint, dispatches only with the ledger's single grant, and sends it through the official SDKs
-pinned exactly (`openai` 3.40.0, `anthropic` 2.3.0). SDK retries are disabled, timeouts are explicit, redirects and
-ambient environment settings are refused, and a transport lets only the bound bytes out. Usage settles exactly when
-it is known and priced, stays held when it is not, and a contract violation blocks further progress. Structured
-results are validated locally against the full domain schema. The test suites run offline against a scripted
-transport.
-
-**Live smokes (2026-11-05).** They were user-approved and capped, with no automatic retries.
-
-- **OpenAI.** The first smoke verified the text, required-tool and structured-output paths. That smoke ran on the
-  source at commit `93afd3b`.
-- **Anthropic.** In that first smoke, the three Anthropic inference requests returned HTTP 400.
-  - One approved diagnostic resend of the unchanged request also returned HTTP 400. It recorded only the error's
-    category: an invalid request that named the optional `speed` field.
-  - Commit `0a91c03` makes the Anthropic request omit `speed`, which keeps the standard default, and leaves the
-    OpenAI request bytes unchanged.
-  - A fixed-source Haiku smoke on that commit then verified the text, required-tool and streamed structured-output
-    paths.
-- **What is unchanged.** The earlier failures and their unresolved budget holds remain recorded.
-- **Counts.** On all six small requests, the official count equalled the reported input.
-
-The architecture document has the dated matrix and its limits. These results are not evidence of model quality,
-general counting accuracy or performance. No agent workflow calls the adapters yet. See
-[docs/architecture.md](docs/architecture.md#provider-adapters).
-
-**Embeddings (T12 foundation).** `providers.embedding_calls` embeds exact texts with `text-embedding-3-small` at
-1536 dimensions: inputs are counted locally with cl100k_base from a pinned, hash-checked vocabulary file (never
-downloaded at runtime), a persisted job freezes its batch plan, each batch is one ledger-granted request with an
-explicit float encoding, and its evidence and validated vectors are published atomically to a per-workspace cache.
-Unknown or contradictory billing keeps the hold; a complete body is accounted even if its cleanup is interrupted.
-It is tested offline and on PostgreSQL. Nothing in an API, worker or agent graph calls it; its callers are the operator-run ingestion command below and the internal retrieval step's run-bound query embedding.
-
-**Live embedding smoke (2026-11-05).** One user-approved, capped compatibility check ran against accepted commit
-`3a037abb`: a single OpenAI `text-embedding-3-small` request (float, 1536 dimensions). The logical job had four ordered input
-positions made of three distinct short synthetic texts (ASCII, Unicode, and CRLF plus tab) and one duplicated
-position. Deduplication sent the three unique inputs in one physical provider request; the provider returned three
-vectors, which were stored as three cache entries and mapped back to the four ordered positions. There was no
-provider token-count request and no retries. The local counts (14 + 16 + 12 = 42) equalled the returned `prompt_tokens` and `total_tokens` (42) on this
-sample only. The ledger settled USD 0.00000084 with nothing held (operation cap USD 0.001, worst-case reservation
-USD 0.00000256). That is the cost of this smoke, not evidence of retrieval quality, model quality, cache savings,
-general token-count equality or performance. The external smoke ran under its own 300-second process supervisor with
-bounded cleanup; HTTP cleanup is bounded, but a synchronous SQL wait is not interrupted, so this is not a production
-deadline proof. See [docs/architecture.md](docs/architecture.md#embedding-foundation).
-
-**Corpus ingestion (T12).** `policyops.retrieval` imports one corpus into one workspace as a new, atomically
-activated *generation*. It is an operator-run command (no HTTP endpoint, no worker); retrieval over its generations is the internal
-component described below, and no API or worker calls either. It was verified locally on Windows with Docker Desktop: the application suite (1,149 default
-cases and 415 PostgreSQL cases), the evaluator suite (168 cases, 35 of them PostgreSQL), strict linting and type
-checks, the upgrade of a genuine populated pre-ingestion database dump to `0010`, and a scripted full-manifest
-import (below). Hosted and Linux CI have not been run. The pieces:
-
-- **Source manifest.** `evals/manifests/tau2-19f13ea3/ingest-corpora.json` is metadata only (no document text): two
-  corpora, `tau2-banking-knowledge` (698 documents, render `tau2-banking/v1`) and `tau2-retail-policy` (1 document,
-  render `identity`), each file with its repository path, Git blob, SHA-256 and size, derived from the committed T03
-  manifests by the evaluator-owned `policyops_evals.ingest_manifest` (the application never imports it). The caller
-  binds the exact manifest bytes by SHA-256; nothing is discovered by listing a directory and nothing is fetched.
-- **Verified reading.** Every path must stay inside an acquisition root free of links, and each file's size, SHA-256
-  and Git blob must match, with strict UTF-8, no BOM and bounded sizes. Any refusal refuses the whole corpus before
-  a database write or provider call.
-- **Parser.** `policyops.md/v1` splits Markdown by ATX headings and fences into sections and paragraphs, packs them
-  into chunks of at most 512 cl100k_base tokens (counted on the exact embedding input, no overlap), and records
-  exact code-point offsets: each chunk's text is `body[start:end]`, with CRLF and tabs preserved.
-- **Stable identities.** A document is identified by `source_uri` (from the corpus domain and document key, with no
-  source commit). Each generation records the source revision, path, Git blob and raw digest of its members, while
-  an immutable document version is identified by its rendered-body digest: changed content creates a new version,
-  and a body that matches an existing version of that document reuses it, even if the revision, path or blob
-  differs. A chunk's `sha256` is a composite identity over its position, section, version and text digest, not the
-  plain text digest. A repeat import changes nothing; changed chunks are embedded, and any already cached exact
-  input is reused.
-- **Publish.** One bounded transaction as `policyops_app_runtime`, with no provider or file I/O inside it. It
-  compare-and-swaps the corpus row, inserts the `building` generation, members and chunks with their cached vectors,
-  retires the previous one, activates the new one, and verifies the exact expected set through the ready-only chunk
-  policy before commit. A failed import leaves the previous generation active.
-- **Citations.** A narrow read port returns a cited span from the immutable version body together with the
-  structural checks it actually performed (run match, version digest, span within the version, generation
-  membership). These are not authorization and do not show that a span supports a claim.
-- **Revision `0010`.** Adds corpora, generation membership and provenance columns, database guards for publication
-  and citations, and refuses legacy data that violates the new constraints; the downgrade is refused while ingested
-  data exists. See [docs/database.md](docs/database.md#migrations).
-
-Operator commands. The default is a **read-only plan**: it verifies, parses, compares with the active generation and
-reports cache misses and a worst-case estimate, with no write, reservation, credential read or request. `--execute`
-allows writes. Any embedding request additionally needs `--paid` with **every** cap given explicitly (there are no
-defaults): `--model`, `--dimensions`, `--max-usd`, `--max-calls`, `--max-input-tokens` and `--max-seconds`, within
-fixed ceilings (USD 1.00, 1,000 calls, 5,120,000 local tokens, 3,600 seconds) and equal to the configured
-`text-embedding-3-small`/1536 actor. An import whose inputs are all cached publishes locally without `--paid`.
+Set a process-local scratch directory outside the checkout. On Linux use equivalent
+exports, set `TMPDIR` too, and use `venvs/app/bin/python`.
 
 ```powershell
-# Offline: confirm the committed manifest matches the committed T03 manifests.
-python -B scripts/devenv.py uv --project evals run --frozen python -B -m policyops_evals.ingest_manifest --check
-
-# Acquire the pinned data first (see Data and licensing); the acquisition root is the `tree` directory inside --dest.
-$tree = 'D:\path\outside\tau2-fetch\tree'
-$manifest = 'evals\manifests\tau2-19f13ea3\ingest-corpora.json'
-$digest = (Get-FileHash -Algorithm SHA256 $manifest).Hash.ToLower()
-
-# Read-only plan (default). Connects with the libpq environment (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSFILE) as
-# policyops_app_runtime; prints one JSON object (counts, digests, estimate), never document text or secrets.
-python -B scripts/devenv.py uv run --frozen python -B -m policyops.retrieval.cli ingest --workspace <workspace-uuid> `
-  --corpus-key tau2-banking-knowledge --manifest $manifest --manifest-sha256 $digest --acquisition-root $tree
-
-# Local writes only (all inputs already cached, or a completed job): add --execute.
-# Paid embedding (separate, explicitly authorized operation): add --execute --paid --model text-embedding-3-small
-#   --dimensions 1536 --max-usd <usd> --max-calls <n> --max-input-tokens <n> --max-seconds <n>
-# OPENAI_API_KEY is read only after the paid preflight passed.
-```
-
-Exit codes: 0 planned, unchanged or activated; 1 verification failure or unexpected error; 2 refused; 3 embedding
-incomplete (the previous generation stays active); 4 stale activation (another import changed the corpus). When
-provider work remains, a resume with different caps, a smaller token ceiling than the job's frozen total, or an
-expired incomplete job is refused, never silently widened, reissued or retried. Publishing an already settled job
-from the cache is local: it needs no `--paid` caps and does not validate a paid budget it does not use. No
-full-corpus paid run has been performed, and the earlier one-request embedding smoke above is the only live embedding evidence; no retrieval quality, cache savings
-or performance is claimed.
-
-**Scripted full-manifest import.** One local run imported the whole committed manifest (699 documents: 698 banking
-documents and the retail policy) into a fresh workspace on real PostgreSQL as the runtime role, with a scripted
-provider transport (48 scripted requests, synthetic credentials and deterministic synthetic vectors; no provider was
-contacted). It produced 2,963 chunks and 2,957 distinct cached embedding inputs. It exercises the publish path and
-measures its size only: vectors, prices and usage are synthetic, so it is not corpus-scale live embedding,
-retrieval-quality, cost-saving or speed evidence, and the serialized vector text it recorded (about 95 MB) is neither
-database storage nor billable input tokens. See [docs/architecture.md](docs/architecture.md#corpus-ingestion) and
-[docs/data-provenance.md](docs/data-provenance.md#ingestion-manifest).
-
-**Retrieval steps (T13).** `policyops.retrieval` also contains an internal, programmatic retrieval step; no HTTP route, worker or agent graph calls it yet. One step reads exactly one corpus's current generation in one `REPEATABLE READ READ ONLY` snapshot, so a concurrent activation cannot mix generations, and it runs in one of four modes:
-
-- `full_policy`: the control for a corpus of the retail domain only: every chunk, or a refusal (at most 16 chunks and the same 4096-token budget; never truncated);
-- `lexical`: PostgreSQL `websearch_to_tsquery` with `ts_rank_cd`;
-- `dense`: exact pgvector cosine distance (no index, no approximation);
-- `hybrid`: document-level reciprocal-rank fusion (k = 60, the best 20 documents per branch by best chunk) with exact fractions and a total, stable tie order. A lexical score is never compared with a distance.
-
-Ranked delivery defaults to at most 6 chunks and 4096 cl100k tokens, counted on the whole formatted string (headers and separators included, because token counts are not additive). A chunk that does not fit is skipped, never truncated. Configuration and results are strict, versioned, bounded contracts: no free dictionaries, configuration values are strict integers and enumerations, and scores are decimal strings (query vectors and stored vectors remain floats).
-
-A step is identified by its run and caller-owned step number; the digest of its query, scope and configuration is its request fingerprint. The query embedding is run-bound: exactly one input, reserved in the run's shared budget scope, cached per workspace, with a frozen job and no ambiguous reissue. A hybrid step may fall back to lexical only when explicitly configured and flagged; a strict mode refuses instead, and there is no model fallback. Revision `0011` records an append-only intent per run and step before any provider work, so a retry with a changed query, scope or configuration conflicts instead of silently paying again. A stored trace replays from the immutable version bodies, spans and digests; "current generation" there is only the last observation. A result never establishes current-policy validity, source support or authorization: the calling service must already have authorized the run, case and corpus, and after an activation retires a chunk, refreshing evidence is a new retrieval step by the caller, never reuse of the retired snapshot.
-
-It has been exercised only on synthetic fixture corpora with synthetic vectors and scripted transport; no retrieval-quality, latency, cost or hosted-CI result is claimed. Adjacent-context expansion is deferred to development tuning (T15), HNSW is a later extended task, and synchronous SQL can delay cancellation; configured SQL timeouts are per operation and do not establish a workflow wall-clock bound. See [docs/architecture.md](docs/architecture.md#retrieval-steps) and [docs/database.md](docs/database.md#migrations).
-
-**Reranking and citation grounding (T14).** Internal, programmatic additions to retrieval; no HTTP route, worker or agent graph calls them. An optional rerank stage, off by default, sends one bounded structured request on the run's shared budget, with mandatory count admission, to reorder a step's first fused documents, which it labels with server-assigned `D` labels and bounded excerpts; an invalid ranking is discarded whole, and the full chunk texts and the evidence-budget rules stay unchanged. A deterministic validator checks a model's cited answer against the run's own stored traces, and a recorder writes citation rows atomically. That establishes the historical identity of an exact quote in delivered evidence only: it is not entailment, consent, approval or authorization (the calling service must authorize the run, case and corpus), and `generation_current` is a last observation. Implemented, with an independent functional review of the internal component and local synthetic runtime checks. No real-provider, quality, saving, latency or hosted-CI result is claimed. See [docs/architecture.md](docs/architecture.md#reranking-and-citation-grounding).
-
-## Retail simulator
-
-`evals/.../retail_sim` wraps the pinned upstream retail tools (no fork) in an internal HTTP service. Each case gets
-its own isolated copy of the audited fixture, bound once to its customer. A write runs the upstream tool on an
-in-memory candidate, rebuilds the change it *actually* made from the before and after states, checks every amount as
-exact money, and compares that with the approved expected effect. Only an exact match commits, atomically with the
-new versions and an immutable receipt; anything else leaves one terminal record and no other change. Stable
-operation IDs replay, a fence makes an absent operation definitively not executed, every request carries a
-short-lived signed context with a single-use nonce, and the `retail` schema has its own roles and row-level
-security. `policyops.adapters.retail_client` is the application's typed client: it never retries a write and treats
-a lost or foreign response as unknown. Commands:
-
-```sh
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-retail-simulator --help
-```
-
-See [docs/architecture.md](docs/architecture.md#retail-simulator) and
-[docs/database.md](docs/database.md#retail-schema).
-
-## Policy and tool gateway
-
-`packages/policyops/.../gateway` is the only path from an agent step to the retail service. The scope comes from
-the persisted run and case, and the retail client must be bound to it before any request. The closed parser refuses
-unknown tools and extra fields.
-
-**Lookups and reads.** A lookup authenticates only the case's bound customer, durably and first write wins. A read
-must return the requested resource and exactly its version.
-
-**Writes.** A write gathers the customer, the order and the replacement items. All of them must come from one case
-version, with at most three complete collections. The deterministic rules then evaluate them, and the result is
-only a computed, non-actionable preview.
-
-**Execution precheck.** The precheck re-validates persisted proposal, consent and approval records by reference.
-It re-evaluates current facts, so approval never overrides the policy. It checks the approver's current role and
-the proposal's evidence after the reads, and the expiry last. It returns the exact mutation request and its
-authorization deadline, and dispatches nothing.
-
-**Defaults that refuse.** The precheck refuses unless a caller supplies a decision store (the T18 `PgDecisionStore`
-is one such store), and its default operation history is incomplete, so once-per-order tools escalate. The T19
-executor supplies `LedgerHistory` instead.
-
-**Approved execution (T19).** `policyops.services.execution.Executor` reserves one execution per approval (operation
-ID chosen once, stored request and fingerprint) after a clearing precheck; `policyops.runtime.executions`
-`ExecutionDispatcher.dispatch_once()` advances due executions one bounded step each: claim, a fresh precheck, a
-dispatch checkpoint (run, proposal, reviewer role, evidence and time rechecked under locks), one `mutate`, and the
-record; unknown outcomes are reconciled by lookup, a same-ID resend while authority is current, or a fence. Tests:
-`tests/integration/test_execution_retail.py` (real `RetailClient`, owned simulator, real PostgreSQL),
-`tests/integration/test_execution_ledger.py`, `tests/unit/test_execution_states.py`. Run the PostgreSQL tests with
-`python -B scripts/devenv.py uv run --frozen pytest -m postgres tests/integration/test_execution_retail.py`
-(Docker and the synced evals environment are required). See
-[docs/architecture.md](docs/architecture.md#approved-execution-and-reconciliation-t19).
-
-### Approval and execution
-
-An investigation presents one durable proposal and waits for approval. An operator-entered customer reply is
-classified for consent in the message transaction; a staff note never gives consent. A separate staff decision
-enqueues a durable review job. Approval revalidates authority and reserves through T19; the dispatcher alone sends
-the mutation using its stable operation ID. Rejection, expiry or staleness ends with a typed refusal. Rejection
-does not automatically replan: it provides no new authorized intent, and replanning could re-propose the declined
-action or spend more model calls. A new investigation is a new run.
-
-Terminal ledger changes and capped unknowns enqueue outcome jobs. These only project durable truth into a bounded,
-deterministic summary and `review.outcome` event, atomically with the final run state. Committed success requires
-the actual bound receipt. A fenced operation resolves the workflow with no business effect. An unknown outcome
-stays unconfirmed and reconciling; it never means success. A late receipt produces a correction at its new ledger
-version. A cancelled run stays cancelled and still receives later execution truth; cancellation cannot undo a
-remote commit. Outcome delivery has a separate 24-hour deadline, ten attempts and 30-second leases.
-
-The run's active allowance counts queued, running and reconciling time, including backoff and downtime.
-Only `waiting_input` and `waiting_approval` pause it; duplicate transitions and reclaim do not replenish it.
-`deadline_at` is the current active segment's projection and is null while waiting or terminal. Proposal,
-consent, approval, execution authorization and job delivery deadlines remain absolute UTC. New execute jobs
-have a separate 24-hour delivery deadline. Migration `0015` cannot refund historical wait; upgrade with workers quiescent.
-
-Runtime transactions configure statement / lock / idle-in-transaction timeouts in milliseconds: DEFAULT
-5000 / 1000 / 5000, LEASE 1000 / 250 / 2000, and RETRIEVAL snapshot 15000 / 1000 / 5000. Pool checkout is
-configured for two seconds, and the served API retains its finite connection timeout. These are per-operation
-settings; synchronous SQL can delay cancellation, and network or COMMIT acknowledgement loss prevents a universal
-wall-clock guarantee. A failed COMMIT is an unknown outcome, reconciled by the original IDs before more work.
-Run-bound agent, query-embedding and reranker spending also requires the current investigation claim, rechecked
-inside admission after lock waits. Accounting can finish after fencing.
-
-If accounting fails after dispatch, further dispatch stops. Available normalized usage remains in the process's
-report, and unsettled reservations stay conservatively held; a typed failure summary states the uncertainty.
-There is no billing-evidence outbox: a process crash can lose that available evidence. A lost settlement COMMIT
-acknowledgement may already have settled the attempt; durable state must be checked using the same attempt ID.
-Pre-T22 pending proposals are not migrated, and dead-lettered summaries have no operational repair tooling. See `tests/integration/test_review_outcomes.py` for the approval-to-summary and recovery cases.
-
-[docs/policy-coverage.json](docs/policy-coverage.json) maps every policy rule to its executed cases. See
-[docs/architecture.md](docs/architecture.md#policy-and-tool-gateway).
-
-## Observability
-
-Core telemetry is off by default. For the served API, set `POLICYOPS_TELEMETRY_ENABLED=true` and
-`POLICYOPS_TELEMETRY_EXPORTER=console` (JSON to stdout) or `memory` (bounded, process-local inspection).
-Library/worker hosts explicitly call `policyops.telemetry.configure(TelemetrySettings())` once before composing
-the worker and own the returned backend's `close()` at shutdown. Install `policyops.api.logging.LOG_CONFIG`
-with `logging.config.dictConfig` for the same safe JSON logs in a worker host. The supported API command installs
-it automatically. Default instrumentation does not construct SDK providers or exporters.
-
-Manual spans cover route templates, job claim/execute/finish, graph nodes, provider attempts, retrieval, tool
-steps, review, execution reservation/dispatch/reconciliation and SQL failure phases. Only allowlisted enums,
-UUID correlation IDs, bounded counts, SQLSTATE classes and exception type names are recorded. Structured logs
-discard free-form messages, arguments and tracebacks. Customer text, prompts, responses, tool arguments,
-evidence, names, email addresses, credentials, cookies, DSNs and raw request paths are never recorded.
-Incoming trace headers and baggage are ignored. Instrumentation uses the versioned `policyops.telemetry/v1`
-schema rather than adopting changing GenAI semantic fields; provider mappings remain local to the adapters.
-
-The direct `opentelemetry-sdk` 1.45.1 dependency provides standard context, batching, metrics and test exporters
-instead of a custom tracing runtime. It pins API 1.45.1 and semantic-conventions 0.66b1; all three distributions
-declare Apache-2.0 and ship their license files. See [third-party notices](THIRD_PARTY_NOTICES.md#opentelemetry).
-HTTP templates come from FastAPI's resolved OpenAPI paths and selected inclusion context, preserving router
-prefixes and parameter placeholders; unmatched paths have no route attribute.
-
-Counters record provider dispatch attempts, known input/output usage and priced USD, fixed error codes and observed
-job/review/execution outcomes. Unknown bills remain unconfirmed. These lossy counters are diagnostic observations;
-the durable usage/execution ledgers remain authoritative. Due queue depth and oldest due age (including expired
-leases) use a separate best-effort read with the discovery role's existing scheduling grants. Metric labels are
-closed provider/model/outcome/kind/code sets, with no UUIDs. A bounded 256-job cache links previous attempts within
-one worker process; after restart/eviction, use run and operation UUIDs to correlate separate traces.
-
-The SDK batches at most 256 queued spans, 32 per batch, and reads metrics periodically. Exporters run on one
-daemon lane with 32 pending batches; overflow is dropped. A blocked exporter may retain one active batch until it
-returns or the process exits. Shutdown detaches immediately, drains in the background and never waits on exporter
-code. Memory mode retains the last 256 spans and 16 metric batches (`backend.spans.get_finished_spans()` and
-`backend.metrics.items`); it is intended for local inspection/tests, and is erased on process exit. Collector,
-OTLP, Prometheus, dashboards and automatic instrumentation are deferred to X02.
-
-## Application database
-
-`packages/policyops/.../persistence` holds the PostgreSQL schema, roles and migrations: a superuser bootstrap creates five restricted roles (migrator, app runtime, auth runtime, evaluation runtime, worker discovery) and the database; the Alembic chain through `0016` runs as the migrator and creates the `identity`, `app`, `evaluation` and `checkpoints` schemas with tenant-composite foreign keys, forced row-level security on a transaction-local workspace scope, append-only grants, a proposal-immutability trigger, digest-bound presentation/consent/decision records, unique idempotency keys and exact `NUMERIC` USD checks. Revision `0003` adds durable login requests and session idle/CSRF state; `0004` adds the case API's request-idempotency ledger and queue index; `0005` adds run fencing, event high-water/retention fields, job claims and the discovery role's grants; `0006` adds the usage-budget ledger; `0007` binds request identity, counts and contract blocks to it; `0008` adds durable per-run customer lookup authentication; `0009` adds the embedding job/batch/evidence tables and the per-workspace vector cache; `0010` adds corpora, generation membership and provenance, and publication/citation guards; `0011` adds the append-only per-step retrieval request intent; `0012`–`0015` add execution, checkpoints, review continuations and active-time accounting; `0016` adds durable evaluation claims. Typed repositories and a synthetic importer use them. [docs/database.md](docs/database.md) describes the roles, invariants, upgrade/downgrade/restore semantics and limits. Authentication uses these records; review continuation and outcome projection are described above.
-
-### Evaluation harness
-
-The dev harness runs the minimal agent through the pinned tau2 factory, text orchestrator and evaluator. All agent, user simulator and NL judge requests use the bounded provider path and one persisted study budget. The example freezes allowlisted dev tasks `0`, `1` and `24`, one trial each, with Luna/low for all actors and zero retries or repairs. Its study cap is $0.30, 96 inference requests and 96 count requests. These commands do not fetch data or migrate a database:
-
-```powershell
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals preflight --study studies/t29-luna-dev-smoke-v1.json
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals run --study studies/t29-luna-dev-smoke-v1.json --allow-paid
-```
-
-Set `POLICYOPS_TEMP_DIR` as described below. Execution also needs `POLICYOPS_EVAL_ACQUIRED` pointing to a verified acquisition made by `policyops-evals data fetch`, and `POLICYOPS_EVAL_DATABASE_DSN` for a database migrated to the current head, authenticated as `policyops_eval_runtime`. Live providers read server-side `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` only after opt-in and a passing ledger-backed preflight. Without `--allow-paid`, execution accepts only a config explicitly selecting `provider_mode: "scripted"`; that mode uses local SDK responses. Preflight uses recorded prices, includes the judge, and reports a planning estimate separately from the maximum reservation liability. Without a database snapshot, prior spend is explicitly unverified and the report cannot admit paid execution.
-
-Private manifests, trajectories, agent snapshots and reports go under `POLICYOPS_TEMP_DIR/benchmarks/<invocation-id>`. They record config/schedule, dataset/split/task-list hashes, source HEAD and dirty digest, both lock hashes, requested and returned models by actor, price revision, seeds, OS/CPU information and UTC times. PostgreSQL retains immutable terminal results and shared spending/holds. Use `--resume` for an existing study: finished slots are skipped, abandoned running claims become aborted, and only unstarted slots can execute. A changed config conflicts with the existing study key. A lost or ambiguous terminal commit is reconciled by the same result identity and hash; it does not rerun inference.
-
-Study v2 adds paired task/trial blocks with a seeded balanced arm rotation, a frozen analysis and decision margin, and separate evaluation membership and tuning eligibility. `evals/studies/offline-paired-v2.json` is a scripted Luna low/none example. The v2 E03 run was a pilot whose diagnosed protocol and trajectory-limit confounds motivated v3.
-
-`evals/studies/e03-dev-luna-haiku-v3.json` preserves the 20 dev tasks, four seeds, Luna versus Haiku agents, Luna simulator/judge, paired statistics, 0.10 pass^1 noninferiority margin and pass^4 guard. Study schema v3 requires every agent limit explicitly and binds the `single-tool-drop-text/v1` protocol: exactly one valid tool call with accompanying text executes the call, discards the text before user delivery, and records `tool_text_dropped` without an invalid step. Multiple calls, empty replies, unknown tools and invalid arguments remain invalid. The security gateway and investigation graph retain their strict protocol. Agent config v2 distinguishes the changed runtime behavior while preserving the prompt and ordinary request bytes.
-
-V3 declares 32 agent calls, 12 tool steps per turn, two consecutive invalid replies, 64 inference/count requests and $0.20 per scenario, and a $20 study cap. With the draft's unchanged 16,000-input/2,048-output actor ceilings, all-actor preflight estimates $3.6480 and reserves at most $18.8928 (7,200 inference plus 7,200 count requests). The cap was raised from $15 before any v3 data rather than lowering the token ceilings, which would reintroduce trajectory truncation. The guard must pass before any v3 execution.
-
-E03 v4 keeps the v3 tasks, seeds, models, statistics and margin. Before any v4 data, it raises the trial deadline and both agents' input ceiling to address the v3 run's held in-flight call and Haiku input-limit cases; the increases apply equally to Luna and Haiku.
-
-The tool-error cutoff is a protocol parameter: `limits.max_tool_errors` is passed to tau2 `max_errors`. An absent field preserves the legacy value 1 used by E03 v2 through v5; the upstream default is 10. E03 v6 explicitly uses 10 for both models, preserving all other v5 limits and the $28 cap.
-
-E03 v5 preserves that design and preregisters `limits.max_unresolved_attempts: 3` before any v5 data, following transient Haiku failures that halted v4 after 6/160 trials. Legacy studies fail-stop on the first unknown bill. Bounded continuation lets later unclaimed slots run while at most three dispatched attempts have unknown bills and spent + all holds + the next slot's maximum reservation fits every scope's money, inference and count caps. The fourth unknown attempt stops admission. Every unknown bill keeps its full hold; finalized trials with holds are errors, and reports show settled spend, held liability and their sum as upper-bound spend. This trades immediate fail-stop for continued data collection within reserved liability, with no retries, no inferred bills and no re-execution of claimed slots. Existing overrun, contract, cleanup and interruption stops remain. Count and inference failures record only closed codes (`http_429`, `http_529`, `timeout`, `connection`, `malformed`, `provider_error`, `cancelled`) in private result/agent artifacts and offline taxonomy, without response bodies, headers or credentials. V5 offline preflight remains $3.6480 estimated, $27.0848 maximum admission, with $28 study/invocation caps.
-
-```powershell
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals preflight --study studies/e03-dev-luna-haiku-v4.json
-# Registration is a separate no-provider DB write. Copy the preflight's registration_payload_sha256
-# into preregistration_sha256 in the reviewed config, then register before a later run:
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals preflight --study path/to/registered-v2.json --register
-# Resume preserves never-claimed v2 slots after cooperative interruption. Explicit closure makes them terminal:
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals run --study studies/offline-paired-v2.json --resume --close-unclaimed
-# A sealed snapshot is sufficient; this command uses no DB, credentials, providers, task payloads or git:
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals report --study "$env:POLICYOPS_TEMP_DIR/benchmarks/studies/<study-id>/study.json" --snapshot <sha256> --out "$env:POLICYOPS_TEMP_DIR/reports/selected"
-# Offline failure codes/counts; verifies sealed rows and all inventoried private bytes before writing:
-python -B scripts/devenv.py uv --directory evals run --frozen policyops-evals taxonomy --study "$env:POLICYOPS_TEMP_DIR/benchmarks/studies/<study-id>/study.json" --snapshot <sha256> --out "$env:POLICYOPS_TEMP_DIR/reports/taxonomy"
-```
-
-Holdout v2 requires the complete official 50-ID frame, four seeds, and committed registration binding source, locks, configuration, schedule, prices and analysis before task loading or claims. Banking execution remains unavailable pending its evaluator contract. Ordinary preflight never registers or authorizes spend. Registration source hashing excludes the registration reference from study-file bytes to avoid a circular digest; all other source bytes remain bound. Editing source, margins, models, tasks or seeds requires a new reviewed freeze.
-
-The runner seals numbered immutable snapshots under `POLICYOPS_TEMP_DIR/benchmarks/studies/<study-id>`. Every scheduled slot remains in the denominator, including pending slots and aborts without result artifacts. Reports emit sanitized `policyops.study-report/v1` JSON and Markdown with strict task-macro pass^k = mean(C(successes,k)/C(scheduled,k)), separate complete-case diagnostics, DB-component scores, all-actor settled/held costs, usage and logical-call/trial timings. Task strata come from evaluator criteria frozen before calls; missing judging never turns a DB+NL task into DB-only success. Paired complete-case differences use intersected scored slots. Deterministic SHA256 resampling carries each task cluster and all arms together (10,000 draws, R7 95% percentile intervals). These are pointwise intervals; hosted seeds do not establish iid trials or provider determinism, and small/degenerate samples do not establish power. A recommendation needs registered quality intervals strictly above minus the margin, observed lower all-actor cost, complete execution and reconciled accounting/integrity.
-
-The taxonomy emits `policyops.study-taxonomy/v1` JSON and Markdown counts by variant, outcome, agent terminal reason, error class and simulation termination, plus the same counts per task. Every scheduled slot contributes; absent agent artifacts are `unavailable`, and an observed nonterminal agent is `none`. Absent historical simulation terminations are `unavailable`; unrecognized values become `unknown`. Result hashes are anchored in the sealed snapshot, agent hashes in their result artifacts, and the private inventories locate the bytes; missing or mismatched declared bytes refuse the command. Outputs contain identifiers, closed codes and counts, without raw transcripts or hidden task text.
-
-Frozen re-rendering uses recorded manifests and times, and produces byte-identical bytes for the same snapshot and reporter version. Several snapshots require an explicit digest. Declared corruption produces an integrity diagnostic and nonzero exit, never a release decision. Raw transcripts, prompts, reasoning, provider request IDs, credentials and private paths are omitted. No measured quality claim follows from scripted fixtures; the holdout remains closed. In-process agent isolation is a reviewed code boundary, not an OS sandbox, and synchronous work or dispatched requests can outlive cancellation.
-
-## Development setup
-
-Prerequisites: Git, a Python 3.10+ interpreter to run the helper scripts, [uv](https://docs.astral.sh/uv/) 0.13.x (CI uses 0.13.7) and Node.js 26.13.0 (`.nvmrc`). uv installs the project's CPython 3.12 itself.
-
-### Process-local paths
-
-Every tool run goes through `scripts/devenv.py`. It requires `POLICYOPS_TEMP_DIR`, an absolute directory **outside** the checkout, and points temporary files, uv/npm/ruff/mypy caches, Python installs, both virtual environments, coverage, web build output and the per-user application data directory (`LOCALAPPDATA` on Windows, `XDG_DATA_HOME` on Linux, where Vitest keeps its API token file) beneath it for that command only. It also disables Python bytecode, `.env` auto-loading by upstream libraries (`PYTHON_DOTENV_DISABLED=1`) and litellm's import-time pricing download. No global settings are changed. Test suites refuse to run without this setup. On macOS, Vitest uses `~/Library/Application Support` regardless of these variables, so this containment is unsupported and unverified on macOS; it covers Windows and Linux.
-
-The helper scripts and Git hooks below run without the wrapper, so set the temporary root and the process temp variables in that shell first (current session only):
-
-```powershell
-# PowerShell
 $env:POLICYOPS_TEMP_DIR = 'D:\path\outside\checkout\policyops-tmp'
-$env:TEMP = "$env:POLICYOPS_TEMP_DIR\tmp"; $env:TMP = $env:TEMP; $env:PYTHONDONTWRITEBYTECODE = '1'
+$env:TEMP = "$env:POLICYOPS_TEMP_DIR/tmp"
+$env:TMP = $env:TEMP
+$env:PYTHONDONTWRITEBYTECODE = '1'
 New-Item -ItemType Directory -Force $env:TEMP | Out-Null
-```
-
-```sh
-# POSIX shells
-export POLICYOPS_TEMP_DIR=/path/outside/checkout/policyops-tmp
-export TEMP="$POLICYOPS_TEMP_DIR/tmp" TMP="$POLICYOPS_TEMP_DIR/tmp" TMPDIR="$POLICYOPS_TEMP_DIR/tmp" PYTHONDONTWRITEBYTECODE=1
-mkdir -p "$TMPDIR"
-```
-
-Installed web dependencies are the one directory kept in the checkout: `apps/web/node_modules/`, which Node module resolution needs inside the web project (ignored by Git and Docker). It holds only what `npm ci` installs; caches and scratch files that tools generate are routed to `POLICYOPS_TEMP_DIR` like everything else, and new files appearing below `node_modules/` fail the artifact check.
-
-### Publication safeguards (before any commit)
-
-```powershell
-git config --local core.hooksPath .githooks
-python -B scripts/gitleaks_gate.py install   # checksum-verified gitleaks 8.30.1 into $POLICYOPS_TEMP_DIR/tools
-```
-
-The pre-commit hook runs `scripts/check_publication.py` (index path/content guard) and then `scripts/gitleaks_gate.py staged`; the pre-push hook runs the guard over reachable history and then a gitleaks scan of every local ref. The guard runs first and must pass before the scanner runs; a failure of either step blocks the commit or push, and so does a missing or unverified scanner. Scans also require a valid `POLICYOPS_TEMP_DIR`, even when `POLICYOPS_GITLEAKS` names the scanner, and keep their scratch files and the scanner's TEMP/TMP under `$POLICYOPS_TEMP_DIR/tmp`, whatever the shell's TEMP/TMP say. The gate verifies the scanner binary against pinned SHA-256 values, uses the repository `.gitleaks.toml` (built-in rules plus a project rule, no allowlist), ignores inline `gitleaks:allow` comments, refuses to run when a root `.gitleaksignore` exists, and prints only redacted locations. Hooks find the scanner through `POLICYOPS_GITLEAKS`, then `$POLICYOPS_TEMP_DIR/tools/gitleaks-8.30.1/`, then `PATH`; commit and push from a shell set up as in [Process-local paths](#process-local-paths). These are safeguards against accidental publication, not a complete secret-detection system. New clones must enable hooks themselves.
-
-### Python: application and evaluator
-
-Two separate uv projects with separate locks:
-
-| Project | Lock | Contents |
-|---|---|---|
-| Application (repository root workspace) | `uv.lock` | `packages/policyops` (FastAPI, SQLAlchemy/Alembic, psycopg, LangGraph) and `packages/policyops_contracts` |
-| Evaluator / retail-simulator wrapper | `evals/uv.lock` | `tau2[knowledge]` at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062`, transport/persistence/migration libraries, `policyops_contracts` and local `policyops` for narrow evaluator composition |
-
-`policyops_contracts` depends only on Pydantic. The evaluator also installs the local `policyops` package for composition of its minimal agent/ports, bounded providers, budgets and evaluation persistence; application code never imports tau2. Both locks only admit distributions published before the `exclude-newer` cutoff in their `pyproject.toml`.
-
-```powershell
 python -B scripts/devenv.py uv sync --frozen
-python -B scripts/fetch_tokenizer_vocab.py    # once: the pinned cl100k_base vocabulary (hash-checked) for the tests
-python -B scripts/devenv.py uv run --frozen ruff check .
-python -B scripts/devenv.py uv run --frozen mypy
-python -B scripts/devenv.py uv run --frozen pytest
-
 python -B scripts/devenv.py uv sync --project evals --frozen
-cd evals
-python -B ../scripts/devenv.py uv run --frozen mypy
-python -B ../scripts/devenv.py uv run --frozen pytest
-```
-
-The wrapper resolves the uv project the way uv does (`--directory`/`UV_WORKING_DIR` first, then `--project`/`UV_PROJECT` relative to it, otherwise the working directory), selects the matching application or evaluator virtual environment and pins `UV_PROJECT` to that project for the command and its children, so the two locks never install into the same environment. It refuses, before running anything, forms it cannot read reliably: uv options other than `--directory`/`--project` before the subcommand, `--project`/`--directory` after `run` or `tool` (write `uv --project evals run ...`, and put a child command's own options after `--`), `--active`, repeated options, and other uv projects inside the checkout.
-
-### Web
-
-```powershell
-cd apps/web
+python -B scripts/fetch_tokenizer_vocab.py
+Push-Location apps/web
 python -B ../../scripts/devenv.py npm ci
-python -B ../../scripts/devenv.py npm run lint
-python -B ../../scripts/devenv.py npm run typecheck
-python -B ../../scripts/devenv.py npm test
-python -B ../../scripts/devenv.py npm run build    # output: $POLICYOPS_TEMP_DIR/build/web
+Pop-Location
 ```
 
-There is no `dev` script. For local development, start the Vite dev server with `python -B ../../scripts/devenv.py npm exec -- vite --configLoader native`. It listens on `http://127.0.0.1:5173` (the port is strict, so it fails rather than moving) and forwards `/api/*` to the API at `http://127.0.0.1:8000`, so application API requests stay on the Vite origin. Sign-in redirects to the configured identity provider. `POLICYOPS_API_PROXY_TARGET` overrides the target; it must be an `http` origin on `127.0.0.1` or `[::1]`, and the config refuses anything else. The proxy leaves the browser's `Origin` header untouched and the API compares it exactly, so run the API with `POLICYOPS_PUBLIC_ORIGIN=http://127.0.0.1:5173` (and an identity-provider client registered for that origin). Node HTTP integration tests execute the actual typed client through this proxy to the configured API and real PostgreSQL, covering case creation, messages, replay, context refusal, stale versions and an unconfigured run. They use a minted fixture session and emulate Cookie, Origin and the readable CSRF cookie; this is not browser, SameSite, CORS-preflight or live identity-provider sign-in through the proxy evidence.
-
-**Operator workflow.** In a selected workspace, the case queue filters by status and pages with a server cursor, up to 200 cases. Analysts, reviewers and admins can open cases, post internal notes or staff-entered demo customer replies, and start/cancel investigations; auditors read only. The server checks whether a customer reply confirms the exact presented action. Posting confirmation alone never establishes consent, and customer consent stays separate from staff approval.
-
-The case workbench discovers workbench runs, supports direct run/evidence links and reload, and attaches a validated successful start to its returned run. Starting works with a configured runtime; an unconfigured server answers 503 `runtime.unconfigured`. The activity stream uses expected-context headers, ordered replay/recovery, a 500-entry memory bound and pages of at most 100 activities. Current typed review/stop/execution projections are stored separately from that ring for the next UI slice; a truncated historical snapshot explicitly reports when projections are incomplete. Terminal EOF is revalidated; cancelled or uncertain executions continue read observation while visible. No investigation state or prose summary is interpreted as a successful business action.
-
-Sources are recorded per run, without invented sentence attribution. The historical evidence pane verifies the exact UTF-8 quote hash and Unicode code-point offsets, displays bounded excerpts and inert source metadata, and never loads a live source URL. Exact proposal inspection shows its presentation, sealed resource versions and persisted consent. Approval decision controls and the full outcome card are the next slice. Model-generated customer replies, live OIDC/browser verification and Playwright remain follow-ups.
-
-Writes freeze their identity and payload before sending. Start and messages use the displayed case version; cancellation uses a run-specific key without If-Match. Unconfirmed writes are never resent automatically: **Retry the same request** reuses the original key/body/version and remains bound to the same principal/workspace. A later authorization refusal does not resolve an earlier uncertain attempt. Message text is dropped on session/context changes. Reload reconstructs reads from the server and discards this tab's unresolved-write ledger. Current UI evidence is jsdom/component coverage against fake API and byte streams, not real browser proof.
-
-The API contract comes from the backend: `python -B scripts/devenv.py uv run --frozen python -B -m policyops.api.openapi --out packages/policyops/openapi/v1.json` exports the OpenAPI document (a unit test fails when it is stale), and `python -B scripts/devenv.py python -B scripts/api_types.py --write` (or `--check`) regenerates `apps/web/src/api/schema.d.ts` with the isolated, exactly locked generator in `scripts/api-types`. The generator is installed from its lock into a fresh directory under the temporary root on every run, so it needs registry access for that install; the generation itself runs with closed proxies.
-
-From the repository root, `python -B -m unittest discover -s tests/web -v` runs `npm test` with a fresh temporary root and checks that Vitest's token file is created under it, not in the caller's user-data directory or `node_modules/` (existence only; the token is never read). It needs the installed web dependencies, so pytest does not collect it; the web CI job runs it.
-
-### Test harness
-
-Both pytest suites load `tests/support/policyops_testing` as a plugin. It provides:
-
-- **Network guard.** Installed for the whole session, it refuses outbound TCP/UDP connections, DNS lookups (`getaddrinfo` accepts IP literals only) and unregistered loopback endpoints. It raises `NetworkBlocked`, which is not an `OSError`, so retry code cannot treat it as a transient error. A test reaches a local server only by registering its exact loopback IP and port with the `allow_endpoint` fixture; registrations are revoked at teardown.
-  - Limitations: the guard patches Python's `socket` module in the test process only. Subprocesses, C extensions (libpq, so psycopg checks its targets with `require_registered`), `ctypes` and socket functions captured before the plugin loads are not intercepted.
-  - It is not physical network isolation. Run under a network-less container for that.
-- **Web guard.** In the web tests, `src/test/setup.ts` replaces `fetch`, `XMLHttpRequest`, `WebSocket` and `EventSource` with blockers as soon as it is evaluated, before any test file or application module is imported, and again before each test. Every attempt is recorded and fails the test, even if the code under test swallows the error. A test may `installFake()` one global; fakes are reset after each test. Node modules imported directly by a test are not covered.
-- **Fake provider.** A scripted, deterministic model stand-in. Each expected request must match exactly; only a matching request advances the script. An unexpected or extra request fails, and teardown fails too, even if the code under test caught the error; so does a leftover script. Timeouts are raised, never retried, and carry the scripted billed usage (or `None` when unknown).
-- **Clocks and seeds.** `policyops_contracts.clock` provides UTC-only `FixedClock` and `SteppingClock`. Every test reseeds `random` from `POLICYOPS_TEST_SEED`, default `20261104`, which the report header shows.
-- **Evidence recorder.** Artifacts stay inside a root below `POLICYOPS_TEMP_DIR`. The root is checked before anything is created, and its directory chain is re-checked before every later operation, so a root replaced by a link or another directory is refused. Absolute paths, traversal, symlinks and junctions are refused, and files are written through fresh, exclusively created temporary files.
-  - Command output is redacted before it is written, including the values of secret-named flags in that command's argv and of secret-named variables in an explicitly supplied `env`.
-  - Every non-zero exit, timeout or failure to start adds a failure record.
-  - Other artifacts that contain a known secret or credential pattern are refused rather than altered.
-  - The manifest may not replace a recorded or existing file.
-  - Metrics must be exact values traced to recorded artifacts.
-  - Artifacts are re-hashed before the manifest (schema `evidence-manifest`) is written. The recorder refuses to write a manifest that still contains secret-like content.
-  - Redaction covers registered values, argv/env-derived values and common key/token/password formats.
-  - Explicitly known secrets must be at least 6 characters. Shorter ones are refused before anything runs or is written, because masking them would destroy ordinary output.
-  - Unknown formats can pass. Pytest's own terminal output is not redacted.
-
-PostgreSQL tests (and the real-issuer tests, which also need the pinned Dex image) carry the `postgres` marker and are deselected by default. They cover the harness fixture and the application database: bootstrap, migrations (empty, populated previous revision, failed revision, refused/allowed lossy downgrade), dump/restore into a separate database, the full role/privilege matrix, RLS and pool scope reset, tenant-composite keys, immutability, binding records and optimistic/dedupe races. The run tests cover two-worker contention, a killed worker process and its reclaim, lease expiry and expired-but-unreclaimed writes, the claim clock read after a synchronized lock wait, cancellation races, dead letters, outbox rollback/coalescing/starvation, the 0005 upgrade/refusals/downgrade and SSE over a real loopback server (positions, gaps, revocation mid-stream, lifetime). The budget ledger tests hold the contended scope row while competing reservations, dispatch grants, releases and settlements queue on it. They also cover overruns, cancellation, provider request ID reuse, tenancy, the eval study chain, role and grant refusals, and the 0006 upgrade and guarded downgrade. The case API tests drive the served app over HTTP: roles, tenancy and foreign IDs, same-key and separate-key races, original-response replay (also after a lost response), stale versions, revocation while waiting for a lock, rollback, body bounds, cursors, every response checked against the OpenAPI document and real bodies compiled against the generated TypeScript (this one needs Node and `npm ci` in `apps/web`). The restart self-test uses a separate owned server and leaves the shared test server untouched; it verifies a small fixture data set. Representative application shutdown and recovery validation remains pending. The PostgreSQL tests need Docker with Linux containers and the pinned image, which they never pull themselves:
+Start the local stack with fresh external secrets:
 
 ```powershell
-docker pull pgvector/pgvector@sha256:01215e09bd4bd582d20230e025b6c971deeeffee49ceef1aae167e839cb62a7e
-docker pull ghcr.io/dexidp/dex@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
-python -B scripts/devenv.py uv run --frozen pytest -m postgres
-cd evals
-python -B ../scripts/devenv.py uv run --frozen pytest -m postgres   # the evaluator's retail-simulator database tests
+$env:POLICYOPS_PYTHON = "$env:POLICYOPS_TEMP_DIR/venvs/app/Scripts/python.exe"
+$env:COMPOSE_PROJECT_NAME = 'policyops-demo'
+$env:POLICYOPS_RUN_ID = 'demo-choose-a-fresh-unique-id'
+$env:POLICYOPS_SECRETS_DIR = "$env:POLICYOPS_TEMP_DIR/compose/$env:POLICYOPS_RUN_ID/secrets"
+$env:POLICYOPS_HTTP_PORT = '8080'
+& $env:POLICYOPS_PYTHON -B scripts/compose_secrets.py
+python -B scripts/check_build_context.py --context .
+docker compose build
+docker compose up -d
+docker compose ps --all
 ```
 
-Both projects' default selection excludes `postgres`; only these explicit runs start the container.
+Open **http://127.0.0.1:8080**. Fictional analyst Alice, reviewer Bob and auditor Carol
+use the generated password files; do not copy them into logs. Startup runs separate app
+and retail migrations. Follow [operations](docs/operations.md#start-and-stop) for sign-in
+fixtures, the [browser scenario](docs/operations.md#real-browser-workbench-acceptance),
+stopping, reuse of secrets and safe disposal of a selected demo volume.
+A fresh run returns `runtime.unconfigured` until a model runtime is explicitly composed.
 
-Each session starts its own container: labelled, read-only root filesystem, Docker logging off, TCP only, published on an ephemeral `127.0.0.1` port (never 5432). It does not touch any other container or port. The image's data volume is bind-mounted from a unique directory under `$POLICYOPS_TEMP_DIR/tests/postgres/`, so no anonymous volume is created; PGDATA and the server log live there.
-
-The fixture creates two roles, a migrator and a runtime role, both without superuser, BYPASSRLS, CREATEDB or CREATEROLE. The tests check row-level security as the actual runtime role on a harness table; this is not application tenant isolation.
-
-The persisted server log omits client ERROR/WARNING messages and failed statement text, while keeping startup, shutdown and FATAL lines. Do not put secrets in `RAISE LOG` text or connection startup options.
-
-Tests connect only through `connect()`, which fixes host, hostaddr, port, user and libpq startup options to the owned server and accepts only its two database names. Ambient `PG*` variables such as `PGOPTIONS` therefore cannot change server logging on the bootstrap connection. `try_password()` exists for wrong-password tests. No other libpq parameter can be passed through.
-
-Application-database tests register extra roles and databases explicitly (`register_role`, `register_database`; validated identifiers only, never connection strings) before `connect()` accepts them. `dump_and_restore` runs `pg_dump`/`pg_restore` inside the owned container as the superuser; the password reaches a 0600 pgpass file through stdin (never argv or logs), the file is removed afterwards and the dump stays in the bind mount under `$POLICYOPS_TEMP_DIR`.
-
-Teardown removes the container by ID after checking its labels and fails if it is still there. The data and log directories are kept for diagnosis. On Linux, PGDATA belongs to the image's `postgres` user, so the invoking user may be unable to delete it.
-
-### Continuous integration
-
-`.github/workflows/ci.yml` runs on Ubuntu and Windows without secrets or model API keys: publication guard plus gitleaks over full history, both Python environments (frozen sync, lint, strict type checks, tests) and the web checks. Before the application tests, a setup step provisions the pinned cl100k_base vocabulary with `scripts/fetch_tokenizer_vocab.py` (one fixed URL, hash-checked, at most 2 MiB); the tests themselves never download. An Ubuntu-only job pulls the pinned PostgreSQL and Dex images by digest, runs the application's `pytest -m postgres` (database, authentication and real-issuer tests) and the evaluator's (retail simulator database tests), and then fails if an owned container or a new Docker volume remains; Windows runners have no Linux container engine. That job's timeout is 45 minutes (the local full application PostgreSQL run took about 23 minutes on Windows; the hosted job has not been run). Its temporary root is `$RUNNER_TEMP/policyops`, outside the checkout, and each job finishes with `scripts/check_repo_artifacts.py`, which lists every untracked or ignored path individually (including inside ignored directories) and fails on files left in the checkout. The web job records the tree `npm ci` installed (failing if the install wrote anywhere else) and afterwards fails on any new path, including new files under `node_modules/`; it also checks the generated API types against the OpenAPI document. The PostgreSQL job installs the web dependencies the same way, for the TypeScript response check. Actions are pinned to commit SHAs. Container image pins (PostgreSQL 17 with pgvector, Dex, Caddy) are recorded by digest in `infra/images.json`; Compose and Dockerfiles are not implemented yet.
-
-Not implemented yet: `policyops eval`, `docker compose up` and any provider or paid evaluation command. Public-data acquisition is the evaluator-owned `policyops-evals data` command (next section), not part of the application. `.env.example` lists implemented authentication variables alongside proposed provider/deployment settings. Authentication does not automatically load `.env`; export its configured values explicitly or supply them through a deployment secret store. The CI workflow defines checks; hosted CI has not been exercised.
-
-### Investigation graph and checkpoints
-
-`runtime.investigation.build_investigation_spec` composes an injected model/provider factory, run-bound retail
-gateway, policy retriever and citation recorder into a `RuntimeSpec`. Install it in the same `RuntimeCatalog`
-passed to the API runtime and worker. Deployment wiring remains unconfigured by default.
-
-The graph investigates one action at a time through `investigate`, `retrieve`, `read`, `propose` and `finalize`.
-Writes prepare an immutable proposal and presentation, then leave the run in `waiting_approval`; they do not
-execute commerce changes. Answers require every assertion cited and every quote verified and recorded, or return
-a fixed abstention. Citation checks establish retrieved identity and exact quotes; `claim_support_validated`
-stays `False`. Approval/consent decisions and new-input resume belong to the subsequent workflow.
-
-An async, tenant-bound saver stores versioned JSON-only checkpoints in three migration-owned FORCE-RLS tables.
-Every mutation checks the worker generation in the same transaction. Checkpoints use a server-derived thread ID
-and synchronous durability. A reclaimed invocation resumes with `ainvoke(None, ...)`, preserving scheduler state,
-input snapshot, counters and pending actions. Proposal preparation reconciles the same run/step before collecting
-facts again; final messages, message events and run status commit atomically in worker finish. Terminal checkpoints
-short-circuit model/tool work. A lost billed model response becomes `provider_result_unavailable` under the original
-invocation key, without paying for a replacement response.
-
-Investigation state v2 fits context at intake, before checkpointing node results and before each model request.
-It evicts the oldest unpinned completed call/result pairs first, then old notices and agent history. Input messages,
-pending actions, validated evidence-bearing search pairs and typed proposal/presentation/consent/decision facts
-remain pinned. Arguments, quotes and presented terms are never shortened. If the required material cannot fit,
-the run stops with `context_limit`. Version 1 investigation snapshots fail closed; there is no implicit upgrade.
-Provider preparation also enforces server-owned aggregate bounds before decoding schemas/arguments or building
-provider histories: 256 messages, 2,048 parts, 32,768 structural nodes and 256 KiB of UTF-8 content/schema text.
-Escaped canonical inference and count bodies are measured with early exit before full encoding, each at 512 KiB.
-These bounds are digest-bound and do not replace token admission or token headroom checks.
-
-Resource exhaustion produces a typed `run.stopped` event and a fixed message saying what stopped and that no
-further actions will run. Message, event, terminal run state and job completion commit together. Resource stops
-use `budget_exceeded`; context/contract failures use `failed`. Unconfirmed usage is reported explicitly and its
-reserved cost remains held. In-process billing evidence can still be lost on a crash; there is no accounting outbox.
-The final permitted model answer may finalize deterministically, but another model/tool step cannot start after
-an exhausted cap. Embedding/reranking budget exhaustion stops investigations even when standalone retrieval is
-configured to fall back. A stopped run never automatically resumes or resets its caps. Graph loop/integrity
-failures keep separate failure codes.
-
-The custom saver trades stock `PostgresSaver` features for explicit tenant RLS, restricted runtime grants and a
-closed serializer that cannot reconstruct arbitrary Python objects. Runtime DDL, forks, subgraphs, arbitrary object
-payloads and checkpoint pruning are unsupported. Framework checkpoint v4, codec v1 and application state v1 are
-checked separately; incompatible state fails closed. Persisted step counts and an independent graph recursion
-limit bound loops. Unit tests exercise the graph with fake ports and the closed codec; PostgreSQL integration
-cases cover worker completion, restart/reclaim, fences, tenant denial and cancellation.
-Graph identity uses an explicit semantic version plus topology, state schema and checkpoint versions, preserving
-in-flight runs through unrelated source edits while requiring a deliberate version bump for behavioral changes.
-
-SQL and gateway calls are synchronous and can block the event loop, heartbeat and cancellation: there is no hard
-deadline guarantee. The run-bound ledger checks the investigation claim at reservation, count and dispatch admission, including
-a post-lock-wait recheck. A previously admitted in-flight provider call cannot be unsent by a later fence. Checkpoints do not supply provider-result
-replay, remote exactly-once execution, customer consent or staff approval.
-
-## Operator workbench
-
-The case workspace discovers and starts investigations, streams bounded ordered activity, inspects exact
-proposal versions and opens historical evidence with verified quote highlighting. Reviewers use `/approvals`
-for a paged inbox and an exact-version review with action arguments, recorded effects, verbatim terms,
-customer consent, policy/resource bindings and server-clock expiry. Analysts can inspect; only reviewers decide.
-Staff approval and customer consent remain separate. A confirmation binds the displayed version, digest and
-reason; uncertain decisions offer only an explicit identical-payload replay. Canonical reloads expose stale
-reviews and decisions recorded by another reviewer.
-
-Both workspaces separate investigation lifecycle from factual action outcomes: pending, refused, fenced
-noncommit, unconfirmed or committed with a receipt reference. A late receipt after cancellation is shown as a
-correction. These screens are tested in jsdom, including two independent clients; there is no real-browser,
-OIDC/proxy SSE, screen-reader or responsive-layout proof yet (T38/T39). Receipt downloads, raw fact inspection
-and model-generated customer replies remain outside this slice. A configured runtime is required for execution.
-
-## Security
-
-See the [threat model, control-to-test index and audit limits](docs/security.md).
-
-## Data and licensing
-
-No upstream dataset or implementation has been copied into this repository. The evaluator environment installs tau2-bench at commit `19f13ea3f5fba8b4c4d272d1353590f29dc53062` as a pinned dependency, and `policyops-evals data fetch` acquires that commit's public data into a directory outside the checkout:
+Run offline checks with installed dependencies and cached tokenizer/scanner assets:
 
 ```powershell
-python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data fetch --dest D:\path\outside\tau2-fetch     # network
-python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data verify --acquired D:\path\outside\tau2-fetch # offline
-python -B scripts/devenv.py uv --project evals run --frozen policyops-evals data check-manifests                              # offline, no data
+python -B scripts/devenv.py uv run --offline --frozen ruff check .
+python -B scripts/devenv.py uv run --offline --frozen mypy
+python -B scripts/devenv.py uv run --offline --frozen pytest
+Push-Location evals
+python -B ../scripts/devenv.py uv run --offline --frozen mypy
+python -B ../scripts/devenv.py uv run --offline --frozen pytest
+Pop-Location
+Push-Location apps/web
+python -B ../../scripts/devenv.py npm --offline run lint
+python -B ../../scripts/devenv.py npm --offline run typecheck
+python -B ../../scripts/devenv.py npm --offline test
+Pop-Location
+python -B scripts/check_publication.py
 ```
 
-The fetch re-hashes every Git object, and verification rebuilds the pinned root tree from the actual file bytes. `evals/manifests/tau2-19f13ea3/` holds only reviewed metadata: hashes, task IDs, counts, the 64-dev/50-held-out retail split (held-out = upstream `retail_50`), the grouped 39/58 banking-knowledge split, a per-file rights audit, tokenizer-specific corpus counts and the metadata-only ingestion manifest (`ingest-corpora.json`, no document text). [docs/data-provenance.md](docs/data-provenance.md) documents the method, results and remaining uncertainty. Held-out tasks are refused for demos, smoke runs and tuning. Hidden task fields never cross the evaluator's runtime projection. The τ²-bench repository license is MIT ([notice](THIRD_PARTY_NOTICES.md)), as is the original [τ-bench license](https://github.com/sierra-research/tau-bench/blob/main/LICENSE). That root license is the only explicit grant found; it does not establish the provenance of every data file. PolicyOps is distributed under the [MIT license](LICENSE).
+PostgreSQL integration and real-browser suites are separate and require local services.
+[Development and harness reference](docs/operations.md#development-setup) includes both
+environments, generated API contracts, test guards, publication hooks and CI definitions.
+No paid evaluation or provider call is part of these default commands.
 
-`scripts/devenv.py` also enables Python UTF-8 mode, because upstream reads JSON without an explicit encoding. It passes `core.autocrlf=false` to child Git processes, because a CRLF checkout of tau2 changes upstream's code fingerprints. The evaluator therefore has its own versioned uv cache and virtual environment (`cache/uv-evals-raw-v1`, `venvs/evals-raw-v1`); the application keeps `cache/uv` and `venvs/app`. Older evaluator cache and environment directories are left untouched and unused.
-## Run locally
+## Repository map
 
-The loopback Compose stack serves the workbench through Caddy with fictional Dex users, separate API/worker and
-retail services, and PostgreSQL. Generate external secret files, build, and start with the commands in
-[operations.md](docs/operations.md). That guide also covers migration ownership, health, stopping, backup/restore,
-the coordinator smoke driver and the remaining browser/recovery verification. Container execution is subject to
-that verification; the default offline checks validate configuration only.
+| Path | Purpose |
+|---|---|
+| [`packages/policyops/`](packages/policyops/) | API, domain rules, services, gateway, runtime, providers, persistence and telemetry |
+| [`packages/policyops_contracts/`](packages/policyops_contracts/) | Strict wire schemas, tool catalog, policy traceability and exact money |
+| [`apps/web/`](apps/web/) | Case queue, evidence/activity views, approval inbox and outcome cards |
+| [`evals/`](evals/) | Pinned benchmark adapter, metadata manifests, study configs, reports and retail simulator |
+| [`tests/`](tests/) | Offline, PostgreSQL, authorization, recovery and tooling regressions |
+| [`infra/`](infra/) | Compose images, runtime composition, migrations/seed wiring, Dex and Caddy |
+| [`scripts/`](scripts/) | Local environments, safety studies, scans and deployment/recovery drivers |
+| [`.github/workflows/`](.github/workflows/) | Ubuntu/Windows offline gates and explicit PostgreSQL job |
+
+## Limits and remaining work
+
+- No production deployment, real customers or real commerce mutations. External hosting
+  needs TLS/issuer/secret settings, ingress/egress hardening and rollback verification.
+- E03 does not show Luna quality-equivalent to Haiku. Its reference errors and held bill
+  remain reported; costs are local ledger calculations, not reconciled provider invoices.
+- Banking trajectory retrieval (E01) is outside this release: ingestion, search, reranking
+  and offline metric machinery exist, but its study controller/evaluator contract and
+  quality results do not. Retail E03 uses full policy context.
+- No ANN/HNSW scaling study, graph-versus-loop quality comparison, context/cache optimization
+  study, evaluation explorer or collector/dashboard stack.
+- No hard end-to-end deadline guarantee: synchronous SQL, in-flight remote calls and
+  connection shutdown have documented limits. No billing-evidence outbox exists.
+- Citations verify historical source identity and exact quotes, not entailment or truth.
+  The recovery drills cover one host and a stopped-writer same-cluster logical restore,
+  not host loss, PITR or every crash window. Broader screen-reader review remains open.
+- Known dependency advisories and scan limitations are recorded in
+  [security](docs/security.md#residual-risks-and-explicit-exclusions).
+
+## Documentation and license
+
+[Architecture and API contracts](docs/architecture.md) ·
+[Evaluation and results](docs/evaluation.md) ·
+[Local operations and development](docs/operations.md) ·
+[Database and restore](docs/database.md) ·
+[Authentication](docs/authentication.md) ·
+[Security and tests](docs/security.md) ·
+[Data provenance](docs/data-provenance.md).
+
+PolicyOps is [MIT licensed](LICENSE). Bulk benchmark data, task payloads and document text
+are fetched outside the checkout, not committed. The simulator image includes the audited
+retail fixture and upstream license; the root upstream MIT grant does not establish every
+data file's provenance. See [third-party notices](THIRD_PARTY_NOTICES.md).

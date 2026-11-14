@@ -15,8 +15,8 @@ derived from it lives in [`evals/manifests/tau2-19f13ea3/`](../evals/manifests/t
 | `retail-audit.json` | Dev/holdout scoring profile, upstream issue annotations, reviewed-scenario replacements, near-duplicate check |
 | `upstream-verification.json` | Results of pinned upstream code run against the acquisition |
 | `corpus-tokens.json` | Extraction digests, sizes and tokenizer-specific counts |
-| `retail-calibration.json` | T04: dev demo/tuning allowlist (46 of 64), 18 sourced exclusions, mutation/read-only tags, neutral metadata-only seeds; see [architecture.md](architecture.md) |
-| `ingest-corpora.json` | T12: the ingestion source manifest (`policyops.ingest-manifest/v1`): per corpus the document keys, paths, Git blobs, SHA-256 digests and sizes, license scope, render and rendered-list digest; no document text. See [Ingestion manifest](#ingestion-manifest) |
+| `retail-calibration.json` | Dev demo/tuning allowlist (46 of 64), 18 sourced exclusions, mutation/read-only tags, neutral metadata-only seeds; see [architecture.md](architecture.md) |
+| `ingest-corpora.json` | Ingestion source manifest (`policyops.ingest-manifest/v1`): per corpus the document keys, paths, Git blobs, SHA-256 digests and sizes, license scope, render and rendered-list digest; no document text. See [Ingestion manifest](#ingestion-manifest) |
 
 Each manifest except `ingest-corpora.json` carries `manifest_sha256` over its canonical JSON, so an edit that is not
 regenerated is detected. The ingestion manifest is instead bound by the SHA-256 of its exact bytes, which the
@@ -57,22 +57,22 @@ Running it without `--check` rewrites the file. It lists two corpora, both under
 
 | Corpus | Domain | Render | Documents | Source |
 |---|---|---|---:|---|
-| `tau2-banking-knowledge` | `banking_knowledge` | `tau2-banking/v1` (`## <title>`, blank line, content, as T03's `render_document`) | 698 | every consumed `banking_knowledge/documents/*.json`, keyed by file stem |
+| `tau2-banking-knowledge` | `banking_knowledge` | `tau2-banking/v1` (`## <title>`, blank line, content, as the data audit's `render_document`) | 698 | every consumed `banking_knowledge/documents/*.json`, keyed by file stem |
 | `tau2-retail-policy` | `retail` | `identity` (the decoded file) | 1 | the retail `policy.md` |
 
 Each document's path, Git blob, SHA-256 and size come from `source.json`, the license scope statement is the rights
 audit's verbatim. The rendered-list digest is the SHA-256 of the sorted per-document rendered-body SHA-256 hex
-strings (sorted by document key) joined by LF: it is T03's for banking, and for retail the list has one string, so
+strings (sorted by document key) joined by LF: it is the data audit's for banking, and for retail the list has one string, so
 the digest is the SHA-256 of the ASCII policy-file digest and is distinct from that file digest. The retail file
-digest itself is cross-checked against T03's `retail_policy_sha256`. The source revision (repository, commit, tree and source-manifest
+digest itself is cross-checked against the data audit's `retail_policy_sha256`. The source revision (repository, commit, tree and source-manifest
 digest) belongs to the manifest: a future revision gets its own manifest and values.
 
 At import time the ingestion command re-verifies each listed file against these values (size, SHA-256, Git blob,
 strict UTF-8, rendered-list digest) before anything is written; see [architecture.md](architecture.md#corpus-ingestion).
 The imported bodies exist only in the operator's own PostgreSQL database for one workspace, never in Git. The rights
 position is unchanged: the root MIT license is the only explicit grant, and it does not establish the provenance of
-every data file. Neither this manifest nor the ingestion component changes the retrieval, model-quality or cost
-evidence, none of which has been measured.
+every data file. Neither this manifest nor ingestion establishes retrieval quality. Retail model/cost outcomes
+are measured separately in [evaluation](evaluation.md), using full policy context.
 
 ## Acquisition integrity
 
@@ -128,7 +128,8 @@ Research; reproduced in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)) tog
 Remaining uncertainty: the repository does not say how the retail database records, task scenarios or banking
 documents were authored, or whether any text derives from third-party material. Names, addresses and e-mail-like
 strings are presumed fictional benchmark content, but this cannot be proven. URLs inside data files were not
-followed or audited. Python and JavaScript dependency licenses are a later audit.
+followed or audited. Dependency license inventories and their redistribution limits are described in
+[third-party notices](../THIRD_PARTY_NOTICES.md).
 
 ## Retail split (64 dev / 50 held out)
 
@@ -155,11 +156,12 @@ What the audit found (`retail-audit.json`, `upstream-verification.json`):
 - Many scenarios are templated variants of adjacent IDs. 12 dev tasks have a held-out scenario with character
   5-gram Jaccard ≥ 0.7 (20 at ≥ 0.5, max 0.913, dev 62 vs held-out 63). Tuning on those dev tasks is close to
   tuning on their held-out neighbours. The split is fixed by upstream, so this is disclosed rather than repaired;
-  later demo-seed and tuning allowlists are expected to leave out these neighbours.
+  the committed demo/tuning allowlist excludes these neighbours.
 
-Holdout reads are limited to IDs, `reward_basis`, whether NL assertions exist, issue annotations, scenario text for
+During the source audit, holdout reads were limited to IDs, `reward_basis`, whether NL assertions exist, issue annotations, scenario text for
 the similarity check, and a whole-record equality comparison with the reviewed replacement (reported as field names
-only). Held-out reference actions and assertion text are never replayed, counted or individually inspected.
+only). That audit did not replay held-out reference actions or inspect assertion text individually.
+The later registered retail study uses the upstream evaluator to score them; see [evaluation](evaluation.md).
 
 ## Banking knowledge labels and grouped split (39 dev / 58 test)
 
@@ -173,7 +175,7 @@ exactly the same ordered labels per task.
 
 These are task-level labels for a whole multi-turn trajectory, not per-turn or per-chunk relevance judgments.
 
-The offline T15a metric engine reads these labels for the 39 development tasks only. It takes the dev IDs from the committed split manifest (checking its digest and count and that dev and test do not overlap), then opens exactly those pinned task files, verifies each against its recorded SHA-256 and keeps only the task ID and its required documents. Test-split and aggregate payloads are not opened, and the labels never enter the application runtime, prompts, records or logs. Coverage counts a labelled document as covered when it appears among the documents actually delivered across a trajectory; documents merely considered as candidates are reported separately and are not headline coverage. The frequent-document and grouping facts above are why the metrics also report a document-weighted view and a scenario-group sensitivity; neither turns task-level labels into per-turn relevance.
+The offline retrieval metric engine reads these labels for the 39 development tasks only. It takes the dev IDs from the committed split manifest (checking its digest and count and that dev and test do not overlap), then opens exactly those pinned task files, verifies each against its recorded SHA-256 and keeps only the task ID and its required documents. Test-split and aggregate payloads are not opened, and the labels never enter the application runtime, prompts, records or logs. Coverage counts a labelled document as covered when it appears among the documents actually delivered across a trajectory; documents merely considered as candidates are reported separately and are not headline coverage. The frequent-document and grouping facts above are why the metrics also report a document-weighted view and a scenario-group sensitivity; neither turns task-level labels into per-turn relevance.
 
 Grouping: tasks are linked when their required-document sets have Jaccard ≥ 0.5 or their user-scenario texts share
 ≥ 0.5 of their character 5-grams, and connected components become groups, so near-duplicates under this

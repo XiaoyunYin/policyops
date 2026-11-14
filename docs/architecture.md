@@ -1,13 +1,13 @@
 # Architecture: retail contracts and domain rules
 
-This page describes what is implemented so far. The application database (schema, roles, migrations) is described
+This page describes the implemented contracts, services and runtime boundaries. The application database (schema, roles, migrations) is described
 in [database.md](database.md), and OIDC/session authentication handlers and role dependencies in
-[authentication.md](authentication.md). The case/message API, the run API, the retail simulator and the proposal-review
-API are implemented (sections below). Later work remains: the investigation runtime and graph that call them (T21),
-application execution and its receipts (T19, T22) and the web UI. The retail simulator's own receipts are implemented
-(see its section); the proposal-review component below writes none. The contracts and rules below are pure, typed
-and tested; by themselves they do not authorize anything at runtime, while the routes enforce authorization through
-their own dependencies.
+[authentication.md](authentication.md). The case/message and review APIs, bounded investigation graph, approval continuation,
+execution/reconciliation services and web UI are implemented. The default Compose demo leaves
+model-driven investigation unconfigured and verifies a deterministic proposal through real
+consent, approval and execution. See [operations](operations.md) and [evaluation](evaluation.md)
+for the measured scope. Pure contracts do not authorize a runtime action; services establish
+current authority and database roles constrain persistence.
 
 ## Packages
 
@@ -44,7 +44,7 @@ Interpretations worth knowing:
   tool*: each of address change, payment change, item modification and exchange succeeds at most once per order.
   Dev reference workflows change the address and then the items of the same order, which a single
   "one modification in total" reading would forbid. Repetition is checked against a supplied
-  `OrderOperationHistory` (execution records, later tasks), not inferred from status. Incomplete history escalates.
+  `OrderOperationHistory` (the execution ledger), not inferred from status. Incomplete history escalates.
 - **Policy rules upstream does not enforce in code** become deterministic rules here: authenticate by lookup even if a
   user ID is offered; one customer per conversation; a different item option for modifications and exchanges; and an
   explicit "yes" before any write. The confirmation rule is applied to default-address changes too.
@@ -68,8 +68,8 @@ something else, the preview either escalates or says only what the tool records:
   It makes no payment or refund, so the exchange confirmation says it records a quoted difference and that no charge
   or refund is made by the request. Exchange previews keep the requested item pairs and multiplicity.
 
-Validating the simulator's actual state change and exact-money conversion against the approved effect, before
-committing a snapshot and receipt, belongs to T16. A mismatch must not produce a success receipt.
+The retail simulator validates the actual state change and exact-money conversion against the approved
+effect before committing a snapshot and receipt. A mismatch produces no success receipt.
 
 ## Customer, consent and approval
 
@@ -110,7 +110,7 @@ committing a snapshot and receipt, belongs to T16. A mismatch must not produce a
   is not current before its decision time, and expires no later than the consent and the proposal. Lifetimes are
   checked by subtraction and computed expiries are capped at the largest representable UTC time, so extreme dates
   yield validation results instead of overflow errors. `ready_to_execute` checks mutual consistency and chronology at
-  one instant; persistence, execution-time rechecks and idempotent execution are later tasks.
+  one instant; persisted authority, execution-time rechecks and the operation ledger enforce the runtime path.
 
 ## Agent protocol, events and errors
 
@@ -217,7 +217,7 @@ Packages: `policyops.runtime` (lease clock, runtime specs, worker, outbox dispat
 | `POST /runs/{id}/cancel` | cancel run | `Idempotency-Key`; no version precondition |
 | `GET /runs/{id}/events` | view case | server-sent events; `Last-Event-ID` or `?after=` |
 
-- **Start.** It takes the T08 idempotent write path (replay of the original 202, 409 for a changed intent). Then,
+- **Start.** It takes the case-API idempotent write path (replay of the original 202, 409 for a changed intent). Then,
   under the case lock, it rechecks the current role and the case version, and allows at most one active workbench
   run per case (`409 api.run_active`, also enforced by a partial unique index). It creates, in one transaction:
   - the run, bound to the case version, the initiating principal and the frozen server runtime spec (its real
@@ -227,11 +227,11 @@ Packages: `policyops.runtime` (lease clock, runtime specs, worker, outbox dispat
   - an audit row.
 
   Mode, digests, times and fences are all server-owned.
-- **No runtime is installed yet.** The production runtime catalog is empty until T21 installs an investigation
-  runtime. Starting a run therefore answers `503 runtime.unconfigured` before anything is written, and a job that
-  is already queued with an unknown spec fails visibly (see dead letters below). Deterministic scripted
-  executors exist only in the test support package; they and the fixed test clock are refused outside the test
-  environment (`build_runs_runtime`, `build_worker`, `build_dispatcher`). No model or provider is ever called.
+- **Runtime configuration.** An investigation runtime can be composed with
+  `build_investigation_spec` and installed in the API/worker catalog. The default served API
+  and Compose demo leave it unconfigured: a fresh start returns `503 runtime.unconfigured`
+  before any write. The packaged worker still handles review continuations and reconciliation.
+  Scripted executors and fixed clocks are refused outside the test environment.
 - **Time authority.** Leases, deadlines and run/job/event times come from PostgreSQL `clock_timestamp()`. It is read
   after the locks a decision depends on: `now()` is the transaction start, and would still accept a lease that
   expired while the transaction waited for a lock. A test proves this boundary.
@@ -240,8 +240,8 @@ Packages: `policyops.runtime` (lease clock, runtime specs, worker, outbox dispat
 - **Discovery and claims.** The worker discovers candidate jobs (due queued jobs and expired leases) as the narrow
   `policyops_worker_discovery` role, which reads only scheduling metadata. It then claims as the app runtime in the
   job's workspace, with `SKIP LOCKED` on the run and then the job. Before any work it rechecks, in that order:
-  - the job kind (only `run.execute`) and that the run is in an executable state (`queued` or `running`; paused
-    states need a later, authorized resume path);
+  - the job kind and its allowed run states; investigation execution, review continuation and
+    outcome projection have separate handlers and authorization;
   - the deadlines and the remaining attempts;
   - the spec matching all three digests;
   - the initiator's current START_RUN permission, checked at every claim (each attempt). An ended browser
@@ -266,7 +266,7 @@ Packages: `policyops.runtime` (lease clock, runtime specs, worker, outbox dispat
   - Logs carry codes, IDs and exception type names, never exception text.
 - **Cancel** is a desired-state action. Under the run, then job, locks, it moves an active run to `cancelled`,
   increments the generation, finishes the job, and appends the event, outbox intent and audit row together. A
-  terminal run is returned unchanged with no event. Nothing remote exists to undo here (T19 adds reconciliation).
+  terminal run is returned unchanged with no event. Cancellation cannot undo a remote commit; the ledger continues reconciliation and reports late receipts.
 - **Events and outbox.**
   - **Allocation.** Sequences come from the run's durable `event_highwater` under the run lock, never
     `MAX(sequence) + 1`, so a retired sequence is never reissued.
@@ -299,9 +299,9 @@ Packages: `policyops.runtime` (lease clock, runtime specs, worker, outbox dispat
     sent, so no ID is invented, and the client reconnects from its last received ID.
 
 Limits:
-- The executor is a deterministic test executor; there is no investigation runtime.
-- Workers are in-process objects. One real-process test kills an OS worker and reclaims its lease, but there is no
-  packaged worker entrypoint or deployment (T38).
+- The default Compose demo does not install model-driven investigation. The graph is separately
+  composed and tested; the packaged worker executes review and recovery jobs.
+- Real-process and Compose kill/restart checks cover selected windows, not every crash boundary.
 - Cross-database clock skew does not apply, because the database clock is the only authority.
 - A job kind that some worker does not support is dead-lettered by that worker, so new kinds must ship only after
   every worker supports them.
@@ -309,12 +309,14 @@ Limits:
   a session check or database poll that is already running (including the initial authorization and preflight
   snapshot before any headers are sent) is abandoned, not interrupted. Its worker thread
   finishes the query, ends its short transaction and returns the connection to the pool. Until then it holds that
-  connection and a thread. The application sets no statement timeout of its own, so how long that takes depends on
-  the database. The HTTP response itself still ends at the deadline.
+  connection and a thread. Runtime transactions configure finite statement/lock/idle timeout profiles, but these are per operation
+  and do not prove total socket or cleanup deadlines. The HTTP response itself still ends at the deadline.
 - **What the deadline covers.** The delivery deadline and the stalled-send behaviour were tested at the ASGI level
   (including the composed app over real PostgreSQL), not with a stalled physical socket or behind a reverse proxy.
 
-## Proposal review (T18)
+<a id="proposal-review-t18"></a>
+
+## Proposal review
 
 Packages: `policyops.services.proposals` (creation, presentation and customer reply), `policyops.services.decisions`
 (staff decisions), `policyops.services.proposal_views` (views, derived state, cursors), `policyops.api.proposals`
@@ -328,8 +330,8 @@ records). Pure rules are in `policyops.domain` (`retail_rules.propose`, `consent
 | `GET /proposals/{id}?version=` | view case | One version (the latest by default), exactly as sealed, with presentation, consent, decision, derived state and server time |
 | `POST /proposals/{id}/decision` | decide proposal | Approve or reject one exact version; CSRF and Origin checked |
 
-No route creates, presents, collects consent for or executes a proposal. Creation, presentation and consent are
-internal service operations for later workers and tests. Application execution is separate future work (T19/T22).
+No route creates, presents, collects consent for or executes a proposal. Creation and presentation are internal investigation operations; customer replies enter through the
+case message API. Decision jobs continue into execution/reconciliation and deterministic outcome projection.
 
 **Sealing and binding.**
 - `propose` seals an `ActionProposal` once, under one `action_digest`: its scope and customer, the typed write call,
@@ -368,8 +370,8 @@ internal service operations for later workers and tests. Application execution i
   success. The recovery is to resend the identical request: it replays the original if the first attempt committed.
   Lock waits and COMMIT are synchronous and have no hard wall-clock interruption, so an acknowledged decision can
   already be past its own expiry when the response arrives.
-- A new decision appends one `approval.decided` run event and one audit row. The run's status is unchanged, and nothing
-  is executed; the execution precheck re-collects facts and refuses a stale approval (T17, T19/T22).
+- A new decision appends one `approval.decided` run event and one audit row. The decision transaction queues a durable review continuation; it sends no business mutation.
+  The execution precheck re-collects facts and refuses a stale approval.
 
 **Reads.**
 - Derived state (`awaiting_presentation`, `awaiting_consent`, `awaiting_decision`, `approved`, `approval_expired`,
@@ -400,11 +402,11 @@ whether a cited text is true or supports a claim.
 
 ## Model configuration and usage budgets
 
-`policyops.budget` (T10) holds the allowed models, their dated prices, the cost calculator, the actor configuration,
+`policyops.budget` (budget) holds the allowed models, their dated prices, the cost calculator, the actor configuration,
 the usage ledger rules and the offline evaluation preflight. It imports no provider SDK or HTTP framework and makes
 no provider call itself. The provider adapters (see "Provider adapters" below) account for every physical request
-they make through this ledger. The investigation runtime does not call them yet; their only live use so far is the
-approved smokes, the one embedding smoke (see **Embedding foundation**) and one diagnostic.
+they make through this ledger. The configured investigation and evaluation runtimes call them through the same bounded ports.
+Dated compatibility smokes below are separate from [model-quality studies](evaluation.md).
 
 - **Price snapshot.** `pricing.2026-11-05.v1` holds standard first-party text-token rates per million tokens, read
   on 2026-11-05 from the providers' public model, pricing and prompt-caching pages (listed in `prices.SOURCES`).
@@ -433,7 +435,7 @@ approved smokes, the one embedding smoke (see **Embedding foundation**) and one 
     and 64 inputs per request.
   - A workbench run gets 12 calls and $0.05, counting every request of every actor. An evaluation scenario gets
     $0.20, an invocation $5, and a study $5 unless its manifest declares another finite ceiling.
-  - A non-run operation (future ingestion) gets its own finite budget: 64 calls and $0.05.
+  - A non-run operation (including ingestion) gets its own finite budget: 64 calls and $0.05.
   - `BudgetSettings` reads optional `POLICYOPS_BUDGET_*` overrides from the environment only. A variable that is
     present must be valid (an empty value is refused, never treated as the default), and every value is checked
     against the registry and the caps.
@@ -476,10 +478,10 @@ approved smokes, the one embedding smoke (see **Embedding foundation**) and one 
   - `authorizes_paid_execution` is always `false`: runtime reservations remain the authority.
 - **Limits.**
   - No exactly-once external billing is claimed. A grant is a ledger decision; the adapter that honours it, and
-    that disables implicit SDK retries, is T11's.
-  - The ledger checks the run's state but not a worker's claim; the fence check before dispatch belongs to the T21
-    runtime.
-  - The 180 active seconds per run are configured but not enforced here.
+    that disables implicit SDK retries, is provider's.
+  - Run-bound accounting also validates the current investigation claim at admission, including a
+    recheck after lock waits. Already admitted remote work cannot be recalled by a later fence.
+  - Active time is enforced by the runtime, separately from ledger money/call admission.
   - The overrun block has no operator reset.
 - **Provider extensions (revision 0007):** every new attempt is intent version 2 and binds the request fingerprint. It
   needs exactly one admitted count before `begin_dispatch`, and a contract block (separate from the monetary overrun)
@@ -493,7 +495,7 @@ exact OpenAI Responses or Anthropic Messages request. It sends that request thro
 exactly (`openai` 3.40.0, `anthropic` 2.3.0, the newest version before the lock's supply-chain cutoff), and accounts
 for every physical request in the usage ledger.
 
-**Live use so far (2026-11-05).** All of it was user-approved and capped, with one count and one inference per
+**Compatibility smoke history (2026-11-05).** All of it was user-approved and capped, with one count and one inference per
 case, no automatic retries and no fallback. Every case ran at low effort with cache mode `none`: Luna on the default
 tier, and Haiku on `standard_only` with thinking disabled.
 
@@ -564,7 +566,7 @@ price.
   - a body that re-encodes canonically to the bound bytes.
 
   Responses must be uncompressed and stay within the request's immutable `ResponseBounds`: for chat, 1 MiB and
-  64 KiB per line (every line of every chunk, so SSE lines too); for embeddings (T12), 4 MiB with no line bound, a
+  64 KiB per line (every line of every chunk, so SSE lines too); for embeddings (ingestion), 4 MiB with no line bound, a
   non-SSE JSON body only. A client is refused while any
   `OPENAI_*` / `ANTHROPIC_*` environment variable other than the API key's is set; only the names are checked.
 - **Counting** is required: one supported count per attempt, over the full projection of the same prepared request
@@ -619,23 +621,23 @@ price.
   - a count or request client whose close could not be confirmed within its bound is listed in
     `CallReport.cleanup_unconfirmed`, and its bill is unaffected.
 - **Capability record** (`capability.py`): the factory returns an unpopulated template whose live cells are all
-  `not_run`, whatever has been observed. The actual dated live results are the matrix under **Live use so far**
+  `not_run`, whatever has been observed. The dated compatibility results are the matrix under **Compatibility smoke history**
   above. The record's smoke manifest is **preliminary data only** (`preliminary_not_enforceable`). It is not an
   executable or approved plan, and no live run happens without a separately reviewed driver and explicit approval.
 - **Limits:**
-  - **Narrow live evidence:** the live capability and count-versus-usage evidence is limited to the six dated
-    smoke cases above.
-  - **Deferred to the worker runtime:** recovering a stale count or dispatch claim needs the worker fence, as do
-    the 180 active seconds.
+  - **Narrow capability evidence:** the count-versus-usage compatibility matrix is limited to the six dated
+    smoke cases above; later model studies are reported separately in [evaluation](evaluation.md).
+  - **Worker fencing:** stale count/dispatch claims and active-time admission are handled by the
+    composed runtime, not by an SDK timeout alone.
   - **Cancellation:** a provider may keep generating after a local cancel; the hold stays.
   - **Unimplemented modes:** the Anthropic positive cache modes and OpenAI 12h are refused, not implemented.
 
 ## Embedding foundation
 
-T12's first component: an accounted, cached way to embed exact texts with `text-embedding-3-small` at 1536
-dimensions. Nothing calls this from an API, worker or agent graph; its callers are the operator-run ingestion command
-(see **Corpus ingestion**) and the internal retrieval step's run-bound query embedding (see **Retrieval steps**). One bounded live compatibility smoke on 2026-11-05 is described under **Limits**
-below.
+The embedding foundation accounts for and caches exact texts with `text-embedding-3-small` at 1536
+dimensions. Its callers are operator-run ingestion (see **Corpus ingestion**) and the
+retrieval step's run-bound query embedding (see **Retrieval steps**), including configured
+investigation. One bounded live compatibility smoke on 2026-11-05 is described under **Limits** below.
 
 **Local counting** (`providers/tokenizer.py`). Embedding inputs are counted with cl100k_base, the encoding tiktoken
 0.14.0 maps to this model:
@@ -703,7 +705,7 @@ timeout or cancellation during cleanup cannot lose a known bill.
 - Publication of evidence and vectors is one transaction, checked against the stored batch, the job's request
   configuration and the ledger attempt; evidence is first-write-wins and a cached vector is never replaced. A
   database failure is retried at most three times, never with a second request; the bill is settled either way.
-- Run-bound query jobs (T13): a job of purpose `query` is always run-bound (`job_binding`): exactly one input and the
+- Run-bound query jobs (retrieval): a job of purpose `query` is always run-bound (`job_binding`): exactly one input and the
   subject `query.<run_id>.<step>`, charged to that run's shared budget scope. `run_job(run_id=...)` checks the binding
   against the job's immutable identity (`BindingMismatch` otherwise, before any write) and that the run is visible in
   the caller's workspace and active (`EmbeddingStore.run_is_active`) before planning, cache use or terminal
@@ -725,20 +727,20 @@ timeout or cancellation during cleanup cannot lose a known bill.
   ledger settled USD 0.00000084 with nothing held (operation cap USD 0.001, worst-case reservation USD 0.00000256).
   This is the cost of this smoke, not a statement about retrieval quality, model quality, cache savings or
   performance, and it is not an evaluation. The earlier dated Luna and Haiku evidence and their recorded holds are
-  unchanged. No API, worker or agent-graph caller exists; the ingestion command and the internal retrieval step are described under **Corpus ingestion** and **Retrieval steps** and do not extend this smoke. The
+  unchanged. Configured investigation uses query embedding; the ingestion command and retrieval step are described under **Corpus ingestion** and **Retrieval steps** and do not extend this smoke. The
   external smoke ran under a 300-second child supervisor with a bounded cleanup grace; that is not a production
   deadline proof, and the database-wait bullet at the end of this list still applies.
 - A synthetic maximum
   batch (64 x 1536 numbers of 24 characters, two-space indentation) measures about 3.3 MB; deeper indentation could
   exceed the enforced 4 MiB bound, and a response above it is refused with its hold kept.
 - Cache entries and evidence are never deleted at runtime; there is no retention policy yet.
-- The job deadline does not bound database waits: the ledger and store transactions are synchronous, no statement
-  or lock timeout is set, and a transaction blocked on a row lock waits until the database releases it. The deadline
+- The job deadline does not bound database waits: the ledger and store transactions are synchronous, runtime statement/lock/idle timeouts apply per operation, while socket and commit waits
+  still prevent a universal wall-clock bound. The deadline
   is checked again afterwards; a blocked wait sends nothing.
 
 ## Corpus ingestion
 
-T12's second component: `policyops.retrieval` (`sources.py`, `parse.py`, `corpus.py`, `ingest.py`, `cli.py`) and
+The ingestion implementation in `policyops.retrieval` (`sources.py`, `parse.py`, `corpus.py`, `ingest.py`, `cli.py`) and
 `persistence/corpora.py` on revision `0010` ([database.md](database.md)) import one corpus into one workspace as a
 new, atomically activated generation. **Status: implemented and verified locally** (Windows with Docker Desktop: the application suite with
 1,149 default and 415 PostgreSQL cases, the evaluator suite with 168 cases of which 35 use PostgreSQL, strict lint
@@ -752,7 +754,7 @@ only live embedding evidence; nothing here is a corpus-scale, quality, savings o
 corpus a sorted, finite list of documents (key, repository path, Git blob, SHA-256, size), the license scope, the
 pinned render and the digest of the sorted rendered bodies. `evals/manifests/tau2-19f13ea3/ingest-corpora.json`
 holds `tau2-banking-knowledge` (698 documents, render `tau2-banking/v1`) and `tau2-retail-policy` (1 document,
-render `identity`). It is derived from the committed T03 manifests by the evaluator-owned
+render `identity`). It is derived from the committed data-audit manifests by the evaluator-owned
 `policyops_evals.ingest_manifest` (`--check` compares, `--manifests DIR` selects the input); the application never
 imports the evaluator. The caller supplies the manifest's exact bytes with their SHA-256. Before any database write or
 provider call:
@@ -841,7 +843,7 @@ actual body digest equals its recorded digest, and the span lies within the vers
 a corpus generation it also checks that the version is a member of the trace's generation and reports chunk
 containment as a write-time guard; for a legacy generation it reports `version_in_generation` as
 `not_recorded_legacy`. This is not authorization (the service must already have checked run and case access) and does
-not show that a span supports any claim; no HTTP, worker or agent caller of citation production exists yet (the internal recorder under **Reranking and citation grounding** creates citation rows). The write-time guard still requires a cited chunk to be in a ready generation at insertion; a retrieval trace records the generation it read, and when an activation makes a citation insertion stale, the caller must re-retrieve in a new step rather than reuse the retired snapshot as current evidence; the citation recorder described under **Reranking and citation grounding** writes new rows only for current-generation evidence.
+not show that a span supports any claim; the configured investigation uses the recorder under **Reranking and citation grounding** to create citation rows. The write-time guard still requires a cited chunk to be in a ready generation at insertion; a retrieval trace records the generation it read, and when an activation makes a citation insertion stale, the caller must re-retrieve in a new step rather than reuse the retired snapshot as current evidence; the citation recorder described under **Reranking and citation grounding** writes new rows only for current-generation evidence.
 
 **Scripted full-manifest measurement.** One local run imported the full committed manifest into a fresh workspace
 on real PostgreSQL as `policyops_app_runtime`, through the real SDK path over a scripted transport (synthetic
@@ -862,7 +864,7 @@ must be `policyops_app_runtime`.
 
 ## Retrieval steps
 
-T13: an internal, programmatic retrieval step (`policyops.retrieval` `search.py`, `rank.py`, `counting.py`; `persistence/retrieval.py`; `policyops_contracts/retrieval.py`) on revision `0011`. It has been exercised on synthetic fixture corpora with synthetic vectors and scripted transport, and verified locally on Windows with Docker Desktop (lint, type checks, the application default and PostgreSQL suites, the evaluator default suite, the scanner and static checks); hosted CI has not been run. No API, worker, agent graph or UI calls it; the optional rerank stage and the citation grounding that build on it are described under **Reranking and citation grounding**, and it makes no quality, latency, cost or hosted-CI claim.
+retrieval: an internal, programmatic retrieval step (`policyops.retrieval` `search.py`, `rank.py`, `counting.py`; `persistence/retrieval.py`; `policyops_contracts/retrieval.py`) on revision `0011`. It has been exercised on synthetic fixture corpora with synthetic vectors and scripted transport, and verified locally on Windows with Docker Desktop (lint, type checks, the application default and PostgreSQL suites, the evaluator default suite, the scanner and static checks); hosted CI has not been run. The configured investigation adapter calls it; the default Compose stack leaves investigation unconfigured; the optional rerank stage and the citation grounding that build on it are described under **Reranking and citation grounding**, and it makes no quality, latency, cost or hosted-CI claim.
 
 **Request.** A step names one corpus, a run, a caller-owned step number (0-9999), a query, an optional document allowlist and a versioned configuration. The query is 1-2000 code points of text without control characters other than tab and line breaks and at most 1024 local cl100k tokens, counted as an embedding input. The allowlist has at most 32 sources and must lie inside the corpus. The configuration (`policyops.retrieval-config/v2`) holds the mode, the documents kept per branch (default 20, at most 50), chunks per document (default 2, at most 3), `rrf_k` (default 60), `max_chunks` (default 6, at most 16), `max_evidence_tokens` (default 4096, at most 16,000), `full_policy_max_chunks` (default 16), `max_admission_attempts` (default 64), the dense policy, the FTS configuration, the evidence format and the embedding model and dimensions. Configuration values are strict integers and enumerations, scores are decimal strings and there are no free dictionaries; query vectors and stored vectors remain floats. The step's identity is its run and step number. Its request fingerprint is the SHA-256 of the query digest, the scope digest and the configuration digest (the retrieval intent and trace never store the raw query text; the query embedding job, as a foundation job, persists its input text in `app.embedding_job_inputs`, a tenant-scoped, forced-RLS table with select and insert only, so that the paid job can be recovered durably). The calling service must already have authorized the run, case and corpus; this component still enforces its own tenant, corpus, run, model, dimension and state relationships.
 
@@ -870,7 +872,7 @@ T13: an internal, programmatic retrieval step (`policyops.retrieval` `search.py`
 
 **Exclusions.** The dense branch skips and counts chunks of the generation whose stored vector is missing or whose cosine distance to the query vector is NaN (a zero vector gives NaN), reported as `dense_nan_distance`; this count covers the whole generation, not only the allowlist. Chunks longer than 20,000 code points (already barred by a table CHECK, so expected to be zero) are filtered from every branch and counted as `text_oversized`. Candidate assemblies the evidence counter refuses are skipped and counted as `count_refused`. These counters do not claim that every stored chunk vector has been validated.
 
-**Evidence format and budget.** Evidence blocks are `[E{n}] {source_uri} version {v} | {heading} | chars {start}-{end}`, a line break and the verbatim chunk text, joined by a blank line (`policyops.evidence-format/v1`). The `E{n}` list is the delivery map, never parsed from text; source URIs, headings and texts are untrusted and may contain fake markers, URLs or instructions, and the delimiter is not prompt-injection-proof. Ranked delivery takes the better-ranked branch's chunks first and at most `chunks_per_document` per document in a first pass, then the remainder, and counts the entire concatenated string against `max_evidence_tokens` on every admission (blocks are admitted only if the whole string still fits and fewer than `max_chunks` are delivered), skipping non-fits, never truncating, with a bounded number of attempts. The retail-domain `full_policy` control delivers every chunk if the whole string fits the same token budget, or refuses. Counting uses a retrieval-specific adapter (`counting.py`) over the same pinned cl100k vocabulary, pattern and identity, with its own whole-assembly bounds (at most 384,200 code points and four times that many UTF-8 bytes), strict UTF-8, no NUL, and the foundation's per-regex-piece bound, because the embedding tokenizer's 32,768-code-point input ceiling would wrongly refuse feasible evidence. The foundation tokenizer and its limits are unchanged. Adjacent-context expansion is deferred to development tuning (T15).
+**Evidence format and budget.** Evidence blocks are `[E{n}] {source_uri} version {v} | {heading} | chars {start}-{end}`, a line break and the verbatim chunk text, joined by a blank line (`policyops.evidence-format/v1`). The `E{n}` list is the delivery map, never parsed from text; source URIs, headings and texts are untrusted and may contain fake markers, URLs or instructions, and the delimiter is not prompt-injection-proof. Ranked delivery takes the better-ranked branch's chunks first and at most `chunks_per_document` per document in a first pass, then the remainder, and counts the entire concatenated string against `max_evidence_tokens` on every admission (blocks are admitted only if the whole string still fits and fewer than `max_chunks` are delivered), skipping non-fits, never truncating, with a bounded number of attempts. The retail-domain `full_policy` control delivers every chunk if the whole string fits the same token budget, or refuses. Counting uses a retrieval-specific adapter (`counting.py`) over the same pinned cl100k vocabulary, pattern and identity, with its own whole-assembly bounds (at most 384,200 code points and four times that many UTF-8 bytes), strict UTF-8, no NUL, and the foundation's per-regex-piece bound, because the embedding tokenizer's 32,768-code-point input ceiling would wrongly refuse feasible evidence. The foundation tokenizer and its limits are unchanged. Adjacent-context expansion is deferred to development tuning (retrieval study).
 
 **Query embedding.** A dense or hybrid step uses one run-bound foundation job (see **Embedding foundation**, run-bound query jobs): subject `query.<run_id>.<step>`, exactly one input, the run's shared budget scope, the per-workspace cache and a frozen job without ambiguous reissue. The step's own job is authoritative: an unsettled job is not bypassed by a vector that another job cached. The cached vector must have 1536 finite values and be non-zero after float32 rounding, otherwise the step refuses as `query_vector_invalid`. Availability outcomes (`budget`, `unresolved`, `vectors_invalid`, `job_unsettled`, `missing_vector`) make a hybrid step lexical-only, flagged in the result and trace, when `dense_policy = "lexical_fallback"` (the default), and refuse as `embedding_unavailable` under `refuse`; mode `dense` always refuses. Cancellation, an expired deadline, a lease held elsewhere past a bounded wait (`step_in_progress`) and binding, identity, contract or configuration failures never become a lexical success; there is no model fallback and no reissue.
 
@@ -888,13 +890,13 @@ T13: an internal, programmatic retrieval step (`policyops.retrieval` `search.py`
 
 ## Reranking and citation grounding
 
-T14: internal, programmatic additions to retrieval (`policyops.retrieval` `rerank.py` and `grounding.py`, `persistence/citations.py`, `policyops_contracts/grounding.py` and `retrieval.py`). There is no new migration: citations use the existing `app.citations` table, grants, row-level security and the ready-generation insert guard. It has been exercised on synthetic fixture corpora with scripted provider transports and a local runtime PostgreSQL, with an independent functional review of the internal component. No API, worker, agent graph or UI calls it, and it makes no real-provider, quality, saving, latency or hosted-CI claim.
+grounding: internal, programmatic additions to retrieval (`policyops.retrieval` `rerank.py` and `grounding.py`, `persistence/citations.py`, `policyops_contracts/grounding.py` and `retrieval.py`). There is no new migration: citations use the existing `app.citations` table, grants, row-level security and the ready-generation insert guard. It has been exercised on synthetic fixture corpora with scripted provider transports and a local runtime PostgreSQL, with an independent functional review of the internal component. The configured investigation adapter calls it, and it makes no real-provider, quality, saving, latency or hosted-CI claim.
 
 **Rerank (optional, off by default).** A step reranks only when its configuration carries a rerank section **and** its `Retriever` was built with reranking enabled. The production adapter is built by the `Retriever` from its own verified ledger, providers factory and workspace, never injected, and a test port must declare itself test-only and is refused outside the test environment. After the snapshot closes, the first `documents` fused documents (default and maximum 20, at least 2) in baseline order get server-assigned labels `D01…`, and the server maps each label back to a document ID. The ranking request omits the structured internal UUID fields and the final delivered-evidence map; its excerpts are untrusted candidate text that can contain any string, and the model sees these bounded candidate excerpts (not the final evidence). Each document's excerpt is its candidate chunk texts joined and cut at a code-point boundary to a per-document byte budget (default 500 bytes, at most 1000) inside a total content bound of 12,000 UTF-8 bytes; below a 64-byte minimum the stage is skipped with no call. That bound is a conservative engineering limit, not a tokenizer proof: the provider count admission decides. The answer must be `{"ranking": [label, ...]}` with an enum of the window's labels, unique, at least one; an invalid ranking is discarded whole, with no partial salvage (this is separate from the shape of a grounded answer and from quote validation). The final order is the listed labels in model order, then the unlisted window documents in baseline order, then the documents beyond the window. Excerpts affect ranking only: admitted evidence still uses the full chunk texts under the unchanged evidence-budget rules, although a different order can change which chunks the greedy admission selects.
 
-**Budget, count admission and the work a call reports.** The request goes through the T11 call path on the run's shared budget scope (`RunBinding`) with the configured reranker actor (normally Luna): mandatory count admission, at most one count unit and one inference (one run call slot), a local sub-deadline of its own (default 10 s, at most 30 s), no retry, no repair and no model fallback. The embedding query is a separate one-input run-bound job (see **Embedding foundation**). Three things stay apart:
+**Budget, count admission and the work a call reports.** The request goes through the provider call path on the run's shared budget scope (`RunBinding`) with the configured reranker actor (normally Luna): mandatory count admission, at most one count unit and one inference (one run call slot), a local sub-deadline of its own (default 10 s, at most 30 s), no retry, no repair and no model fallback. The embedding query is a separate one-input run-bound job (see **Embedding foundation**). Three things stay apart:
 - `provider_requests` on a **result** is this invocation's embedding request count, preserved through trace conflicts;
-- an optional per-invocation record `invocation` (on results of rerank-configured steps, and on rerank-enabled refusals that know of work already done; legacy and no-rerank refusals gained no new reporting) with the embedding requests, the rerank grants this call obtained (`rerank_counts_claimed`, `rerank_inferences_dispatched`) and whether cleanup was unconfirmed. These come from two trailing default-false flags on the T11 attempt record, set immediately after the ledger's count and dispatch grants: a grant means the ledger authorized the step, not that bytes left the process;
+- an optional per-invocation record `invocation` (on results of rerank-configured steps, and on rerank-enabled refusals that know of work already done; legacy and no-rerank refusals gained no new reporting) with the embedding requests, the rerank grants this call obtained (`rerank_counts_claimed`, `rerank_inferences_dispatched`) and whether cleanup was unconfirmed. These come from two trailing default-false flags on the provider attempt record, set immediately after the ledger's count and dispatch grants: a grant means the ledger authorized the step, not that bytes left the process;
 - the stored trace's historical rerank summary, identical for every replay of the step.
 The ledger remains the billing authority and the actual transport counts are separate evidence. A pure audit replay of a step reports zero new work; `replayed` identifies the stored trace and is never proof that this invocation did nothing. When concurrent callers write the same step the first trace wins and a losing paid ranking is disclosed as unused. Baseline fallback (flagged) covers only the documented availability and local sub-deadline cases while the global deadline is alive; cancellation, global expiry and integrity failures never become success. Per-query feature and bound checks run after a legitimate existing trace can replay but before the intent, any embedding or any provider work, so an unconfigured or over-cap request refuses without spend.
 
@@ -910,11 +912,13 @@ New writes are all or none; equal rows that already existed are a normal state (
 
 **Limits.**
 - Synthetic fixtures, synthetic vectors and scripted provider transports only; no real-provider call, no retrieval-quality, rerank-benefit, cost, saving or latency result, and no model comparison. A passing fixture shows mechanics.
-- Grounding establishes the historical identity of a quote in delivered evidence. It does not establish entailment, correctness, current policy or authorization, which the calling service must supply; no HTTP route, worker or agent integration exists.
+- Grounding establishes the historical identity of a quote in delivered evidence. It does not establish entailment, correctness, current policy or authorization, which the calling service must supply; the configured investigation supplies the caller-side scope and integration.
 - SQL transactions, including the wait on a concurrent insert of the same citation ID, are not interrupted by deadlines. Finite deadlines and phase checkpoints decide what is returned once control comes back; no hard wall-clock bound is claimed.
 - Grants are ledger grants, not physical transmission; non-observation of rows is not absence; a retired snapshot is never current evidence.
 
-## Retrieval evaluation machinery (T15a)
+<a id="retrieval-evaluation-machinery-t15a"></a>
+
+## Retrieval evaluation machinery
 
 Internal, offline machinery for a later retrieval evaluation (`policyops_contracts/e01.py`, `policyops.studies.e01_plan`, `policyops.retrieval.records` and `diagnostics`, and the evaluator's `e01_metrics`). No study has been run, and there is no controller, migration, HTTP route, worker or agent caller. It has been exercised only on synthetic fixtures and local PostgreSQL; no quality, coverage, cost or performance result exists.
 
@@ -934,40 +938,52 @@ Task-macro coverage averages trials within a task and then tasks; document-macro
 
 **Labels.** The evaluator reads banking labels only for development tasks: the dev IDs come from the reviewed split manifest, then exactly those pinned task files are opened and only the ID and required documents are kept. Labels never enter the application runtime, prompts, records or logs.
 
-**Authoritative read-only export (`retrieval/records.py`).** It turns stored retrieval steps into records. It rechecks each trace against its immutable intent and version spans without a query (`check_step`, evidence verification), maps every delivered and candidate document UUID through the workspace's `app.documents` rows to a source stem that must be in the digest-verified ingest manifest and match the span's source URI, and checks the trace's generation membership. A missing, foreign or unlisted mapping, or a trace that contradicts itself, is an export error and is never dropped. This proves the consistency of stored records, not the query, the ranking, semantic support or authorization. Queries are not stored in the records, so full offline replay needs the visible-query sidecar planned for T15b.
+**Authoritative read-only export (`retrieval/records.py`).** It turns stored retrieval steps into records. It rechecks each trace against its immutable intent and version spans without a query (`check_step`, evidence verification), maps every delivered and candidate document UUID through the workspace's `app.documents` rows to a source stem that must be in the digest-verified ingest manifest and match the span's source URI, and checks the trace's generation membership. A missing, foreign or unlisted mapping, or a trace that contradicts itself, is an export error and is never dropped. This proves the consistency of stored records, not the query, the ranking, semantic support or authorization. Queries are not stored in the records, so full offline replay needs the visible-query sidecar planned for banking retrieval study.
 
 **Local diagnostics (`retrieval/diagnostics.py`).** Two named operations run `EXPLAIN (ANALYZE, BUFFERS)` over the fixed lexical and dense branch statements as the application runtime in a read-only, workspace-scoped transaction. A query has character-count and character bounds and a vector has dimension and validity checks; the branch size and repeat count have small fixed limits. These are input bounds, not retrieval-step token admission, and they do not establish a hard wall-clock interruption of a running statement. The output is a local plan and timing sample on one machine and database, not a production latency or quality claim. There is no diagnostics command-line tool.
 
 **Limits.**
-- Offline typed planning and metrics, the authoritative read-only export and the named local diagnostics are implemented. Genuine development trajectories, the study controller, selection, the query sidecar, gates and any quality claim remain T15b, after T20 and T29.
+- Offline typed planning and metrics, the authoritative read-only export and the named local diagnostics are implemented. Banking development trajectories, the study controller, selection, query sidecar and quality gates remain outside this release.
 - Synthetic fixtures only: a passing test shows mechanics, not retrieval quality, coverage gain, cost or latency.
 - Query-less verification, strict-versus-observed reporting and paired intervals do not prove entailment, current policy or authorization.
 
-## Minimal agent baseline (T20)
+<a id="minimal-agent-baseline-t20"></a>
 
-Internal, programmatic baseline for the later investigation graph (`policyops.orchestration.minimal` and `ports`, and `policyops_contracts/conversation.py`). No HTTP route, worker, graph, checkpoint or UI calls it, and the default investigation run still answers 503 until T21. It has been exercised only with scripted ports and transports over synthetic data. Local PostgreSQL runs of the real SDK and budget ledger verified multi-turn history, cancellation of an in-flight model call (the attempt stays held and the conversation is closed), cancellation during a tool call (the outcome stays unknown), two conversations sharing one budget scope (the last admitted call, then a budget stop), and a caller deadline that passes after a real settlement (billed, not accepted). It is not the T21 graph (checkpoints, resumption, HTTP and worker wiring, UI) and not the T29 benchmark harness, and it supplies no real-query score.
+## Minimal agent baseline
 
-**Ownership and construction.** One `MinimalAgent` owns one conversation: the transcript, counters, the last accepted retail step, the turn index, the terminal state and any pending tool are private. The caller supplies only `turn(UserMessage, deadline=...)` with an absolute monotonic deadline; `snapshot()` returns a bounded immutable copy and does not resume anything. A closed, busy or invalidly-deadlined call is refused before any state change or port call. After a terminal outcome, cancellation and unexpected errors included, every further turn is refused, so a possibly executed action or an in-flight model call is never continued under a fresh key. Construction runs pure checks only and builds nothing by default: the policy, prompt, tool-catalog and agent-actor digests must match the configuration, retail mode must use exactly the typed retail tools with a retail policy, the knowledge flag must go with a knowledge port (and the knowledge step limit is positive exactly then), the output cap must fit the agent actor, and a test-only port or the fictional fixture policy is refused outside the test environment. A template request goes through the T11 `prepare` step, which makes no count, network or reservation. No default provider, client or count exists at construction; the first one that can exist is on the first turn's model call.
+The minimal agent (`policyops.orchestration.minimal` and `ports`, and the conversation
+contracts) owns a bounded half-duplex loop. It is used by the benchmark harness and remains
+distinct from the checkpointed workbench graph. [E03](evaluation.md#e03-model-comparison)
+reports its live retail results. Synthetic and local PostgreSQL tests separately cover
+multi-turn history, cancellation with held billing, unknown tool outcomes, shared budget
+admission and rejection of late replies.
 
-**Injected ports.** The model, tool and knowledge ports are explicit arguments. The one production model adapter, `agent_model_port(ledger, binding, providers)`, is the existing T11 `call` for the fixed `agent` actor with zero retries and zero repairs, on the caller's ledger, binding and providers factory. It records the agent actor's configuration digest when built and rechecks it before every call: a changed configuration returns a contract-gap report without calling the factory, reserving or sending. A ledger conflict or an inactive scope becomes a failed report and never a new key. Tool-call validation is not authorization: retail writes stay behind the deterministic gateway and approval path, the baseline executes nothing itself, and the fake tools are test fixtures. The knowledge port is a read-only interface that returns content only; the runtime binds its result to the pending call. Its Retriever-backed adapter is not here and belongs to T15b.
+**Ownership and construction.** One `MinimalAgent` owns one conversation: the transcript, counters, the last accepted retail step, the turn index, the terminal state and any pending tool are private. The caller supplies only `turn(UserMessage, deadline=...)` with an absolute monotonic deadline; `snapshot()` returns a bounded immutable copy and does not resume anything. A closed, busy or invalidly-deadlined call is refused before any state change or port call. After a terminal outcome, cancellation and unexpected errors included, every further turn is refused, so a possibly executed action or an in-flight model call is never continued under a fresh key. Construction runs pure checks only and builds nothing by default: the policy, prompt, tool-catalog and agent-actor digests must match the configuration, retail mode must use exactly the typed retail tools with a retail policy, the knowledge flag must go with a knowledge port (and the knowledge step limit is positive exactly then), the output cap must fit the agent actor, and a test-only port or the fictional fixture policy is refused outside the test environment. A template request goes through the provider `prepare` step, which makes no count, network or reservation. No default provider, client or count exists at construction; the first one that can exist is on the first turn's model call.
+
+**Injected ports.** The model, tool and knowledge ports are explicit arguments. The one production model adapter, `agent_model_port(ledger, binding, providers)`, is the existing provider `call` for the fixed `agent` actor with zero retries and zero repairs, on the caller's ledger, binding and providers factory. It records the agent actor's configuration digest when built and rechecks it before every call: a changed configuration returns a contract-gap report without calling the factory, reserving or sending. A ledger conflict or an inactive scope becomes a failed report and never a new key. Tool-call validation is not authorization: retail writes stay behind the deterministic gateway and approval path, the baseline executes nothing itself, and the fake tools are test fixtures. The knowledge port is a read-only interface that returns content only; the runtime binds its result to the pending call. Its banking Retriever-backed adapter remains outside this release.
 
 **Domains and the knowledge tool.** The retail mode puts the visible retail policy in the prompt (the full-policy control) and offers the typed retail tools; a protocol violation or an invalid argument is an invalid reply, and the exact handoff message after a transfer ends the conversation. An optional read-only `search_policy` knowledge tool has a reserved name, counts toward every catalog limit and has its own step limit. The retail policy used in the unit and integration tests is a fictional fixture, and the pinned public retail policy text is not in the repository. A separate control loaded that pinned policy from the acquired upstream data tree, outside the repository and with no task payload, and its digest matched the contract. It showed that the full text and all 16 typed retail tools are preserved in the built request and that the real serializer's pure preparation accepts it, with a scripted model reply and no provider or count request. That checks input and serialization mechanics only: it is not token-count admission, policy-following quality or a provider conversation.
 
-**Invalid replies and history.** An invalid reply (several calls, text with a call, no action, an unknown tool, invalid arguments, a retail protocol violation, invalid structured output or an oversized message) appends only a fixed runtime notice from a closed code set. No model text, call or ID is kept, and too many in a row is a terminal outcome. The provider history is built purely from the transcript: each accepted action is one assistant message, each run of user-side entries is one user message in append order, and a tool result must be the very next entry after its call. Otherwise the agent raises an invariant error and never re-sorts. Conversation IDs and keys never reach prompt content.
+**Invalid replies and history.** The benchmark protocol accepts a single valid tool call
+with accompanying text by dropping the text before delivery and recording `tool_text_dropped`.
+The gateway and investigation graph keep strict parsing.
+An invalid reply (several calls, no action, an unknown tool, invalid arguments, a retail protocol violation, invalid structured output or an oversized message) appends only a fixed runtime notice from a closed code set. No model text, call or ID is kept, and too many in a row is a terminal outcome. The provider history is built purely from the transcript: each accepted action is one assistant message, each run of user-side entries is one user message in append order, and a tool result must be the very next entry after its call. Otherwise the agent raises an invariant error and never re-sorts. Conversation IDs and keys never reach prompt content.
 
 **Unknown outcomes, cancellation and billing.** From the moment a tool call is dispatched until a validated result carrying exactly that call ID is accepted, its outcome is recorded as unknown. A port error, an invalid, foreign or oversized result, or a cancellation leaves it unknown and ends the conversation; absence of a result is never read as non-execution, and nothing is retried. Model-call keys are deterministic from the conversation and a call index counted before each await, and a terminal outcome is never followed by a re-key. A model reply that returns after the deadline is terminal and is never accepted as a timely message, while the ledger keeps whatever the call really billed. A cancellation sets the terminal state and re-raises the original exception. The ledger is the billing authority: outcomes carry grant counts, never costs, and grant counts are not proof of transmission.
 
-**Limits and an ordinary choice.** Defaults are 16 model calls per conversation, 8 tool steps per turn, 2 consecutive invalid replies, 128 transcript entries and 48,000 content bytes, 1,024 output tokens, and no knowledge steps unless the knowledge tool is on; these bound the loop and are not token proofs, since T11 count admission decides. The agent does not bind itself to one event loop: it owns no loop-bound resource, a turn that starts while another runs (on any loop or thread) is refused, and ordinary sequential turns from different loops are accepted. That does not mean injected ports are portable across loops; each port keeps its own resource requirements.
+**Limits and an ordinary choice.** Defaults are 16 model calls per conversation, 8 tool steps per turn, 2 consecutive invalid replies, 128 transcript entries and 48,000 content bytes, 1,024 output tokens, and no knowledge steps unless the knowledge tool is on; these bound the loop and are not token proofs, since provider count admission decides. The agent does not bind itself to one event loop: it owns no loop-bound resource, a turn that starts while another runs (on any loop or thread) is refused, and ordinary sequential turns from different loops are accepted. That does not mean injected ports are portable across loops; each port keeps its own resource requirements.
 
 **Limits.**
-- Scripted ports and transports with local PostgreSQL ledger mechanics over synthetic data: a passing test shows the boundary mechanics, not quality, latency, cost saving, a grounded answer, a provider conversation or a benchmark result, and no real provider is called.
+- Scripted component tests establish mechanics; the separate E03 studies provide live retail outcomes
+  under their specified limits. They do not establish workbench graph quality.
 - Nothing is authorized or executed by this component, and no real write is claimed.
-- A port or synchronous wait that ignores cancellation is not interrupted; late replies are rejected only after they return. Turns are serialized at entry only, with no port-level thread-safety guarantee, and prompt quality is untested.
-- There is no command-line tool for it. The graph, checkpoints, HTTP, worker and UI (T21), the harness and real-query scores (T29) and the Retriever-backed knowledge adapter (T15b) are future work.
+- A port or synchronous wait that ignores cancellation is not interrupted; late replies are rejected only after they return. Turns are serialized at entry only, with no port-level thread-safety guarantee, and prompt quality is evaluated only within the separately specified benchmark studies.
+- There is no command-line tool for it. The graph, checkpoints, HTTP, worker and UI are implemented separately. The banking
+  Retriever-backed knowledge adapter and trajectory study remain outside this release.
 
 ## Dev calibration allowlist and demo seeds
 
-`evals/manifests/tau2-19f13ea3/retail-calibration.json` is rebuilt from the committed T03 manifests by
+`evals/manifests/tau2-19f13ea3/retail-calibration.json` is rebuilt from the committed data-audit manifests by
 `policyops-evals data calibration --check` and validated by `check-manifests`. The official 64-dev / 50-holdout split
 is unchanged. Excluded from demos, smoke runs and tuning are 18 dev tasks:
 
@@ -988,7 +1004,7 @@ pinned DB. It currently yields 44 bindings; tasks 24 and 57 name no customer and
 
 ## Retail simulator
 
-`evals/src/policyops_evals/retail_sim` is the evals-owned `retail-simulator` service (T16). The application never
+`evals/src/policyops_evals/retail_sim` is the evals-owned `retail-simulator` service (retail simulator). The application never
 imports it; `policyops.adapters.retail_client` talks to it over HTTP, and the shared RPC models live in
 `policyops_contracts.retail_service` (exported with the other schemas).
 
@@ -1070,7 +1086,7 @@ scope; it never becomes one.
 
 ### Steps
 
-**Parsing.** The provider result becomes one typed step through the closed parser (`parse_result`, built on the T11
+**Parsing.** The provider result becomes one typed step through the closed parser (`parse_result`, built on the provider
 bridge):
 - an unknown tool is out of scope (`scope.supported_requests`);
 - an extra field on an order modification is an unsupported change (`modify.allowed_fields`);
@@ -1097,22 +1113,22 @@ Dispatch is a closed match on the validated call. A step object that skipped val
    never evaluated.
 3. `evaluate_write` decides. An allowed write becomes a `ProposalPreview`: the server-rendered text, computed, not
    persisted and `actionable: false`. It carries no proposal ID, digest, consent or approval authority. The durable,
-   actionable pending proposal is T18's.
+   actionable pending proposal is created by the proposal service.
 
 **Once-per-order tools.** The default operation history (`IncompleteHistory`) is incomplete, so every once-per-order
-tool escalates (`orders.modify_exchange_once`). The T19 executor passes `LedgerHistory` (below).
+tool escalates (`orders.modify_exchange_once`). The execution executor passes `LedgerHistory` (below).
 
 **Transfer.** A transfer returns the handoff observation; the next step must be the exact handoff message.
 
 ### Execution precheck
 
-`precheck(scope, refs, ...)` is the gate the executor (T19) calls immediately before a dispatch. It takes
+`precheck(scope, refs, ...)` is the gate the executor (execution) calls immediately before a dispatch. It takes
 references only, the proposal ID and version and the consent and approval IDs, and loads each record from a
 `DecisionStore`. It re-validates each record from its serialized form, so a constructed or untyped object is no
 authority.
 
 **Before any read**, it requires:
-- a decision store. None exists before T18, so the default refuses with `no_decision_store`; there is no bypass;
+- a decision store. `PgDecisionStore` loads persisted authority; omitting it refuses with `no_decision_store`;
 - a proposal for this run, customer and pinned policy;
 - a consent and an approval bound to it, with the chronology checked;
 - the run's durable lookup authentication.
@@ -1156,11 +1172,13 @@ requires byte equality.
 **What the map does and does not prove.** It records a mapping. The evidence is the parametrized test that
 executes every case.
 
-## Approved execution and reconciliation (T19)
+<a id="approved-execution-and-reconciliation-t19"></a>
+
+## Approved execution and reconciliation
 
 Implemented in `services/execution.py` (`Executor`, `LedgerHistory`), `runtime/executions.py`
 (`ExecutionDispatcher`), `persistence/executions.py` and revision `0012`; verified by
-`tests/integration/test_execution_retail.py` against the real `RetailClient`, the owned T16 simulator process and
+`tests/integration/test_execution_retail.py` against the real `RetailClient`, the owned retail simulator simulator process and
 PostgreSQL as the runtime and discovery roles.
 
 - **Identity.** One execution per approval. The operation ID is a `uuid4` chosen once at reservation and stored with
@@ -1170,7 +1188,7 @@ PostgreSQL as the runtime and discovery roles.
   (otherwise `IdempotencyConflict`); it is not re-prechecked, so it neither renews an expired approval nor mints an ID.
   Every transition re-reads the locked row and refuses a caller snapshot whose binding differs; a stored outcome (and
   its receipt) must be of that row's operation and fingerprint.
-- **Authority.** Only persisted T18 records (read by `PgDecisionStore`, `PgMembership`, `PgSessionStore`,
+- **Authority.** Only persisted proposal review records (read by `PgDecisionStore`, `PgMembership`, `PgSessionStore`,
   `PgEvidencePort`) authorize. The dispatch checkpoint locks evidence corpora, run, proposal, the approver's
   memberships and the execution, then rechecks the claim, the run, the proposal status, the reviewer role, the
   evidence and `now < authorization_not_after - margin` before `dispatched` commits; only then is the request sent.
@@ -1193,8 +1211,194 @@ PostgreSQL as the runtime and discovery roles.
 - **Limits.** PostgreSQL uses configured per-statement, lock and idle timeout profiles, but SQL and COMMIT are synchronous and can delay cancellation; an in-flight request cannot be
   cancelled; the token's lease cap narrows a stale worker's window but is no COMMIT deadline. The component assumes
   one coherent retail database and ledger lifetime with no independent ledger deletion and no retail reset while
-  operations are unresolved: such a reset is not detected (T38). `LedgerHistory` is complete only for a simulator
-  case written exclusively through this ledger. Production `ScopeResolver`/retail-client wiring is T22's.
+  operations are unresolved: such a reset is not detected (local Compose). `LedgerHistory` is complete only for a simulator
+  case written exclusively through this ledger. The review continuation composes the persisted scope resolver and retail client.
 - **E04 development harness.** `tests/support/policyops_testing/execution_faults.py` (seeded fault plan, crash hooks,
-  raw trial records, derived summary) drives the real dispatcher in a small seeded test; the >=100-trial
-  comparative study is T30.
+  raw trial records, derived summary) drives the real dispatcher in a small seeded test; the completed comparative study is described in [evaluation](evaluation.md#e04-operation-ledger-versus-naive-retry).
+
+## Investigation graph and checkpoints
+
+`runtime.investigation.build_investigation_spec` composes an injected model/provider factory, run-bound retail
+gateway, policy retriever and citation recorder into a `RuntimeSpec`. Install it in the same `RuntimeCatalog`
+passed to the API runtime and worker. The default API/Compose demo leaves model-driven investigation unconfigured.
+
+The graph investigates one action at a time through `investigate`, `retrieve`, `read`, `propose` and `finalize`.
+Writes prepare an immutable proposal and presentation, then leave the run in `waiting_approval`; they do not
+execute commerce changes. Answers require every assertion cited and every quote verified and recorded, or return
+a fixed abstention. Citation checks establish retrieved identity and exact quotes; `claim_support_validated`
+stays `False`. Approval/consent decisions and new-input resume belong to the subsequent workflow.
+
+An async, tenant-bound saver stores versioned JSON-only checkpoints in three migration-owned FORCE-RLS tables.
+Every mutation checks the worker generation in the same transaction. Checkpoints use a server-derived thread ID
+and synchronous durability. A reclaimed invocation resumes with `ainvoke(None, ...)`, preserving scheduler state,
+input snapshot, counters and pending actions. Proposal preparation reconciles the same run/step before collecting
+facts again; final messages, message events and run status commit atomically in worker finish. Terminal checkpoints
+short-circuit model/tool work. A lost billed model response becomes `provider_result_unavailable` under the original
+invocation key, without paying for a replacement response.
+
+Investigation state v2 fits context at intake, before checkpointing node results and before each model request.
+It evicts the oldest unpinned completed call/result pairs first, then old notices and agent history. Input messages,
+pending actions, validated evidence-bearing search pairs and typed proposal/presentation/consent/decision facts
+remain pinned. Arguments, quotes and presented terms are never shortened. If the required material cannot fit,
+the run stops with `context_limit`. Version 1 investigation snapshots fail closed; there is no implicit upgrade.
+Provider preparation also enforces server-owned aggregate bounds before decoding schemas/arguments or building
+provider histories: 256 messages, 2,048 parts, 32,768 structural nodes and 256 KiB of UTF-8 content/schema text.
+Escaped canonical inference and count bodies are measured with early exit before full encoding, each at 512 KiB.
+These bounds are digest-bound and do not replace token admission or token headroom checks.
+
+Resource exhaustion produces a typed `run.stopped` event and a fixed message saying what stopped and that no
+further actions will run. Message, event, terminal run state and job completion commit together. Resource stops
+use `budget_exceeded`; context/contract failures use `failed`. Unconfirmed usage is reported explicitly and its
+reserved cost remains held. In-process billing evidence can still be lost on a crash; there is no accounting outbox.
+The final permitted model answer may finalize deterministically, but another model/tool step cannot start after
+an exhausted cap. Embedding/reranking budget exhaustion stops investigations even when standalone retrieval is
+configured to fall back. A stopped run never automatically resumes or resets its caps. Graph loop/integrity
+failures keep separate failure codes.
+
+The custom saver trades stock `PostgresSaver` features for explicit tenant RLS, restricted runtime grants and a
+closed serializer that cannot reconstruct arbitrary Python objects. Runtime DDL, forks, subgraphs, arbitrary object
+payloads and checkpoint pruning are unsupported. Framework checkpoint v4, codec v1 and application state v2 are
+checked separately; incompatible state fails closed. Persisted step counts and an independent graph recursion
+limit bound loops. Unit tests exercise the graph with fake ports and the closed codec; PostgreSQL integration
+cases cover worker completion, restart/reclaim, fences, tenant denial and cancellation.
+Graph identity uses an explicit semantic version plus topology, state schema and checkpoint versions, preserving
+in-flight runs through unrelated source edits while requiring a deliberate version bump for behavioral changes.
+
+SQL and gateway calls are synchronous and can block the event loop, heartbeat and cancellation: there is no hard
+deadline guarantee. The run-bound ledger checks the investigation claim at reservation, count and dispatch admission, including
+a post-lock-wait recheck. A previously admitted in-flight provider call cannot be unsent by a later fence. Checkpoints do not supply provider-result
+replay, remote exactly-once execution, customer consent or staff approval.
+
+
+## Approval continuation and outcomes
+
+An investigation presents one durable proposal and waits for approval. An operator-entered customer reply is
+classified for consent in the message transaction; a staff note never gives consent. A separate staff decision
+enqueues a durable review job. Approval revalidates authority and reserves through execution; the dispatcher alone sends
+the mutation using its stable operation ID. Rejection, expiry or staleness ends with a typed refusal. Rejection
+does not automatically replan: it provides no new authorized intent, and replanning could re-propose the declined
+action or spend more model calls. A new investigation is a new run.
+
+Terminal ledger changes and capped unknowns enqueue outcome jobs. These only project durable truth into a bounded,
+deterministic summary and `review.outcome` event, atomically with the final run state. Committed success requires
+the actual bound receipt. A fenced operation resolves the workflow with no business effect. An unknown outcome
+stays unconfirmed and reconciling; it never means success. A late receipt produces a correction at its new ledger
+version. A cancelled run stays cancelled and still receives later execution truth; cancellation cannot undo a
+remote commit. Outcome delivery has a separate 24-hour deadline, ten attempts and 30-second leases.
+
+The run's active allowance counts queued, running and reconciling time, including backoff and downtime.
+Only `waiting_input` and `waiting_approval` pause it; duplicate transitions and reclaim do not replenish it.
+`deadline_at` is the current active segment's projection and is null while waiting or terminal. Proposal,
+consent, approval, execution authorization and job delivery deadlines remain absolute UTC. New execute jobs
+have a separate 24-hour delivery deadline. Migration `0015` cannot refund historical wait; upgrade with workers quiescent.
+
+Runtime transactions configure statement / lock / idle-in-transaction timeouts in milliseconds: DEFAULT
+5000 / 1000 / 5000, LEASE 1000 / 250 / 2000, and RETRIEVAL snapshot 15000 / 1000 / 5000. Pool checkout is
+configured for two seconds, and the served API retains its finite connection timeout. These are per-operation
+settings; synchronous SQL can delay cancellation, and network or COMMIT acknowledgement loss prevents a universal
+wall-clock guarantee. A failed COMMIT is an unknown outcome, reconciled by the original IDs before more work.
+Run-bound agent, query-embedding and reranker spending also requires the current investigation claim, rechecked
+inside admission after lock waits. Accounting can finish after fencing.
+
+If accounting fails after dispatch, further dispatch stops. Available normalized usage remains in the process's
+report, and unsettled reservations stay conservatively held; a typed failure summary states the uncertainty.
+There is no billing-evidence outbox: a process crash can lose that available evidence. A lost settlement COMMIT
+acknowledgement may already have settled the attempt; durable state must be checked using the same attempt ID.
+Legacy pending proposals predating review continuation are not migrated, and dead-lettered summaries have no operational repair tooling. See `tests/integration/test_review_outcomes.py` for the approval-to-summary and recovery cases.
+
+[docs/policy-coverage.json](policy-coverage.json) maps every policy rule to its executed cases. See
+[docs/architecture.md](architecture.md#policy-and-tool-gateway).
+
+
+## Observability
+
+Core telemetry is off by default. For the served API, set `POLICYOPS_TELEMETRY_ENABLED=true` and
+`POLICYOPS_TELEMETRY_EXPORTER=console` (JSON to stdout) or `memory` (bounded, process-local inspection).
+Library/worker hosts explicitly call `policyops.telemetry.configure(TelemetrySettings())` once before composing
+the worker and own the returned backend's `close()` at shutdown. Install `policyops.api.logging.LOG_CONFIG`
+with `logging.config.dictConfig` for the same safe JSON logs in a worker host. The supported API command installs
+it automatically. Default instrumentation does not construct SDK providers or exporters.
+
+Manual spans cover route templates, job claim/execute/finish, graph nodes, provider attempts, retrieval, tool
+steps, review, execution reservation/dispatch/reconciliation and SQL failure phases. Only allowlisted enums,
+UUID correlation IDs, bounded counts, SQLSTATE classes and exception type names are recorded. Structured logs
+discard free-form messages, arguments and tracebacks. Customer text, prompts, responses, tool arguments,
+evidence, names, email addresses, credentials, cookies, DSNs and raw request paths are never recorded.
+Incoming trace headers and baggage are ignored. Instrumentation uses the versioned `policyops.telemetry/v1`
+schema rather than adopting changing GenAI semantic fields; provider mappings remain local to the adapters.
+
+The direct `opentelemetry-sdk` 1.45.1 dependency provides standard context, batching, metrics and test exporters
+instead of a custom tracing runtime. It pins API 1.45.1 and semantic-conventions 0.66b1; all three distributions
+declare Apache-2.0 and ship their license files. See [third-party notices](../THIRD_PARTY_NOTICES.md#opentelemetry).
+HTTP templates come from FastAPI's resolved OpenAPI paths and selected inclusion context, preserving router
+prefixes and parameter placeholders; unmatched paths have no route attribute.
+
+Counters record provider dispatch attempts, known input/output usage and priced USD, fixed error codes and observed
+job/review/execution outcomes. Unknown bills remain unconfirmed. These lossy counters are diagnostic observations;
+the durable usage/execution ledgers remain authoritative. Due queue depth and oldest due age (including expired
+leases) use a separate best-effort read with the discovery role's existing scheduling grants. Metric labels are
+closed provider/model/outcome/kind/code sets, with no UUIDs. A bounded 256-job cache links previous attempts within
+one worker process; after restart/eviction, use run and operation UUIDs to correlate separate traces.
+
+The SDK batches at most 256 queued spans, 32 per batch, and reads metrics periodically. Exporters run on one
+daemon lane with 32 pending batches; overflow is dropped. A blocked exporter may retain one active batch until it
+returns or the process exits. Shutdown detaches immediately, drains in the background and never waits on exporter
+code. Memory mode retains the last 256 spans and 16 metric batches (`backend.spans.get_finished_spans()` and
+`backend.metrics.items`); it is intended for local inspection/tests, and is erased on process exit. Collector,
+OTLP, Prometheus, dashboards and automatic instrumentation are deferred to collector/dashboard work.
+
+
+## Operator workbench
+
+The case workspace discovers and starts investigations, streams bounded ordered activity, inspects exact
+proposal versions and opens historical evidence with verified quote highlighting. Reviewers use `/approvals`
+for a paged inbox and an exact-version review with action arguments, recorded effects, verbatim terms,
+customer consent, policy/resource bindings and server-clock expiry. Analysts can inspect; only reviewers decide.
+Staff approval and customer consent remain separate. A confirmation binds the displayed version, digest and
+reason; uncertain decisions offer only an explicit identical-payload replay. Canonical reloads expose stale
+reviews and decisions recorded by another reviewer.
+
+Both workspaces separate investigation lifecycle from factual action outcomes: pending, refused, fenced
+noncommit, unconfirmed or committed with a receipt reference. A late receipt after cancellation is shown as a
+correction. These screens have jsdom coverage and the local Compose browser flows described in
+[evaluation](evaluation.md#recovery-and-e07-correctness). Broader screen-reader and responsive-layout
+review remain open. Receipt downloads, raw fact inspection
+and model-generated customer replies remain outside this slice. A configured runtime is required for execution.
+
+
+## Ingestion operator commands
+
+Operator commands. The default is a **read-only plan**: it verifies, parses, compares with the active generation and
+reports cache misses and a worst-case estimate, with no write, reservation, credential read or request. `--execute`
+allows writes. Any embedding request additionally needs `--paid` with **every** cap given explicitly (there are no
+defaults): `--model`, `--dimensions`, `--max-usd`, `--max-calls`, `--max-input-tokens` and `--max-seconds`, within
+fixed ceilings (USD 1.00, 1,000 calls, 5,120,000 local tokens, 3,600 seconds) and equal to the configured
+`text-embedding-3-small`/1536 actor. An import whose inputs are all cached publishes locally without `--paid`.
+
+```powershell
+# Offline: confirm the ingestion manifest matches the committed data-audit manifests.
+python -B scripts/devenv.py uv --project evals run --frozen python -B -m policyops_evals.ingest_manifest --check
+
+# Acquire the pinned data first (see Data and licensing); the acquisition root is the `tree` directory inside --dest.
+$tree = 'D:\path\outside\tau2-fetch\tree'
+$manifest = 'evals\manifests\tau2-19f13ea3\ingest-corpora.json'
+$digest = (Get-FileHash -Algorithm SHA256 $manifest).Hash.ToLower()
+
+# Read-only plan (default). Connects with the libpq environment (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSFILE) as
+# policyops_app_runtime; prints one JSON object (counts, digests, estimate), never document text or secrets.
+python -B scripts/devenv.py uv run --frozen python -B -m policyops.retrieval.cli ingest --workspace <workspace-uuid> `
+  --corpus-key tau2-banking-knowledge --manifest $manifest --manifest-sha256 $digest --acquisition-root $tree
+
+# Local writes only (all inputs already cached, or a completed job): add --execute.
+# Paid embedding (separate, explicitly authorized operation): add --execute --paid --model text-embedding-3-small
+#   --dimensions 1536 --max-usd <usd> --max-calls <n> --max-input-tokens <n> --max-seconds <n>
+# OPENAI_API_KEY is read only after the paid preflight passed.
+```
+
+Exit codes: 0 planned, unchanged or activated; 1 verification failure or unexpected error; 2 refused; 3 embedding
+incomplete (the previous generation stays active); 4 stale activation (another import changed the corpus). When
+provider work remains, a resume with different caps, a smaller token ceiling than the job's frozen total, or an
+expired incomplete job is refused, never silently widened, reissued or retried. Publishing an already settled job
+from the cache is local: it needs no `--paid` caps and does not validate a paid budget it does not use. No
+full-corpus paid run has been performed, and the earlier one-request embedding smoke above is the only live embedding evidence; no retrieval quality, cache savings
+or performance is claimed.

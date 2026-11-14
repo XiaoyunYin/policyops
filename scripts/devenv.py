@@ -3,7 +3,7 @@
 Usage: python -B scripts/devenv.py [--print-env] [--] COMMAND [ARGS...]
 
 POLICYOPS_TEMP_DIR must name an absolute directory outside this checkout
-(locally D:\\coding agent files\\PolicyOps; in CI a runner-temp directory).
+(use a dedicated external directory; in CI a runner-temp directory).
 Every variable below is overridden for the child process only, so caches,
 virtual environments, temporary files and reports cannot default into the
 repository or the system temp folder. Machine-wide settings are not touched.

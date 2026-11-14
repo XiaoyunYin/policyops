@@ -2,7 +2,8 @@
 
 This page describes the PostgreSQL schema and roles in `packages/policyops/src/policyops/persistence/`. Everything here is tested against the pinned PostgreSQL 17.11 + pgvector 0.8.7 image (`pytest -m postgres`; Windows Docker Desktop is the only platform where that has actually run so far).
 
-The database stores records and enforces relational invariants. The [authentication service](authentication.md) validates identity, sessions and current workspace membership using these records. Business workflow authorization and execution remain later work. Row-level security and constraints support those services.
+The database stores records and enforces relational invariants. The [authentication service](authentication.md) validates identity, sessions and current workspace membership using these records. Business workflow authorization and execution are implemented in the gateway and services;
+see [architecture](architecture.md#approval-continuation-and-outcomes). Row-level security and constraints support those services.
 
 ## Roles
 
@@ -14,7 +15,7 @@ Bootstrap creates five cluster roles. All of them are `NOSUPERUSER NOCREATEDB NO
 | `policyops_app_runtime` | API and worker | Tenant tables in `app`, plus its current workspace and memberships in `identity`; `USAGE` on `checkpoints` |
 | `policyops_auth_runtime` | Trusted authentication service | `identity` only: workspaces, principals, memberships, sessions, login requests |
 | `policyops_eval_runtime` | Evaluation recording | `evaluation` only |
-| `policyops_worker_discovery` | Finds work for the worker and outbox dispatcher (T09) | Column `SELECT` on job (`id, workspace_id, state, available_at, lease_expires_at, deadline_at`) and outbox (`id, workspace_id, topic, created_at, delivered_at`) scheduling metadata through read-only policies; no payloads, identity or session data, and no writes. Claims and work then run as the app runtime |
+| `policyops_worker_discovery` | Finds work for the worker and outbox dispatcher (runtime) | Column `SELECT` on job (`id, workspace_id, state, available_at, lease_expires_at, deadline_at`) and outbox (`id, workspace_id, topic, created_at, delivered_at`) scheduling metadata through read-only policies; no payloads, identity or session data, and no writes. Claims and work then run as the app runtime |
 
 - **Auth role.** Pre-workspace identity lookups (principal by issuer and subject, a principal's memberships across workspaces) need rows that no workspace scope can select. A separate, narrowly granted auth role does this, rather than a `SECURITY DEFINER` function. It sees all identity rows by design: that service is the trusted boundary, and it has no business, evaluation or retail access.
 - **Passwords.** These are sent to the server as SCRAM-SHA-256 verifiers computed on the client. The plaintext never reaches the server, its logs or `pg_stat_activity`. A test checks that the verifier is byte-identical to one PostgreSQL computes itself.
@@ -24,7 +25,7 @@ Bootstrap creates five cluster roles. All of them are `NOSUPERUSER NOCREATEDB NO
 
 `policyops.persistence.bootstrap` has three steps:
 
-1. `provision_roles` creates the four roles, or re-asserts their attributes and passwords if they exist.
+1. `provision_roles` creates the five roles, or re-asserts their attributes and passwords if they exist.
 2. `provision_database` creates the database owned by the migrator from `template0`, revokes `PUBLIC` access, and grants `CONNECT` to the runtime roles. It refuses a database owned by another role.
 3. `provision_extensions` runs inside that database. It installs `vector`, revokes `CREATE` on `public`, and reports the installed version and its actual `trusted` metadata.
 
@@ -33,7 +34,7 @@ Bootstrap also refuses:
 - invalid database names;
 - a missing password.
 
-It never creates or grants anything in a `retail` schema. Retail roles and DDL belong to T16.
+It never creates or grants anything in a `retail` schema. Retail roles and DDL belong to retail simulator.
 
 ## Schemas and tenancy
 
@@ -41,8 +42,8 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 |---|---|
 | `identity` | workspaces, principals (global), memberships, sessions, browser-bound login requests |
 | `app` | cases and messages, documents and versions, runs and events, action proposals, presentations, consents, decisions, tool executions, jobs, outbox, audit, index generations, corpora and generation membership (`0010`), chunks, retrieval traces, retrieval step intents (`0011`), citations, usage reservations and events, budget scopes and usage attempts (`0006`) |
-| `evaluation` | evaluation runs and trials, study/invocation/scenario budget scopes and usage attempts (`0006`) (not tenant data; isolated by schema and role) |
-| `checkpoints` | empty: ownership and `USAGE` only. T21 owns the checkpoint DDL; the runtime never runs setup or migrations |
+| `evaluation` | evaluation runs and trials, study/invocation/scenario budget scopes and usage attempts (`0006`), durable trial claims and study bindings (`0016`) (not tenant data; isolated by schema and role) |
+| `checkpoints` | tenant-bound threads, checkpoints and writes (`0013`); the runtime never runs setup or migrations |
 
 **Tenant relationships.**
 - Every tenant table has `workspace_id NOT NULL`, and every one with its own `id` also has `UNIQUE (workspace_id, id)`. The exception is `proposal_presentations`, whose natural composite primary key is workspace, proposal and version, with no `id`. Every tenant relationship is a composite foreign key, so a reference to another workspace's row fails in the database even with a valid UUID, and even for a superuser.
@@ -147,7 +148,7 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
   approval, `UNIQUE (workspace_id, approval_id)`, a partial unique index allowing one unresolved execution per case
   target, claim/lease, counters, backoff and typed outcome columns with one NULL-safe CHECK of the allowed
   state/outcome/resolver/receipt/dispatch combinations (a NULL terminal outcome never passes), and triggers that keep the
-  binding immutable, terminal rows final, counters monotonic, transitions to the T19 state machine and refuse every
+  binding immutable, terminal rows final, counters monotonic, transitions to the execution state machine and refuse every
   DELETE. The runtime may update only the mutable columns; `policyops_worker_discovery` reads only scheduling
   columns. The upgrade refuses a populated legacy table (nothing is backfilled by guessing); the downgrade refuses
   any row even with `allow_data_loss`.
@@ -157,8 +158,8 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
   - forced workspace RLS; the app runtime has `SELECT` and `INSERT` only, so an intent is never changed or removed; no function and no trigger;
   - there is no foreign key from `app.retrieval_traces`: traces written before this revision remain valid historical records, and a trace without an intent is reported as unsupported for replay;
   - it exists so that a retry after a failed trace write cannot change the query, scope or configuration under an already-paid embedding job: the same step with a different fingerprint conflicts before any provider work.
-- **Evaluation export reads (T15a, no new revision).** The retrieval evaluation export adds only read-only queries over existing tables: workspace-scoped `app.documents` (to map a document ID to its corpus key and source URI) and `app.generation_documents` (to check a trace generation's membership). It adds no table, grant, trigger or role and writes nothing, and the revision chain stays at eleven. The local plan diagnostics run `EXPLAIN (ANALYZE, BUFFERS)` of the fixed retrieval branch statements as the application runtime inside a read-only transaction.
-- **Citation recording (T14, no new revision).** The retrieval component records citations in the existing `app.citations` table under its existing grants (the runtime has `SELECT` and `INSERT` only), forced workspace row-level security and the `0010` insert guard, which checks that a cited chunk is visible (a ready generation), in the trace's generation and document version, and contains the span. The guard alone does not check the run, the delivered evidence mapping or the quote; the recorder rechecks those before writing. Row IDs are stable UUIDs derived from the claim, so a retry never creates a second row; equal rows that already exist are accepted and conflicting ones refused. All new rows of a batch are written in one short transaction that locks the corpus row against a concurrent activation. No migration, trigger or role is added. A row written by the recorder asserts historical, ready-generation evidence at its commit only; other rows in the table carry no such assertion.
+- **Evaluation export reads (offline retrieval metrics, no new revision).** The retrieval evaluation export adds only read-only queries over existing tables: workspace-scoped `app.documents` (to map a document ID to its corpus key and source URI) and `app.generation_documents` (to check a trace generation's membership). It adds no table, grant, trigger or role and writes nothing, and that component introduces no additional revision. The local plan diagnostics run `EXPLAIN (ANALYZE, BUFFERS)` of the fixed retrieval branch statements as the application runtime inside a read-only transaction.
+- **Citation recording (grounding, no new revision).** The retrieval component records citations in the existing `app.citations` table under its existing grants (the runtime has `SELECT` and `INSERT` only), forced workspace row-level security and the `0010` insert guard, which checks that a cited chunk is visible (a ready generation), in the trace's generation and document version, and contains the span. The guard alone does not check the run, the delivered evidence mapping or the quote; the recorder rechecks those before writing. Row IDs are stable UUIDs derived from the claim, so a retry never creates a second row; equal rows that already exist are accepted and conflicting ones refused. All new rows of a batch are written in one short transaction that locks the corpus row against a concurrent activation. No migration, trigger or role is added. A row written by the recorder asserts historical, ready-generation evidence at its commit only; other rows in the table carry no such assertion.
 - **Usage budget ledger (`0006`).**
   - A budget scope holds server-set caps and exact counters (`spent_usd`, `held_usd`, `calls_consumed`,
     `calls_held`, and a sticky `overrun`), with `calls_consumed + calls_held <= cap_calls` checked in the database.
@@ -195,8 +196,9 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 ## Migrations
 
-The chain lives in `persistence/migrations/` and has eleven revisions: `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index), and `0005` (run initiator, fencing generation, event high-water mark and retention floor, job claim IDs and error codes, run ledger operations, the discovery role's grants), and `0006` (the usage budget ledger: app and evaluation budget scopes and usage attempts, attempt-linked usage events), `0007` (request-bound v2 intents, per-attempt counts, count resources and
-contract blocks), `0008` (durable customer lookup authentication per run), `0009` (the embedding foundation: jobs, inputs, frozen batches, attempt evidence and the vector cache), `0010` (corpus ingestion: corpora, generation membership and provenance, publication and citation guards) and `0011` (retrieval steps: the append-only per-step request intent). The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
+The chain lives in `persistence/migrations/` and has sixteen revisions. The early revisions are `0001` (identity, cases, actions, jobs, audit), `0002` (retrieval, usage, evaluation, checkpoints), `0003` (single-use login requests and session idle/CSRF state), `0004` (the request-idempotency ledger and the `(workspace_id, created_at DESC, id DESC)` case-queue index), and `0005` (run initiator, fencing generation, event high-water mark and retention floor, job claim IDs and error codes, run ledger operations, the discovery role's grants), and `0006` (the usage budget ledger: app and evaluation budget scopes and usage attempts, attempt-linked usage events), `0007` (request-bound v2 intents, per-attempt counts, count resources and
+contract blocks), `0008` (durable customer lookup authentication per run), `0009` (the embedding foundation: jobs, inputs, frozen batches, attempt evidence and the vector cache), `0010` (corpus ingestion: corpora, generation membership and provenance, publication and citation guards) and `0011` (retrieval steps: the append-only per-step request intent). Revisions `0012`–`0016` add execution, checkpoints, review continuation, active-time accounting
+and durable evaluation claims. The version table is `public.policyops_app_alembic_version`. `policyops.persistence.migrate` runs it on a SQLAlchemy connection the caller opened as the migrator; there is no URL or ini file with credentials.
 
 - **Precondition.** `upgrade` and `downgrade` need a connection with no open transaction. Otherwise Alembic would run all revisions inside the caller's transaction, so they raise `MigrationPreconditionError` before doing anything, and never commit or roll back the caller's work. `current` leaves no transaction behind.
 - **Upgrade.** Each revision runs in its own transaction. A failing revision rolls back completely and the version stays at the previous revision. A test makes revision `0002` fail midway and checks that.
@@ -243,7 +245,7 @@ contract blocks), `0008` (durable customer lookup authentication per run), `0009
 `allow_data_loss=True`**: dropping it would leave scope totals that no longer match their attempts, so that recovery
 is a restore from a consistent backup. Without such data it removes the columns and triggers, keeps version 1 rows
 and restores the exact FORCE flags. For `0009`, rows in any of its five tables trigger refusal (job identities, evidence of billed requests and cached vectors would be lost); `allow_data_loss=True` drops exactly those tables, and the vectors must then be paid for again. Without rows the downgrade drops the tables and re-upgrading restores them. For `0010`, the downgrade is refused while `app.corpora` or `app.generation_documents` has rows, or while any generation, document or chunk carries the new provenance columns. With `allow_data_loss=True` it drops the guards, constraints, new columns and the two tables; the ingested documents, versions, chunks and generations remain as ordinary legacy rows without their provenance, section, corpus and membership information, and the cached vectors of `0009` are untouched. That override is destructive and does not restore anything; recovery of the provenance is a restore from a consistent backup, and re-upgrading afterwards does not recreate it. For `0011`, the downgrade is refused while `app.retrieval_steps` has rows, because dropping intents would let a retried step change its request; `allow_data_loss=True` drops exactly that table, existing traces are retained, and the dropped intents are not recovered by a re-upgrade. An empty downgrade followed by a re-upgrade restores the empty table, and the remaining tables' full-row inventories (same four schemas, version table excluded) are compared after the destructive path as well. For `0008`, rows in `app.customer_authentications` trigger refusal (dropping them would silently de-authenticate runs). Without them the downgrade drops exactly the table and the case key, and re-upgrading restores both. For `0006`, rows in any budget scope or usage attempt table trigger refusal (holds, consumed calls and settled costs would be lost). With `allow_data_loss=True`, the downgrade also deletes exactly the usage events that name only an attempt, because the restored NOT NULL provider request ID cannot hold them; attempt events that have a provider request ID are kept as legacy rows. It lifts FORCE on `app.usage_events` for that delete only if the table was forced, and restores exactly the previous state.
-  - The check lifts `FORCE ROW LEVEL SECURITY` temporarily, because the migrator sees no tenant rows otherwise. It then restores each table's previous state, both when it refuses (the rollback) and when it passes. Before T09 a passing check left the table unforced, which in practice meant `identity.sessions` after an empty `0003` downgrade. A regression test covers forced and unforced tables.
+  - The check lifts `FORCE ROW LEVEL SECURITY` temporarily, because the migrator sees no tenant rows otherwise. It then restores each table's previous state, both when it refuses (the rollback) and when it passes. Before runtime a passing check left the table unforced, which in practice meant `identity.sessions` after an empty `0003` downgrade. A regression test covers forced and unforced tables.
 - **Restore.** A restore is a separate operation, not a downgrade. A tested path dumps with `pg_dump -Fc` and restores with `pg_restore --single-transaction` into a separate, freshly provisioned database, as the superuser. It preserves:
   - row counts;
   - constraints, policies and forced RLS;
@@ -279,13 +281,18 @@ These settings do not establish a total DNS/network/workflow wall-clock guarante
 
 - **Administrators.** The owner, migrator or a superuser can still alter or drop data, policies or triggers. Append-only and audit guarantees hold against the runtime roles, not against database administrators.
 - **Data migrations.** Future data migrations must set a workspace scope or add an explicit, reviewed policy, because the migrator sees no tenant rows.
-- **Not yet built.** Callers of the embedding, ingestion, retrieval, rerank and citation components (an API, worker or agent graph), with the caller-side authorization and membership checks they will need on use of these records; claim-support (entailment) validation; and retrieval-quality evidence. Authentication, case handling and row-level security are already implemented; what is pending is wiring these components behind them. The embedding tables (`0009`) are written by the embedding foundation, the `0010` tables by the operator-run ingestion command, the `0011` intents and the traces by the retrieval step, and citation rows by the citation recorder. Internal citation production therefore exists, without HTTP, worker or agent integration and without implying entailment; no API or worker writes these tables. The ingestion component, the retrieval step and the citation recorder are implemented (see the upgrade notes above and [architecture.md](architecture.md#corpus-ingestion), [architecture.md](architecture.md#retrieval-steps) and [architecture.md](architecture.md#reranking-and-citation-grounding)); hosted CI has not been run. The remaining limits are claim-support validation and the caller-owned refresh of stale evidence.
+- **Component boundaries.** Operator-run ingestion writes corpus generations; configured investigation
+  composes retrieval and citation recording with caller-side scope and claim checks. The default Compose
+  demo leaves investigation unconfigured. Historical quote verification is implemented; entailment and
+  measured banking retrieval quality are not. See [retrieval](architecture.md#retrieval-steps),
+  [grounding](architecture.md#reranking-and-citation-grounding) and [evaluation](evaluation.md).
+
 - **Linux.** The POSIX/Linux run of the PostgreSQL tests (the CI `postgres` job) has not been executed.
 
 
 ## Retail schema
 
-The `retail` schema belongs to T16 and has its own Alembic chain (`evals/migrations/retail`, version table
+The `retail` schema belongs to retail simulator and has its own Alembic chain (`evals/migrations/retail`, version table
 `retail.alembic_version`) and roles, provisioned by `policyops-retail-simulator bootstrap` on a superuser
 connection: `retail_migrator` owns the schema, `retail_runtime` has only the grants below. Both are NOSUPERUSER,
 NOBYPASSRLS and members of nothing; PUBLIC has no access to `retail`, the application roles have none, and the

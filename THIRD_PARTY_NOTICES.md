@@ -94,14 +94,14 @@ SOFTWARE.
 This license is the only explicit grant found in the pinned repository. It does
 not by itself establish the provenance of every data file; see
 [docs/data-provenance.md](docs/data-provenance.md) for the per-file audit and
-its remaining uncertainty. Any image or artifact that later ships upstream files
-(for example the planned retail simulator) must carry this notice.
+its remaining uncertainty. The retail simulator image ships the audited retail fixture and this license; any
+redistributed image or artifact containing upstream files must retain this notice.
 
 ## Other installed dependencies: review before redistribution
 
 ### Compose image redistribution
 
-The T38 app/retail image definitions copy installed Python distributions with their `.dist-info` metadata,
+The app/retail image definitions copy installed Python distributions with their `.dist-info` metadata,
 license/notice texts and native libraries intact. Their frozen lock and this notice are shipped under
 `/usr/share/policyops/` and `/opt/policyops/`. Python code remains readable; LGPL libraries are dynamically loaded
 from the unmodified installed environment (they are not statically linked into PolicyOps). Rebuild from the
@@ -123,7 +123,7 @@ limitations; its proxy and model clients are not started. Build-stage uv 0.13.7 
 from final images (upstream: <https://github.com/astral-sh/uv>, MIT OR Apache-2.0).
 
 These definitions preserve notices and reproducibility inputs; effective image contents, transitive native
-library/source obligations and license inventory still require coordinator inspection before redistribution.
+library/source obligations and license inventory still require inspection before redistribution.
 They do not claim complete legal clearance. Debian/Alpine base packages retain their upstream copyright/license
 records; do not strip those files during image optimization.
 
@@ -137,6 +137,6 @@ The separately inventoried evaluator environment also declares `tqdm` 4.70.1 as 
 
 Preserve installed distribution license/notice files when redistributing environments or images.
 Copyleft obligations, attribution, unknown/legacy declarations, transitive native libraries and the
-exact files shipped need review for the actual T38 images. The inventory deliberately returns a
+exact files shipped need review for the actual images. The inventory deliberately returns a
 review-required status for copyleft and unknown declarations; it does not waive them or replace
 the evaluator's separate inventory and data-provenance audit. No complete legal clearance is claimed.

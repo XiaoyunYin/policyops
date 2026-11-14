@@ -8,7 +8,7 @@ The model proposes actions; deterministic services establish authority. Structur
 
 Protected assets are tenant case/message/evidence/checkpoint data; identity sessions and membership;
 immutable consent, approval, operation and receipt records; provider credentials and budgets; and the public
-source, browser output and future container distribution. Availability and honest unresolved outcomes matter
+source, browser output and container distribution. Availability and honest unresolved outcomes matter
 alongside confidentiality and integrity.
 
 Assume an unauthenticated web client, a malicious authenticated member of another tenant, a member with an
@@ -49,18 +49,18 @@ requires real PostgreSQL (`-m postgres`); default offline tests do not establish
 | Logs/spans keep typed allowlisted fields, no free text, query strings, model/tool payloads or exception messages; bounded exporter queues | `policyops/api/logging.py`, `policyops/telemetry/` | `tests/unit/test_auth_settings.py` access-log tests; `test_telemetry.py` HTTP canaries, tool/graph/SQL error redaction and blocking-exporter tests |
 | Explicit public paths; staged blobs and reachable history scanned; independent hash-pinned scanner; no inline allow suppressions; external temp routing and checkout artifact checks | `scripts/{check_publication,gitleaks_gate,check_repo_artifacts,devenv}.py`, `.gitleaks.toml`, `.githooks/` | `tests/tooling/test_publication_guard.py`, `test_gitleaks_gate.py`, `test_repo_artifacts.py`, `test_devenv.py` |
 
-T37 adds tests only for previously untested audit surfaces: `tests/unit/test_security_audits.py` covers
+security audit adds tests only for previously untested audit surfaces: `tests/unit/test_security_audits.py` covers
 license policy/metadata reconciliation, private-context canaries, ordered ignore rules, secret-content scans,
 browser keys/configuration/maps and fail-closed inputs. `tests/unit/test_ci_security.py` parses the actual
 workflow (rejecting duplicate keys), checks permissions, action SHAs, credential persistence, secret contexts,
 event triggers, test commands and temporary routing, and demonstrates detection with unsafe mutations.
 Existing application regression tests are preserved. This is a regression index, not exhaustive path coverage.
 
-## Recorded T30 evidence
+## Recorded safety evidence
 
-The accepted T30 study used the frozen [matrix/recovery configuration](../tests/fixtures/safety/t30-v1.json)
+The accepted safety study used the frozen [matrix/recovery configuration](../tests/fixtures/safety/t30-v1.json)
 and [E05 configuration](../tests/fixtures/safety/t30-e05-v1.json). These are previously measured counts,
-not new T37 experiments: matrix 434/434, including 8 admission-only cases; E04 ledger arm 83 completed once
+not new security audit experiments: matrix 434/434, including 8 admission-only cases; E04 ledger arm 83 completed once
 and 17 fenced without effect, with 0 duplicate, forbidden, false-success, failed-with-effect, unresolved or
 aborted outcomes. All 6 sensitivity controls detected their injected defects. The naive arm failed to
 recognize all 20 commit-then-timeout writes despite their committed effects; the ledger recovered receipts.
@@ -93,11 +93,12 @@ License inventory exit 1 means review required (copyleft, unknown or inconsisten
 bill of health. It records all lock entries, including uninstalled optional platform packages, and checks
 installed versions/declarations and extra packages. Metadata is a declaration, not proof of legal rights;
 native libraries and copied data still require inspection. See [third-party notices](../THIRD_PARTY_NOTICES.md).
-Online vulnerability/advisory audits are a separate coordinator step with dated results; offline inventories
+Online vulnerability/advisory audits are a separate check with dated results; offline inventories
 and frozen locks cannot establish the absence of vulnerable dependencies.
 
 Recorded advisory audit (2026-11-13, pip-audit 2.9.0 against PyPI; npm 11.20.0 `audit --package-lock-only`):
-- Application Python environment: 85 dependencies, no known vulnerabilities.
+- Application Python environment: 85 dependencies inventoried, 83 audited and 2 local packages
+  skipped because they are not on PyPI; no known vulnerabilities among audited packages.
 - Web lockfile: 10 moderate advisories, all in development-only lint tooling (`eslint`/`typescript-eslint` via
   `minimatch`, GHSA-g3hv-75wg-m249); none are in the browser bundle. The fix is a semver-major upgrade, deferred.
 - Evaluator environment: `litellm` 1.82.6 carries 19 advisories fixed in 1.83 or later. The pinned tau2-bench
@@ -111,7 +112,7 @@ Advisory databases change daily; these are dated observations, not a standing gu
 - Local Compose attaches only Caddy to the non-internal `edge` network to make its published loopback port
   reachable on Docker Desktop. API shares Caddy's network namespace, so both have potential internet egress.
   PostgreSQL, retail, Dex, worker and one-shots stay on the internal default network with no external egress.
-  This trade-off is limited to the fictional local demo; X04 is required before any non-loopback exposure.
+  This trade-off is limited to the fictional local demo; external deployment hardening is required before any non-loopback exposure.
   The smoke asserts host access to Caddy, exact loopback-only publishing, network membership and retail's
   external DNS/TCP denial. It does not establish egress confinement for Caddy/API.
 - The publication and bundle checks use filename/content heuristics. Novel, encoded or renamed secrets/private
@@ -127,18 +128,18 @@ Advisory databases change daily; these are dated observations, not a standing gu
   Coverage counts remain heuristics, not proof every byte was inspected or every secret detected; readable Git
   configuration routing alone does not establish scan completeness.
 - `check_build_context.py` accepts only its documented Dockerignore subset and tests synthetic absent private paths
-  as well as actual included files. It is not a Docker implementation. No application images exist yet: T38 must
-  verify the real Docker context and effective Dockerfile-specific rules, installed package contents, image layers,
-  build logs, secrets handling and runtime users/grants/egress. Deleted files can remain in earlier layers.
+  as well as actual included files. It is not a Docker implementation. The local Compose images have been built and exercised; redistribution still requires
+  inspection of effective Dockerfile-specific rules, installed packages, layers, build logs and secrets handling.
+  Runtime user/grant/egress checks are described in [operations](operations.md#verified-locally). Deleted files can remain in earlier layers.
 - CI uses read-only repository permissions, pinned action SHAs, no persisted checkout credentials and no provider
   secrets or paid modes on fork PRs. Dependency/tool/image provisioning needs network; default tests use fakes.
   The Python socket guard does not cover subprocesses, native sockets, ctypes or captured original functions.
   Live-study allowlisting permits all loopback endpoints and resolved provider addresses; it is not a firewall.
 - Approval is rechecked immediately before dispatch; revocation after a request starts cannot recall it. A local
   timeout/cancellation does not prove remote noncommit. Recovery assumes coherent remote state and ledger
-  lifetimes; reset/restore while writes are unresolved needs the T38 recovery procedure. SQL, DNS and connection
+  lifetimes; reset/restore while writes are unresolved needs the local Compose recovery procedure. SQL, DNS and connection
   shutdown limits do not establish a universal end-to-end deadline or confirmed cleanup of every resource.
 - A grounded quote is not entailment, policy truth or absence of model hallucination. Public benchmark tasks may
-  have been in training data. The UI's tests use jsdom; real-browser/OIDC/proxy/SSE and deployed TLS/CSP/security
-  header checks remain deployment work. No production readiness, internet exposure, independent penetration
+  have been in training data. The UI has jsdom coverage and two local real-browser OIDC/proxy/SSE flows with CSP/header checks
+  ([scope](evaluation.md#recovery-and-e07-correctness)); deployed HTTPS and broader browser/security checks remain open. No production readiness, internet exposure, independent penetration
   testing, legal clearance, zero-vulnerability claim or real-customer/real-commerce safety is asserted.

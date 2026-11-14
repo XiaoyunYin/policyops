@@ -115,7 +115,9 @@ both locks, schedule, price snapshot and analysis. The flow was:
    the receipt in the study bundle. `registration_precedes_claims` is enforced.
 4. Run in that same database with the bound config, then commit the filled digest.
 
-Source: `f54e046` plus the digest fill, committed as `01a2196`. Registration SHA-256:
+Source: `4179062` plus the digest fill, committed as `0a53a9e`. Commit IDs were renumbered once by a
+message-only history rewrite; the registration receipt records the original ID `f54e046`, whose code tree
+is identical to `4179062`. Registration SHA-256:
 `a5350c62dbc7db2e92ac1f312b8b6726e28792a4a5df53142596d0fb63c52ad1`.
 The [committed config](../evals/studies/e03-holdout-luna-haiku-v1.json) freezes fresh seeds
 20261116–20261119, 50 tasks × 4 trials × 2 arms = **400 trials across 200 matched

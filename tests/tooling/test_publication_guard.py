@@ -61,7 +61,8 @@ class PublicationGuardTests(unittest.TestCase):
                 self.git("rm", "--cached", "--", name)
 
     def test_reviewed_foundation_files_and_public_manifests_pass(self) -> None:
-        for name in (".gitleaks.toml", ".nvmrc", "SECURITY.md", "evals/manifests/retail.json"):
+        for name in (".gitleaks.toml", ".nvmrc", "SECURITY.md", "evals/manifests/retail.json",
+                     "reranker/pyproject.toml", "reranker/uv.lock", "reranker/src/policyops_reranker/__init__.py"):
             self.stage(name)
         self.assertEqual(self.run_guard().returncode, 0)
 
@@ -104,7 +105,8 @@ class PublicationGuardTests(unittest.TestCase):
                 self.git("rm", "--cached", "--", name)
 
     def test_raw_outputs_and_unknown_public_roots_are_blocked(self) -> None:
-        for name in ("evals/results/run.json", "notes.txt", "infra/local.db", "career/story.md"):
+        for name in ("evals/results/run.json", "notes.txt", "infra/local.db", "career/story.md",
+                     "reranker/artifacts/model.safetensors", "reranker/data/triples.json", "reranker/PLAN.md"):
             with self.subTest(name=name):
                 self.stage(name)
                 self.assertEqual(self.run_guard().returncode, 1)

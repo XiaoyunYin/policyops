@@ -22,7 +22,8 @@ PUBLIC_FILES = {
     # T02: independent scanner config, reproducible Node version, security guidance.
     ".gitleaks.toml", ".nvmrc", "security.md",
 }
-PUBLIC_ROOTS = {"apps", "packages", "tests", "scripts", "evals", "infra", ".github", ".githooks"}
+# G8: reviewed isolated CPU reranker source, tests and dependency configuration are public project assets.
+PUBLIC_ROOTS = {"apps", "packages", "tests", "scripts", "evals", "reranker", "infra", ".github", ".githooks"}
 PUBLIC_DOCS = {
     "docs/architecture.md", "docs/evaluation.md", "docs/deployment.md",
     "docs/security.md", "docs/data-provenance.md",

@@ -17,8 +17,9 @@ from unittest import mock
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "devenv.py"
 REPO = SCRIPT.parents[1]
 EVALS = REPO / "evals"
-# Virtual environment directory per selected project (the evaluator's is versioned).
-VENV_NAMES = {"app": "app", "evals": "evals-raw-v1"}
+RERANKER = REPO / "reranker"
+# Virtual environment directory per selected project (isolated projects are versioned).
+VENV_NAMES = {"app": "app", "evals": "evals-raw-v1", "reranker": "reranker-raw-v1"}
 _spec = importlib.util.spec_from_file_location("policyops_devenv", SCRIPT)
 assert _spec is not None and _spec.loader is not None
 devenv = importlib.util.module_from_spec(_spec)
@@ -77,6 +78,25 @@ class DevenvTests(unittest.TestCase):
         env = self.env_for(["uv", "sync", "--frozen"])
         self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
         self.assertEqual((env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]), ("core.autocrlf", "false"))
+
+    def test_reranker_resolution_uses_its_own_versioned_cache_and_venv(self) -> None:
+        cases: tuple[tuple[list[str], Path, dict[str, str]], ...] = (
+            (["uv", "--project", "reranker", "sync"], REPO, {}),
+            (["uv", "sync", "--project=reranker"], REPO, {}),
+            (["uv", "--directory", "reranker", "sync"], REPO, {}),
+            (["uv", "--directory=reranker", "--project", "src", "sync"], REPO, {}),
+            (["uv", "sync"], RERANKER, {}),
+            (["uv", "sync"], REPO, {"UV_PROJECT": "reranker"}),
+            (["uv", "sync"], REPO, {"UV_WORKING_DIR": "reranker"}),
+        )
+        for argv, cwd, variables in cases:
+            with self.subTest(argv=argv, cwd=cwd, variables=variables):
+                env = devenv.build_environment({**self.base, **variables}, argv, cwd)
+                self.assertEqual(Path(env["UV_PROJECT"]), RERANKER)
+                self.assertEqual(Path(env["UV_PROJECT_ENVIRONMENT"]), self.root / "venvs" / "reranker-raw-v1")
+                self.assertEqual(Path(env["UV_CACHE_DIR"]), self.root / "cache" / "uv-reranker-raw-v1")
+        app = self.env_for(["uv", "--directory", "reranker", "--project", "..", "sync"])
+        self.assertEqual(Path(app["UV_PROJECT_ENVIRONMENT"]).name, "app")
 
     def test_git_config_overrides_append_to_existing_entries(self) -> None:
         self.base.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="user.name", GIT_CONFIG_VALUE_0="x")
@@ -165,13 +185,20 @@ class DevenvTests(unittest.TestCase):
 
     def test_other_uv_projects_inside_the_checkout_are_rejected(self) -> None:
         checkout = self.root / "checkout"
-        for project in ("", "evals/", "tools/other/"):
+        for project in ("", "evals/", "reranker/", "tools/other/", "evals/other/", "reranker/other/"):
             (checkout / project).mkdir(parents=True, exist_ok=True)
             (checkout / project / "pyproject.toml").write_text("[project]\nname = 'fixture'\n", encoding="utf-8")
-        with mock.patch.multiple(devenv, ROOT=checkout, EVALS=checkout / "evals", APP_MEMBERS=()):
-            for project in ("tools/other", "tools/other/src"):
-                with self.subTest(project=project), self.assertRaises(devenv.EnvironmentErrorReport):
-                    devenv.build_environment(self.base, ["uv", "sync", "--project", project], checkout)
+        with mock.patch.multiple(
+            devenv, ROOT=checkout, EVALS=checkout / "evals", RERANKER=checkout / "reranker", APP_MEMBERS=(),
+        ):
+            for project in ("tools/other", "evals/other", "reranker/other"):
+                for suffix in ("", "/src"):
+                    for option in ("--project", "--directory"):
+                        with (
+                            self.subTest(project=project, suffix=suffix, option=option),
+                            self.assertRaises(devenv.EnvironmentErrorReport),
+                        ):
+                            devenv.build_environment(self.base, ["uv", option, project + suffix, "sync"], checkout)
             env = devenv.build_environment(self.base, ["uv", "sync", "--project", "tools"], checkout)
             self.assertEqual(Path(env["UV_PROJECT_ENVIRONMENT"]).name, "app")
 
@@ -222,6 +249,24 @@ class RealUvSelectionTests(unittest.TestCase):
         self.never_created = Path(temp.name) / "venv"
         # Shared caches and the managed interpreter come from the real temp root.
         self.base = {k: v for k, v in os.environ.items() if k not in UV_LOCATION_VARIABLES}
+
+    def test_reranker_is_a_standalone_project_without_resolving_dependencies(self) -> None:
+        # `uv version` reads project metadata without a lock, downloads or installs.
+        # G8 phase 1 deliberately leaves the lock for the coordinator to resolve.
+        cases = (
+            (["--project", "reranker", "version", "--offline"], REPO),
+            (["--directory", "reranker", "version", "--offline"], REPO),
+            (["version", "--offline"], RERANKER),
+        )
+        for args, cwd in cases:
+            with self.subTest(args=args, cwd=cwd):
+                env = devenv.build_environment(self.base, ["uv", *args], cwd)
+                self.assertEqual(Path(env["UV_PROJECT_ENVIRONMENT"]).name, VENV_NAMES["reranker"])
+                env["UV_PROJECT_ENVIRONMENT"] = str(self.never_created)
+                result = subprocess.run([self.uv, *args], cwd=cwd, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "policyops-reranker 0.1.0")
+        self.assertFalse(self.never_created.exists())
 
     def test_selected_venv_matches_project_uv_resolves(self) -> None:
         cases: tuple[tuple[list[str], Path, dict[str, str], str], ...] = (

@@ -1,0 +1,54 @@
+# Standalone CPU training/inference project; not a root workspace member.
+[project]
+name = "policyops-reranker"
+version = "0.1.0"
+description = "PolicyOps isolated CPU cross-encoder reranker."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.8,<3",
+    "transformers>=4.57,<5",
+    "tokenizers>=0.22,<0.23",
+    # Load weights only from safetensors, never pickle (including pytorch_model.bin).
+    "safetensors>=0.6,<1",
+    "numpy>=2.3,<3",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4,<3",
+    "pytest>=9.1,<10",
+    "ruff>=0.17,<0.18",
+]
+
+[tool.uv]
+required-version = ">=0.13.6,<0.14"
+exclude-newer = "2026-10-28T00:00:00Z"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+extend = "../pyproject.toml"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+
+[tool.pytest]
+minversion = "9.1"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider"]
+xfail_strict = true
+filterwarnings = ["error"]

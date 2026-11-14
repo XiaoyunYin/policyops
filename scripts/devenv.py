@@ -10,8 +10,8 @@ repository or the system temp folder. Machine-wide settings are not touched.
 
 The uv project is resolved as uv 0.13 does: `--directory` (or UV_WORKING_DIR)
 relative to the working directory, then `--project` (or UV_PROJECT) relative to
-that. evals/ selects the evaluator venv; the root workspace selects the
-application venv. The child also receives UV_PROJECT pinned to that project, so
+that. evals/ and reranker/ select their own versioned venvs and caches; the root
+workspace selects the application venv. The child receives UV_PROJECT pinned to that project, so
 uv cannot discover a different one (e.g. from a script's directory in `uv run
 evals/x.py`, or in nested uv calls). Forms whose meaning depends on uv's full
 option grammar fail before anything runs: options other than --directory and
@@ -33,6 +33,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 EVALS = ROOT / "evals"
+RERANKER = ROOT / "reranker"
 # Members of the root uv workspace (pyproject.toml [tool.uv.workspace]); they share uv.lock.
 APP_MEMBERS = (ROOT / "packages" / "policyops", ROOT / "packages" / "policyops_contracts")
 # uv option -> environment variable uv reads when the option is absent.
@@ -112,12 +113,13 @@ def uv_target(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -> Path:
 
 
 def project_root(target: Path) -> Path:
-    """The uv project (ROOT or EVALS) whose lock discovery from target selects."""
+    """The app, evaluator or reranker project whose lock discovery from target selects."""
     for directory in (target, *target.parents):
-        if directory in (ROOT, EVALS):
+        if directory in (ROOT, EVALS, RERANKER):
             return directory
         if (directory / "pyproject.toml").is_file() and directory not in APP_MEMBERS:
-            raise EnvironmentErrorReport(f"{directory} is a separate uv project; only the root and evals/ are routed")
+            raise EnvironmentErrorReport(
+                f"{directory} is a separate uv project; only the root, evals/ and reranker/ are routed")
     raise EnvironmentErrorReport(f"command targets {target}, outside this repository")
 
 
@@ -126,6 +128,9 @@ def project_root(target: Path) -> Path:
 # older shared cache/uv and venvs/evals are left untouched (never migrated or
 # deleted), so an earlier CRLF checkout of tau2 cannot be reused.
 EVALS_NAMESPACE = "raw-v1"
+# Independent reranker generation: cache/uv-reranker-raw-v1 and venvs/reranker-raw-v1.
+# Bump deliberately when install semantics change; never reuse an older generation.
+RERANKER_NAMESPACE = "raw-v1"
 
 # Git settings for child processes (uv's git dependency checkouts). With Git for
 # Windows' core.autocrlf=true, uv's checkout of tau2 rewrote LF to CRLF, so the
@@ -152,16 +157,20 @@ def git_config_overrides(base: Mapping[str, str], settings: Mapping[str, str]) -
 def build_environment(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -> dict[str, str]:
     root = temp_root(base)
     project = project_root(uv_target(base, argv, cwd))
+    namespace = {
+        EVALS: f"evals-{EVALS_NAMESPACE}",
+        RERANKER: f"reranker-{RERANKER_NAMESPACE}",
+    }.get(project)
     tmp = root / "tmp"
     paths = {
         "TEMP": tmp,
         "TMP": tmp,
         "TMPDIR": tmp,
-        "UV_CACHE_DIR": root / "cache" / (f"uv-evals-{EVALS_NAMESPACE}" if project == EVALS else "uv"),
+        "UV_CACHE_DIR": root / "cache" / (f"uv-{namespace}" if namespace else "uv"),
         "UV_PYTHON_INSTALL_DIR": root / "tools" / "uv-python",
         # A matched pair: uv may only sync this project's lock into this venv.
         "UV_PROJECT": project,
-        "UV_PROJECT_ENVIRONMENT": root / "venvs" / (f"evals-{EVALS_NAMESPACE}" if project == EVALS else "app"),
+        "UV_PROJECT_ENVIRONMENT": root / "venvs" / (namespace or "app"),
         "RUFF_CACHE_DIR": root / "cache" / "ruff",
         "MYPY_CACHE_DIR": root / "cache" / "mypy",
         # tiktoken's own download cache (never used by the application, which loads a pinned local vocabulary file;

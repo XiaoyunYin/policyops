@@ -12,6 +12,7 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[2]
 TAU2_COMMIT = "19f13ea3f5fba8b4c4d272d1353590f29dc53062"
+UV_PROJECTS = ("pyproject.toml", "evals/pyproject.toml", "reranker/pyproject.toml")
 
 
 def load_toml(relative: str) -> dict[str, Any]:
@@ -116,23 +117,48 @@ class RepositoryConfigTests(unittest.TestCase):
         self.assertIn("node-version-file: .nvmrc", self.workflow)
         uv_versions = set(re.findall(r'version: "(\d+\.\d+\.\d+)"', self.workflow))
         self.assertEqual(len(uv_versions), 1)
-        for project in ("pyproject.toml", "evals/pyproject.toml"):
+        for project in UV_PROJECTS:
             required = load_toml(project)["tool"]["uv"]["required-version"]
             self.assertEqual(required, ">=0.13.6,<0.14")
             self.assertTrue(next(iter(uv_versions)).startswith("0.13."))
 
     def test_locks_record_the_same_supply_chain_cutoff(self) -> None:
         cutoffs = set()
-        for project, lock in (("pyproject.toml", "uv.lock"), ("evals/pyproject.toml", "evals/uv.lock")):
+        for project in UV_PROJECTS:
             configured = load_toml(project)["tool"]["uv"]["exclude-newer"]
+            cutoffs.add(configured)
+            lock = str(Path(project).with_name("uv.lock"))
+            # G8 phase 1 has no lock: the coordinator resolves it with network access
+            # immediately afterward. Once present, validate it just like the other locks.
+            if project == "reranker/pyproject.toml" and not (REPO / lock).exists():
+                continue
             recorded = load_toml(lock)["options"]["exclude-newer"]
             self.assertEqual(configured, recorded)
-            cutoffs.add(configured)
         self.assertEqual(len(cutoffs), 1)
+
+    def test_reranker_is_isolated_and_uses_only_the_explicit_cpu_torch_index(self) -> None:
+        project = load_toml("reranker/pyproject.toml")
+        self.assertEqual(project["project"]["name"], "policyops-reranker")
+        self.assertEqual(project["project"]["requires-python"], ">=3.12,<3.13")
+        members = load_toml("pyproject.toml")["tool"]["uv"]["workspace"]["members"]
+        self.assertNotIn("reranker", members)
+        self.assertEqual(project["tool"]["uv"]["sources"]["torch"], {"index": "pytorch-cpu"})
+        self.assertEqual(project["tool"]["uv"]["index"], [{
+            "name": "pytorch-cpu", "url": "https://download.pytorch.org/whl/cpu", "explicit": True,
+        }])
+        tools = {"mypy", "pytest", "ruff"}
+        app_dev = load_toml("pyproject.toml")["dependency-groups"]["dev"]
+        self.assertEqual(project["dependency-groups"]["dev"], [
+            dependency for dependency in app_dev if re.split(r"[<>=]", dependency)[0] in tools
+        ])
+        self.assertNotIn("reranker", self.workflow)  # CPU torch CI is deferred until phase 2.
 
     def test_locks_stay_separate_and_share_contract_runtime(self) -> None:
         app = lock_versions("uv.lock")
         evals = lock_versions("evals/uv.lock")
+        for versions in (app, evals):
+            for name in ("policyops-reranker", "torch", "transformers"):
+                self.assertNotIn(name, versions)
         for name in ("tau2", "litellm"):
             self.assertNotIn(name, app)
         for name in ("policyops", "langgraph", "pydantic-settings"):

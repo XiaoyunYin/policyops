@@ -64,20 +64,80 @@ def bundle_directory(study_id: UUID) -> Path:
 
 def raw_inventory(directory: Path, invocation: Path) -> None:
     """Private evidence links only; scheduled trials never come from discovery."""
+    from policyops_evals.studies.taxonomy import inventory
+
+    if any(p.is_symlink() or p.is_junction() for p in (invocation, *invocation.parents)):
+        raise bundles.BundleRefused("raw_inventory_bounds")
+    # Bound discovery before sorting, including entries that are not regular files.
+    paths: list[Path] = []
+    for path in invocation.iterdir():
+        if len(paths) >= 131072:
+            raise bundles.BundleRefused("raw_inventory_bounds")
+        paths.append(path)
+    parts: list[bytes] = []
     entries: list[dict[str, Any]] = []
+
+    def encode() -> bytes:
+        return canonical_bytes({"schema_version": "policyops.private-inventory/v1", "base": "benchmarks",
+                                "files": entries})
+
+    empty_bytes = len(encode())
+    encoded_bytes, part_bytes = empty_bytes, 0
     total = 0
-    for path in sorted(invocation.iterdir()):
-        if len(entries) >= 16384 or not path.is_file() or path.is_symlink() or path.is_junction():
+    for path in sorted(paths):
+        if not path.is_file() or path.is_symlink() or path.is_junction():
             raise bundles.BundleRefused("raw_inventory_bounds")
         size = path.stat().st_size
-        total += size
-        if size > bundles.MAX_FILE or total > bundles.MAX_BYTES:
+        if size > bundles.MAX_FILE or total + size > 16 * bundles.MAX_BYTES:
             raise bundles.BundleRefused("raw_inventory_bounds")
-        raw = path.read_bytes()
-        entries.append({"path": f"{invocation.name}/{path.name}", "bytes": len(raw),
-                        "sha256": sha256_bytes(raw)})
-    bundles.write(directory / f"private-inventory-{invocation.name}.json",
-        canonical_bytes({"schema_version": "policyops.private-inventory/v1", "base": "benchmarks", "files": entries}))
+        with path.open("rb") as handle:
+            raw = handle.read(bundles.MAX_FILE + 1)
+        if len(raw) != size:
+            raise bundles.BundleRefused("raw_inventory_bounds")
+        total += size
+        entry = {"path": f"{invocation.name}/{path.name}", "bytes": size, "sha256": sha256_bytes(raw)}
+        serialized = canonical_bytes(entry)
+        # Entries sit four spaces deeper than a top-level canonical object.
+        # Drop its trailing LF; the array adds either ",\n" or "\n...\n  ".
+        entry_bytes = len(serialized) - 1 + 4 * serialized.count(b"\n")
+        added_bytes = entry_bytes + (2 if entries else 4)
+        # The reader bounds referenced bytes per part AND the JSON file itself.
+        if entries and (len(entries) == 8192 or part_bytes + size > bundles.MAX_BYTES
+                        or encoded_bytes + added_bytes > min(bundles.MAX_FILE, bundles.MAX_BYTES)):
+            parts.append(encode())
+            entries, encoded_bytes, part_bytes = [], empty_bytes, 0
+        if empty_bytes + entry_bytes + 4 > min(bundles.MAX_FILE, bundles.MAX_BYTES):
+            raise bundles.BundleRefused("raw_inventory_bounds")
+        encoded_bytes += entry_bytes + (2 if entries else 4)
+        part_bytes += size
+        entries.append(entry)
+    parts.append(encode())
+    targets = {directory / f"private-inventory-{invocation.name}-part{i}of{len(parts)}.json": data
+               for i, data in enumerate(parts, 1)}
+    # Include older invocations in the reader's study-wide limits. Repeating the
+    # same immutable write is allowed, but replacing an inventory layout is not.
+    existing = []
+    for path in directory.glob("private-inventory-*.json"):
+        existing.append(path)
+        if len(existing) > 1000:
+            raise bundles.BundleRefused("raw_inventory_bounds")
+    if len(set(existing) | targets.keys()) > 1000:
+        raise bundles.BundleRefused("raw_inventory_bounds")
+    found = inventory(directory)
+    previous = [p for matches in found.values() for p in matches if p.parent != invocation]
+    if len(previous) + len(paths) > 131072 or total + sum(p.stat().st_size for p in previous) > 16 * bundles.MAX_BYTES:
+        raise bundles.BundleRefused("raw_inventory_bounds")
+    for path in existing:
+        if (path.name == f"private-inventory-{invocation.name}.json"
+                or path.name.startswith(f"private-inventory-{invocation.name}-part")) and path not in targets:
+            raise bundles.BundleRefused("immutable_file_conflict")
+    # Validate every target before the first write; bounds/conflicts leave no parts.
+    for path, data in targets.items():
+        bundles.output_path(path)
+        if path.exists() and path.read_bytes() != data:
+            raise bundles.BundleRefused("immutable_file_conflict")
+    for path, data in targets.items():
+        bundles.write(path, data, byte_limit=min(bundles.MAX_FILE, bundles.MAX_BYTES))
 
 
 def admit_slot(study: StudyV2, variant: Variant, slot: Slot, invocation_id: UUID,
@@ -169,6 +229,7 @@ def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore
             return bundles.seal(directory, frozen, frozen_snapshot)
 
         checkpoint()
+        primary: BaseException | None = None
         if not close_unclaimed and any(remaining.values()):
             if not planning["within_caps"]:
                 raise runner.StudyRefused("ledger_preflight_refused")
@@ -185,7 +246,6 @@ def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore
             providers = make_providers(study)
             lookup = {(name, s.task_id, s.trial_index): s for name, items in slots.items() for s in items}
             variants = {v.name: v for v in study.variants}
-            primary: BaseException | None = None
             try:
                 for name, task, i, _ in study.schedule():
                     slot = lookup[name, task, i]
@@ -239,22 +299,36 @@ def run(study: StudyV2, repository: EvaluationRepository, store: EvalLedgerStore
                         break
             except BaseException as error:
                 primary = error
-                raise
             finally:
                 try:
-                    raw_inventory(directory, invocation)
                     snapshot_digest = checkpoint()
                 except BaseException:
                     if primary is None:
                         raise
-                    primary.add_note("private inventory/checkpoint export unconfirmed")
+                    primary.add_note("final checkpoint export unconfirmed")
+                    raise primary from None
+                try:
+                    raw_inventory(directory, invocation)
+                except BaseException as error:
+                    if primary is None:
+                        primary = error
+                    else:
+                        primary.add_note("private inventory export unconfirmed")
         else:
             snapshot_digest = checkpoint()
-        for run_id in runs.values():
-            repository.finish_run(run_id, lease)
-        from policyops_evals.studies.reports import render
+        try:
+            for run_id in runs.values():
+                repository.finish_run(run_id, lease)
+            from policyops_evals.studies.reports import render
 
-        report = render(frozen_path, snapshot=snapshot_digest, out=directory / ("report-" + snapshot_digest))
+            report = render(frozen_path, snapshot=snapshot_digest, out=directory / ("report-" + snapshot_digest))
+        except BaseException:
+            if primary is None:
+                raise
+            primary.add_note("sealed snapshot report/finalization unconfirmed")
+            raise primary from None
+        if primary is not None:
+            raise primary
         return {"scheduled": len(frozen.schedule), "execution_complete": report["execution_status"] == "finalized",
             "snapshot_sha256": snapshot_digest, "output": str(directory), "decision": report["decision"]}
 

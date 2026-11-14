@@ -45,7 +45,7 @@
     "order_seed": 20261116,
     "schedule_version": "paired-v1"
   },
-  "preregistration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "preregistration_sha256": "a5350c62dbc7db2e92ac1f312b8b6726e28792a4a5df53142596d0fb63c52ad1",
   "price_revision": "pricing.2026-11-05.v1",
   "provider_mode": "live",
   "purpose": "holdout",

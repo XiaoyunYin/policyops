@@ -323,6 +323,41 @@ Compose runtime has no model-driven investigation. See [browser tests](../apps/w
 [drill driver](../scripts/compose_drills.py) and
 [operations and reproduction](operations.md#automated-killrestart-and-separate-database-restore-drills).
 
+## MCP parity (O01)
+
+The read-only MCP server ([design](architecture.md#read-only-mcp-over-stdio)) runs over stdio only and exposes eight fixed
+read tools. The parity harness ([`scripts/mcp_parity_report.py`](../scripts/mcp_parity_report.py)) drives a real
+`mcp` 2.3.0 `ClientSession` against the real server subprocess in an owned PostgreSQL and retail-simulator stack. It
+compares each call with the direct gateway path: decision, normalized error code and payload, modulo transport framing.
+
+The 167 calls cover:
+- 35 T30 VIEW_CASE actor/relation cells;
+- 9 gateway read rules;
+- 60 E05 cited-text projections;
+- 60 refused write candidates;
+- 3 identity cases (expiry, revocation, argument-supplied identity).
+
+E05 approval/write races and other T30 APIs are out of scope.
+
+| Measure | Result |
+|---|---|
+| Parity with the direct path | 167/167 |
+| Unauthorized disclosures / false denials vs direct | 0 / 0 |
+| Warm-worker overhead (60 calls) | p50 14.5 ms, p95 39.9 ms, max 97.1 ms |
+| Cold first call (worker spawn and setup) | p50 3.14 s, p95 3.64 s |
+| Calls refused in the facade before any worker (60) | p50 1.17 ms |
+
+Latency uses nearest-rank quantiles on one Windows workstation, with sequential direct-then-MCP calls. The handshake is
+excluded. Overhead includes per-call identity and health checks, so it is not pure protocol cost. Warm workers are reused
+and are killed and replaced on any timeout, cancellation, oversize or failed result, so no thread or transaction is
+abandoned.
+
+A capped live smoke ([`scripts/mcp_luna_smoke.py`](../scripts/mcp_luna_smoke.py)) used `gpt-6-luna` as the MCP client for
+an order lookup and a cited policy search. Both tasks completed, using 4 calls with a settled $0.0003165 under a $0.05 cap,
+no retries and ledger admission. An earlier attempt stopped at a locally refused tool argument; the prompt now states the
+exact order-ID format, and refused arguments are recorded. This shows protocol interoperability and authorization parity
+in a fixture scope, not general agent quality.
+
 ## Reproduction and harness reference
 
 Use the frozen environments and external scratch setup in

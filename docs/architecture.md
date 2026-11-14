@@ -1402,3 +1402,70 @@ expired incomplete job is refused, never silently widened, reissued or retried. 
 from the cache is local: it needs no `--paid` caps and does not validate a paid budget it does not use. No
 full-corpus paid run has been performed, and the earlier one-request embedding smoke above is the only live embedding evidence; no retrieval quality, cache savings
 or performance is claimed.
+
+## Read-only MCP over stdio
+
+`python -m policyops.mcp` serves the pinned MCP 2.3.0 protocol over the client's subprocess pipes. It opens no
+listening socket and offers no HTTP/SSE transport. Its startup-fixed tools are `find_user_id_by_email`,
+`find_user_id_by_name_zip`, `get_user_details`, `get_order_details`, `get_product_details`, `get_item_details`,
+`list_all_product_types` and `search_policy`. Input schemas reuse the strict retail DTOs, with their server-owned
+`tool` discriminator removed. Policy search takes only `query`. Extra fields, including identity selectors, fail
+validation. The output schema is an object containing a discriminated `result`: read, lookup, cited policy data,
+or the existing normalized `ToolError`. Unknown tools, including writes, return `policy_unsupported`.
+
+The trusted launcher supplies `POLICYOPS_MCP_CONFIG` as serialized `policyops.mcp.config.Configuration`, and the
+opaque existing session cookie separately as `POLICYOPS_MCP_SESSION`. Configuration fixes principal, workspace,
+role, persisted run, server-side customer binding, corpus, fixture digest and a credential window of at most one
+hour. It cannot create a membership or replace the case's persisted customer. Every valid call uses the existing
+`AuthService.resolve/authorize(VIEW_CASE)` and checks that the fixed role remains current, reloads the persisted
+gateway scope, then rechecks identity before delivery. Session expiry, session revocation and membership removal
+deny subsequent calls. The session/principal foreign key and existing session lifecycle establish the current
+staff identity; this schema has no separate user-disable flag. No identity comes from tool arguments.
+
+Retail reads go through `Gateway.step` and `PgSessionStore`, preserving lookup-before-read and single-customer
+authorization. Lookup may record its existing durable customer authentication; no business mutation, proposal,
+consent or approval endpoint is exposed. Policy search uses the existing T13 read-only retrieval snapshot, lexical
+fusion and bounded token delivery through `gateway.policy_search`; it makes no embedding/model calls and writes
+no retrieval intents, traces or jobs. Citations contain immutable document-version/chunk IDs, source URI, exact
+character span, text and digest. Citation provenance does not establish semantic support or current policy truth.
+
+`POLICYOPS_DB_*` and the existing authentication settings configure the two verified runtime database roles.
+`POLICYOPS_MCP_RETAIL_ORIGIN` and `POLICYOPS_MCP_RETAIL_KEY_HEX` configure the existing signed retail adapter.
+These are trusted process settings; they are never tools or model-visible configuration. No `.env` is read.
+Database transactions close before adapter calls. A lazy pool owns up to `concurrency` child processes (default 1,
+maximum 4), each serially handling length-prefixed bounded request/result frames. Workers reuse their engines,
+OIDC and retail clients; both database runtime roles are verified on every call, HTTP connections are checked
+when used, and session/scope/role authorization is never cached. Call timeout defaults to 10 seconds (maximum 30),
+including cold worker startup, with an 8 KiB argument bound and a 64 KiB result bound. Input MCP frames are limited
+to 16,384 characters before JSON parsing. Cancellation, timeout, malformed/oversized output, health-check failure
+or an unavailable result kills and reaps the worker within a separate two-second cleanup bound; the next call
+spawns a replacement. Expected identity/policy refusals are clean results and may reuse the worker. A sole stdin
+reader also watches pipe EOF and stops the worker if the server dies, even during a blocked call. Workers recycle
+after 100 calls or on next use after five minutes by default (`worker_max_calls`, ceiling 1,000;
+`worker_max_age_seconds`, ceiling 3,600). `worker_mode=cold` retains per-call spawning for comparison.
+PostgreSQL's statement/lock/idle limits remain in force.
+Read work already received by the remote retail service can finish after local cancellation; no mutation is sent.
+
+The PostgreSQL tests in `tests/integration/test_mcp_parity.py` and `scripts/mcp_parity_report.py` replay applicable
+T30 read cells and E05 text through a real SDK `ClientSession` over stdio. Reports compare decisions, error codes
+and complete typed payloads and include per-call direct/MCP timings and paired overhead p50/p95/max. The report
+separates cold calls (including worker spawn/resource setup), warm calls, and facade-only refusals, using request-local
+MCP metadata; each group includes counts, failures, direct/MCP times and paired overhead. Both paths reuse clients.
+`--worker-mode warm|cold` selects the comparison (default warm); the mixed overall overhead is not the warm protocol
+cost. All original
+E05 candidate actions are writes: they are refused here; their exact customer/tool text is separately replayed as
+cited policy data. This is a read projection, not another execution of E05's approval/write races. Reports expose
+that scope and enforce the expected case IDs. Synchronous synthetic corpus publication finishes before the replay
+event loop starts. Latency excludes the session handshake; cold and warm groups remain fixture-dependent samples.
+`scripts/mcp_luna_smoke.py` provides two scripted demo read tasks using the existing OpenAI adapter and persistent
+budget ledger. It records preflight without paid opt-in; execution requires `--execute-paid` and explicit cost,
+inference/count-call and time caps, with a hard ceiling of $0.05 and no retries, repair or model fallback.
+The smoke checks the unchanged MCP input schemas against the adapter's supported domain subset before provider
+count/dispatch and records their exact JSON, wire projections and projection metadata. The wire projection omits value
+patterns; local validation still enforces them. Its prompt explicitly requires the complete `#W` plus seven-digit
+order ID, and its manifest records the prompt hash. A smoke-only response tee retains up to four tool names (64
+characters each), argument prefixes (512 characters each), and up to five validation keyword/path pairs (160
+characters each) per call, including calls the adapter rejects. It buffers at most 64 KiB of an inference response;
+oversized or malformed diagnostic input is marked explicitly. Only fictional fixture data belongs in this smoke.
+It records exception-group leaf types without messages. Diagnostics observe delivery and preserve the adapter's
+validation, billing and cleanup behavior; they never authorize execution or retain headers/full response bodies.

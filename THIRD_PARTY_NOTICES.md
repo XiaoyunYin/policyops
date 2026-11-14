@@ -140,3 +140,25 @@ Copyleft obligations, attribution, unknown/legacy declarations, transitive nativ
 exact files shipped need review for the actual images. The inventory deliberately returns a
 review-required status for copyleft and unknown declarations; it does not waive them or replace
 the evaluator's separate inventory and data-provenance audit. No complete legal clearance is claimed.
+
+## MultiDoc2Dial dataset (evaluation data, not redistributed)
+
+MultiDoc2Dial v1.0 (IBM): Song Feng, Siva Sankalp Patel, Hui Wan and Sachindra Joshi (2021). *MultiDoc2Dial: Modeling
+Dialogues Grounded in Multiple Documents.* EMNLP 2021. Dataset: https://doc2dial.github.io/multidoc2dial/ ; paper:
+https://arxiv.org/abs/2109.12595 . PolicyOps treats it as Creative Commons Attribution 3.0
+(https://creativecommons.org/licenses/by/3.0/). The licensing metadata conflicts: the Hugging Face YAML tag says
+Apache-2.0, while its licensing section and the Doc2Dial card say CC BY 3.0. PolicyOps derives title-run passages,
+rendered conversation histories, passage qrels, hash-ranked cohorts and duplicate audits. Only cohort IDs, counts and
+hashes are published (qrels and passages are bound by hash); the source archive, derived text and human replies stay private. No endorsement is implied.
+
+## MCP SDK and added transitive distributions
+
+The application installs `mcp` 2.3.0 and `mcp-types` 2.3.0 from the locked registry artifacts. Both installed
+metadata declarations are MIT; their distributions include `licenses/LICENSE`. `python-multipart` 0.0.32 declares
+Apache-2.0 (`licenses/LICENSE.txt`), and `sse-starlette` 3.6.0 declares BSD-3-Clause (`licenses/LICENSE` and
+`licenses/AUTHORS`). The latter packages arrive through the SDK; PolicyOps exposes only stdio, with no MCP
+HTTP/SSE server. On Windows, `pywin32` 312 declares PSF and includes component-specific licenses under its installed
+`licenses/` tree (including COM, Pythonwin and adodbapi); preserve the complete distribution's notices rather than
+assuming a single label covers every bundled component. No source from these packages is vendored. Preserve their
+installed license/notice files when redistributing an environment or image. These local metadata observations do
+not replace review of the exact shipped artifacts and their component terms.

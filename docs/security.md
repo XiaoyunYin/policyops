@@ -143,3 +143,45 @@ Advisory databases change daily; these are dated observations, not a standing gu
   have been in training data. The UI has jsdom coverage and two local real-browser OIDC/proxy/SSE flows with CSP/header checks
   ([scope](evaluation.md#recovery-and-e07-correctness)); deployed HTTPS and broader browser/security checks remain open. No production readiness, internet exposure, independent penetration
   testing, legal clearance, zero-vulnerability claim or real-customer/real-commerce safety is asserted.
+
+## MCP threat model and limits
+
+The MCP interface is an opt-in local stdio subprocess, with eight fixed read tools and fixed input/output schemas
+([architecture](architecture.md#read-only-mcp-over-stdio)). It has no listening socket, dynamic registration,
+arbitrary URL/SQL/shell, write tool or proposal creation. Treat the launcher and process environment as trusted:
+anyone who can replace its executable, session credential or database configuration already controls this local
+boundary. The opaque session stays outside tool messages. Credentials must be passed through the client's private
+environment, never command-line arguments, public MCP configuration, model context or logs.
+
+Each accepted call resolves the existing database-backed session, authorizes the fixed expected staff/workspace
+context with `VIEW_CASE`, and requires its pinned role still to exist. It then reloads the persisted run/customer
+scope. Retail reads retain the gateway's customer authentication and ownership rules; policy search is restricted
+to the launcher's fixed corpus in the same RLS workspace. Identity is checked again before returning read data.
+An expired/revoked session or revoked role denies the next call. These point-in-time checks do not provide
+linearizability against a revocation committed immediately after the final check.
+
+Customer strings, retrieved policy text, source URIs and retail names remain structured data. The server does not
+interpret embedded instructions, fetch citation URLs, execute code or grant authority from those strings. This
+does not prove that an arbitrary consuming model will ignore prompt injection; client instructions and the fixed
+tool boundary remain necessary. Source-span citations establish provenance, not semantic truth or entailment.
+
+Arguments, results, frames, concurrency and time are bounded. A lazy pool reuses at most four owned workers, with
+one call per worker at a time. Engines and HTTP clients persist, but authorization and persisted scope are checked
+per call; both runtime database roles are reverified on use. Bounded length-prefixed frames prevent the parent from
+waiting for process EOF between results. A timeout, cancellation, unavailable result, health-check failure or invalid
+output forfeits the worker, so blocking SQL, token counting or an adapter cannot persist as an abandoned thread.
+The parent kills and waits for that worker, with a two-second cleanup bound, and spawns a replacement on next use;
+failure to confirm cleanup fails the call/server instead of claiming success. Clean policy/identity refusals may reuse
+the process. Call-count and age caps recycle workers (100 calls/five minutes by default; age checked before reuse).
+The sole stdin reader doubles as a watchdog, stopping the worker on parent pipe EOF during idle or blocked work.
+Remote read requests
+may finish after local socket closure, and PostgreSQL may take its configured statement/idle deadline to observe
+disconnect and release a transaction; no commerce mutation is exposed. Lookup authentication and session-touch
+bookkeeping can already have committed when a read is cancelled. Oversized frames close the connection, while
+validly framed unknown/invalid tools return normalized errors. Malformed protocol envelopes use SDK protocol errors.
+
+Offline regressions cover strict schemas, identity/role binding, gateway ownership, untrusted strings and process
+timeout/cancellation. PostgreSQL parity and the paid Luna smoke must be run separately; no measured MCP parity,
+latency or live model-client result is asserted by the implementation alone. The report explicitly distinguishes
+T30 read cells and E05 text projections from excluded mutation/approval scenarios, and cold startup, warm calls
+and facade-only refusals from each other when reporting direct/MCP latency and overhead.

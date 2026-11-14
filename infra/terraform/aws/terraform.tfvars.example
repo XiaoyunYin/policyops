@@ -1,0 +1,6 @@
+# Copy OUTSIDE the checkout. Set AWS_PROFILE in the calling environment.
+region         = "us-west-2"
+admin_cidr     = "192.0.2.10/32" # REPLACE with your real public IPv4 /32
+ssh_public_key = "REPLACE_WITH_OPENSSH_PUBLIC_KEY"
+budget_email   = "REPLACE_WITH_ALERT_EMAIL"
+hostname       = "" # optional owned DNS name; empty uses dashed static IPv4 + .sslip.io

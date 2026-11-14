@@ -1,0 +1,9 @@
+[Unit]
+Description=Reset only the fictional PolicyOps public demo
+After=docker.service network-online.target
+Requires=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/policyops-demo-reset
+TimeoutStartSec=900
+UMask=0077

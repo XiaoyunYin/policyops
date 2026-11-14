@@ -1,0 +1,54 @@
+{
+    admin off
+    persist_config off
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 30s
+            idle 60s
+        }
+        protocols h1 h2
+    }
+}
+# Private process probe: API shares this namespace. Never published on the host.
+http://127.0.0.1:8080 {
+    respond /proxy-health "ok" 200
+}
+http://{$POLICYOPS_HOSTNAME} {
+    header {
+        -Server
+        -X-Powered-By
+    }
+    redir https://{$POLICYOPS_HOSTNAME}{uri} permanent
+}
+{$POLICYOPS_HOSTNAME} {
+    @app not path /dex/*
+    header @app Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+        -Server
+        -X-Powered-By
+    }
+    request_body {
+        max_size 65536
+    }
+    handle /dex/* {
+        header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-8L66wXkInDnVEdLxlrsFPaRkqIpBKhVd5kdLxX6AvFk='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        reverse_proxy dex:5556
+    }
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8000 {
+            # Replace client-supplied values; app trusts this only from a loopback socket.
+            header_up X-PolicyOps-Client-IP {remote_host}
+            flush_interval -1
+        }
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

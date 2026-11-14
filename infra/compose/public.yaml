@@ -1,0 +1,72 @@
+# Compose >=2.24.4: !override replaces the loopback binding instead of appending it.
+# Always use -f compose.yaml -f infra/compose/public.yaml, from the checkout root.
+x-origin: &origin
+  POLICYOPS_PUBLIC_ORIGIN: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}
+  POLICYOPS_OIDC_ISSUER: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}/dex
+
+services:
+  caddy:
+    ports: !override ["0.0.0.0:80:80", "0.0.0.0:443:443"]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    environment:
+      POLICYOPS_HOSTNAME: ${POLICYOPS_HOSTNAME:?Set public DNS hostname}
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    volumes:
+      - ./infra/deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/lib/policyops/caddy-data:/data
+      - /var/lib/policyops/caddy-config:/config
+    tmpfs: !override ["/tmp:uid=10001,gid=10001,mode=0700,size=32m"]
+    mem_limit: 160m
+    restart: unless-stopped
+    logging: &logs
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+  api:
+    environment:
+      <<: *origin
+      POLICYOPS_ENV: deployment
+      POLICYOPS_PUBLIC_RATE_LIMIT: "1"
+    extra_hosts:
+      - "${POLICYOPS_HOSTNAME:?Set public DNS hostname}:127.0.0.1"
+    mem_limit: 320m
+    restart: unless-stopped
+    logging: *logs
+  worker:
+    environment: *origin
+    mem_limit: 320m
+    restart: unless-stopped
+    logging: *logs
+  postgres:
+    mem_limit: 384m
+    shm_size: 64m
+    restart: unless-stopped
+    logging: *logs
+  retail:
+    mem_limit: 256m
+    restart: unless-stopped
+    logging: *logs
+  dex:
+    environment:
+      DEX_ISSUER: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}/dex
+      POLICYOPS_REDIRECT_URI: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}/api/v1/auth/callback
+    mem_limit: 128m
+    restart: unless-stopped
+    logging: *logs
+  bootstrap-app:
+    mem_limit: 256m
+    logging: *logs
+  migrate-app:
+    mem_limit: 256m
+    logging: *logs
+  bootstrap-retail:
+    mem_limit: 256m
+    logging: *logs
+  migrate-retail:
+    mem_limit: 256m
+    logging: *logs
+  seed-demo:
+    environment: *origin
+    mem_limit: 256m
+    logging: *logs

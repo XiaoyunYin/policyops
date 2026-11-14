@@ -157,6 +157,14 @@ PostgreSQL integration and real-browser suites are separate and require local se
 environments, generated API contracts, test guards, publication hooks and CI definitions.
 No paid evaluation or provider call is part of these default commands.
 
+## Live demo / Deploy
+
+Live URL: **pending deployment and HTTPS/rollback verification**. The offline AWS
+[deployment runbook](docs/deployment.md) provisions a $12/month Lightsail demo with
+Terraform, Caddy TLS and a $20 budget alert. Public fictional credentials and their
+restricted demo roles are documented there. No provider keys or real customer data
+belong on this host; nightly resets discard demo activity.
+
 ## Repository map
 
 | Path | Purpose |

@@ -246,7 +246,12 @@ def api() -> None:
         os.environ[variable] = secret(name)
     served = create_served_app()
     try:
-        uvicorn.run(ReadyApp(served), host="127.0.0.1", port=8000, lifespan="on", log_config=SERVE_LOG_CONFIG,
+        from policyops.api.rate_limit import PublicRateLimit
+
+        application = ReadyApp(served)
+        public = os.environ.get("POLICYOPS_PUBLIC_RATE_LIMIT") == "1"
+        uvicorn.run(PublicRateLimit(application) if public else application,
+                    host="127.0.0.1", port=8000, lifespan="on", log_config=SERVE_LOG_CONFIG,
                     ws="none", proxy_headers=False, server_header=False,
                     timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS)
     except BaseException as primary:

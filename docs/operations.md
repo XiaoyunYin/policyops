@@ -1,5 +1,10 @@
 # Local Compose operations
 
+For the optional public AWS profile, Terraform commands, public fictional credentials,
+TLS, reset and rollback procedures, see [deployment](deployment.md). That profile is
+offline preparation pending independent review and live drills; this page describes
+the accepted local stack.
+
 This stack is a fictional, loopback-only showcase. It needs Docker Engine with Compose v2.24+, Linux amd64
 containers, network access **during builds**, and Python 3.12 with the frozen app dependencies for secret generation
 (`cryptography` is already in that lock). PostgreSQL, retail, Dex, worker and one-shots use only an internal Docker

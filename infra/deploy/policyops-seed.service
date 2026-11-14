@@ -1,0 +1,9 @@
+[Unit]
+Description=Present a fresh fictional demo proposal without consent or approval
+After=docker.service network-online.target
+Requires=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/policyops-demo-seed
+TimeoutStartSec=120
+UMask=0077

@@ -1,0 +1,377 @@
+# AWS public fictional demo
+
+Status: **offline preparation only**. No AWS apply, public URL, image build, certificate,
+host sizing measurement or rollback drill has been verified for this profile yet. The
+coordinator must complete the live gates below before claiming deployment evidence.
+
+## Architecture and cost
+
+One x86_64 Lightsail Ubuntu 24.04 LTS host in `us-west-2`, bundle `small_3_0`, runs the
+existing Compose services. Terraform provisions the instance, supplied SSH public key,
+attached static IPv4, firewall and an account-wide $20 monthly Budget with 80% actual /
+100% forecast email alerts. Credentials use `AWS_PROFILE`; the provider does not receive
+keys in configuration. Terraform 1.15.8 and AWS provider 6.25.0 are exact pins. The
+coordinator generates and reviews `.terraform.lock.hcl` with network access.
+
+| Item | Monthly USD assumption |
+|---|---:|
+| Lightsail small_3_0, 2 GB / 2 vCPU / 60 GB, IPv4 | 12.00 |
+| One static IPv4 while attached | 0.00 |
+| sslip.io hostname, Caddy ACME certificate | 0.00 |
+| Docker Engine/CLI 29.7.2, Compose 5.3.1, Buildx 0.36.1, containerd 2.4.2 | 0.00 licence cost |
+| Included disk/transfer, no snapshots, no other AWS services | 0.00 incremental |
+| Headroom below $20 | 8.00 |
+
+These are coordinator-provided list-price assumptions, not a bill or guaranteed ceiling.
+Tax, excess transfer, unattached IP, snapshots, backup destinations and unrelated account
+usage can add charges. Budget emails are delayed alerts, not a spending stop. Check the
+current regional bundle price/transfer allowance before apply; do not enable snapshots
+or paid model calls implicitly. The public host has **no provider API keys**. Public demo
+investigations remain `runtime.unconfigured`; the browser starts from a deterministic
+presented proposal. Real customer data and commerce are out of scope.
+
+EC2, ECS and EKS were rejected for this slice's cost and operational complexity. A custom
+Caddy plugin/build was rejected: stock Caddy handles TLS, redirects, headers and bounded
+request bodies; an opt-in API limiter supplies 120 requests/IP per 60-second fixed window,
+with at most 4,096 tracked IPs and fail-closed admission for new IPs at capacity. It trusts
+only Caddy's overwritten `X-PolicyOps-Client-IP` from a loopback socket. It is per API
+process, resets on restart, permits a boundary burst, and does not limit Dex/static files
+or establish distributed denial-of-service protection. No extra service is needed.
+
+`infra/compose/public.yaml` layers on the root Compose file to keep local behavior and
+image definitions authoritative. The host pins Compose **5.3.1**, matching T38's verified
+version; `!override` of ports and tmpfs requires at least 2.24.4. Only Caddy publishes
+IPv4 80/443. It stays UID 10001 with capabilities dropped;
+a namespaced unprivileged-port sysctl allows low ports. API shares that namespace and
+resolves the public issuer hostname to loopback, with normal SNI/CA/name verification.
+No transport verification is disabled. A root-owned external bind directory persists
+Caddy ACME state with UID 10001 access; restarts/resets retain it. HTTP redirects to HTTPS;
+HSTS has a one-year max age, without preload or `includeSubDomains` on a shared suffix.
+Dex issuer/callback come from the hostname; the existing template already parameterizes
+both. API uses deployment-mode settings and Secure `__Host-` cookies. The CSRF cookie is
+intentionally readable by JavaScript; login/session cookies are HttpOnly.
+
+PostgreSQL, retail, worker and Dex remain on the internal Docker network. API/Caddy retain
+outbound internet reachability (ACME and issuer TLS); this is not destination-allowlisted
+egress. Application provider adapters remain unconfigured. Database transport retains
+T38's SCRAM plus TLS `require` on the isolated network; it is not CA-verified `verify-full`.
+Migration/superuser secrets are mounted only in one-shots, and no admin demo membership exists.
+
+Runtime memory limits are **estimates**, not measured T38 baselines: Caddy 160 MiB, API
+320 MiB, worker 320 MiB, retail 256 MiB, PostgreSQL 384 MiB, Dex 128 MiB (1,568 MiB total).
+This leaves about 480 MiB for the OS/Docker; serialized one-shots are 256 MiB each and
+overlap some services during startup. A 2 GiB swap file supports build/startup pressure;
+serial image builds can still OOM or fill 60 GB. Measure `docker stats`, swap and disk in
+the live gate; reduce concurrency/limits or stop the deployment if this bundle cannot fit.
+Do not claim measured capacity, uptime or load performance from static tests.
+
+## Prerequisites and pins
+
+The user supplies an AWS profile with Lightsail/Budgets permissions (prefer a locally
+authenticated short-lived session), an SSH key whose private half stays local, their
+current public IPv4 `/32`, and a budget alert email. No values go in chat or committed
+files. Terraform state/backup/plan and private tfvars live outside the checkout, protected
+by the operator's ACL. State includes user-data, public key and budget email; `sensitive`
+only hides display. No TLS private key, SSH private key or application secret enters state.
+
+Before apply the coordinator verifies `ubuntu_24_04` and `small_3_0` in the selected region,
+provider schema/lock checksum, current Docker apt candidates, and the SSH public-key type
+accepted by Lightsail import (use RSA if the selected region rejects Ed25519). Bootstrap
+pins Docker Engine/CLI `5:29.7.2-1~ubuntu.24.04~noble`, containerd
+`2.4.2-4~ubuntu.24.04~noble`, Buildx `0.36.1-1~ubuntu.24.04~noble`, Compose
+`5.3.1-1~ubuntu.24.04~noble`. Engine/Compose match T38's verified versions and Buildx
+matches its 0.36 series; the Ubuntu host combination still needs live verification.
+Engine 29.7.2 requires containerd >= 2.1.5 and `nftables`; apt installs the latter dependency.
+Installing that package does not select Docker's native nftables firewall backend.
+The coordinator fetched Docker's noble amd64 stable `Packages.gz` on 2026-11-14 and
+confirmed all five exact versions. Repeat before apply, keeping the fetched index as
+private evidence under the configured temporary root. From the checkout in PowerShell:
+
+```powershell
+$pinEvidence = "$env:POLICYOPS_TEMP_DIR/deployment/docker-pins"
+New-Item -ItemType Directory -Force $pinEvidence | Out-Null
+curl.exe --fail --silent --show-error https://download.docker.com/linux/ubuntu/dists/noble/stable/binary-amd64/Packages.gz -o "$pinEvidence/Packages.gz"
+if ($LASTEXITCODE -ne 0) { throw 'Docker package index fetch failed' }
+@'
+import gzip
+from pathlib import Path
+import re
+import sys
+
+index = gzip.decompress(Path(sys.argv[1]).read_bytes()).decode("utf-8")
+versions = set()
+for stanza in index.split("\n\n"):
+    fields = dict(line.split(": ", 1) for line in stanza.splitlines() if ": " in line and not line[0].isspace())
+    if "Package" in fields and "Version" in fields:
+        versions.add((fields["Package"], fields["Version"]))
+template = Path(sys.argv[2]).read_text(encoding="utf-8")
+pins = re.findall(r"\b(docker-ce(?:-cli)?|containerd\.io|docker-buildx-plugin|docker-compose-plugin)=([^\s]+)", template)
+if len(pins) != 5 or any(pin not in versions for pin in pins):
+    raise SystemExit("Missing or incomplete Docker pins; revise and review before apply")
+for package, version in pins:
+    print(f"Verified {package}={version}")
+'@ | python -B - "$pinEvidence/Packages.gz" infra/deploy/cloud-init.yaml.tftpl
+if ($LASTEXITCODE -ne 0) { throw 'Docker pin verification failed' }
+Get-FileHash "$pinEvidence/Packages.gz" -Algorithm SHA256
+```
+
+Record fetch time, index hash and successful exact-version checks. Also confirm candidates
+with `apt-cache madison` using Docker's signed Ubuntu noble amd64 stable repository;
+the index check alone does not authenticate packages or prove bootstrap succeeds. Bootstrap
+fails instead of falling back to an unpinned package. Packages are held; security updates
+for Ubuntu are unattended, Docker pin updates require operator review. Review the Docker
+signing-key fingerprint against official documentation before use. No curl-to-shell.
+
+## Coordinator command sequence
+
+From the reviewed checkout in PowerShell (paths below are operator-chosen external paths).
+Keep Terraform logging disabled; never publish state, saved plans, tfvars or raw cloud-init
+logs. Set temp routing for every local process, as in the development instructions.
+
+```powershell
+$env:POLICYOPS_TEMP_DIR = 'D:\path\outside\checkout\policyops'
+$env:TEMP = "$env:POLICYOPS_TEMP_DIR/tmp"
+$env:TMP = $env:TEMP
+$env:PYTHONDONTWRITEBYTECODE = '1'
+New-Item -ItemType Directory -Force $env:TEMP | Out-Null
+$stateDir = "$env:POLICYOPS_TEMP_DIR/aws-state"
+New-Item -ItemType Directory -Force $stateDir | Out-Null
+$env:TF_DATA_DIR = "$stateDir/terraform-data"
+$env:TF_PLUGIN_CACHE_DIR = "$stateDir/provider-cache"
+New-Item -ItemType Directory -Force $env:TF_PLUGIN_CACHE_DIR | Out-Null
+$env:AWS_PROFILE = '<locally-authenticated-profile>'
+# Create $stateDir/demo.tfvars from the example; replace all placeholders privately.
+terraform -chdir=infra/terraform/aws init "-backend-config=path=$stateDir/terraform.tfstate"
+terraform -chdir=infra/terraform/aws fmt -check
+terraform -chdir=infra/terraform/aws validate
+terraform -chdir=infra/terraform/aws plan "-var-file=$stateDir/demo.tfvars" "-out=$stateDir/deploy.plan"
+# Inspect the plan locally; verify cost/ports/region. Apply exactly that plan.
+terraform -chdir=infra/terraform/aws apply "$stateDir/deploy.plan"
+$ip = terraform -chdir=infra/terraform/aws output -raw static_ip
+$hostName = terraform -chdir=infra/terraform/aws output -raw hostname
+$key = 'D:\path\to\local\ssh-key'
+$commitA = '<reviewed-and-published-full-40-character-commit-A>'
+$commitB = '<reviewed-and-published-full-40-character-compatible-commit-B>'
+# Verify SSH host-key fingerprint via a trusted independent AWS console channel first.
+# Enroll that verified key in known_hosts; never use StrictHostKeyChecking=no.
+ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo cloud-init status --wait'
+scp -i $key -o StrictHostKeyChecking=yes infra/deploy/deploy.sh "ubuntu@${ip}:/home/ubuntu/policyops-deploy"
+ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo install -m 0755 /home/ubuntu/policyops-deploy /usr/local/sbin/policyops-deploy'
+ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" "sudo bash /usr/local/sbin/policyops-deploy $commitA $hostName"
+python -B scripts/devenv.py uv run --offline --frozen python -B scripts/deploy_verify.py $hostName --allow-admin-ssh
+# Run again from a non-admin network without --allow-admin-ssh to establish anonymous 22 denial.
+python -B scripts/devenv.py uv run --offline --frozen python -B scripts/deploy_rollback_drill.py $hostName --ssh-host "ubuntu@$ip" --identity $key --commit-a $commitA --commit-b $commitB --schema-compatible --allow-admin-ssh
+# Teardown, after preserving required private evidence/backups:
+ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo systemctl disable --now policyops-reset.timer policyops-seed.timer'
+terraform -chdir=infra/terraform/aws plan -destroy "-var-file=$stateDir/demo.tfvars" "-out=$stateDir/destroy.plan"
+terraform -chdir=infra/terraform/aws apply "$stateDir/destroy.plan"
+```
+
+Do not substitute a different backend path during validate/plan/apply/destroy. Backend
+metadata is external via `TF_DATA_DIR`; the actual local state path was set at init.
+CI/build images must never contain that directory. `*.tfstate*`, `*.tfvars` and
+`.terraform/` are already ignored; the committed tfvars example has placeholders only.
+Do not override the local backend to use a repository state path.
+
+### Recovering from an admin IPv4 change
+
+Keep a trusted SSH session open while changing networks when possible. Update only
+`admin_cidr` in the private `demo.tfvars` to the new public IPv4 `/32`. Use the same
+profile, region and external backend. For this exceptional recovery, target **only**
+the existing Lightsail public-port resource, inspect the saved plan for a port-22 CIDR
+change with no instance replacement, then apply it:
+
+```powershell
+terraform -chdir=infra/terraform/aws plan "-var-file=$stateDir/demo.tfvars" -target=aws_lightsail_instance_public_ports.demo "-out=$stateDir/ssh-recovery.plan"
+# Apply only after inspection confirms an in-place port-rule update and no other changes.
+terraform -chdir=infra/terraform/aws apply "$stateDir/ssh-recovery.plan"
+```
+
+`admin_cidr` is also embedded in immutable instance user-data. Terraform targeting
+[includes dependencies](https://developer.hashicorp.com/terraform/cli/commands/plan#resource-targeting),
+including this instance, so **targeting alone does not prevent its replacement**.
+If the recovery plan proposes replacement, do not apply it. The coordinator must first
+prepare a reviewed local recovery configuration that temporarily adds
+`lifecycle { ignore_changes = [user_data] }` to `aws_lightsail_instance.demo`, regenerate
+the plan, and verify that only the existing public-port rule changes. Restore the
+configuration after recovery and review the remaining user-data drift at the next full
+plan; never apply an instance replacement as an SSH repair. This lifecycle exception
+and targeting are confined to the recovery operation, not normal deployment or a
+permanent suppression of bootstrap changes.
+
+The host's UFW rule still allows the old `/32`. Through the retained SSH session or
+trusted access from the old egress IP, run `sudo ufw allow from <new-ip>/32 to any port
+22 proto tcp`, verify a second key-authenticated session from the new IP, then run
+`sudo ufw delete allow from <old-ip>/32 to any port 22 proto tcp`. Keep SSH restricted
+to the operator; never temporarily use `0.0.0.0/0`. If there is no retained session or
+access from the old IP, updating Terraform alone cannot bypass UFW: stop and arrange
+coordinator recovery from a verified backup/reprovisioning plan instead of promising
+SSH recovery through the cloud firewall alone.
+
+The Lightsail browser SSH console requires port 22 allowed from AWS's browser-SSH IP
+ranges, so it is unavailable with this operator-only `/32` restriction. It is not a
+back door through the Lightsail firewall or UFW; this profile provisions no alternate
+remote-management agent.
+
+Both commits must contain this deployment profile and be publicly cloneable. Deploy
+builds detached exact commits on the host, serially, with commit-tagged images. First
+deploy reuses `scripts/compose_secrets.py` in the frozen app image: external secrets mode
+0700, no host pip dependency. Fictional passwords alone are replaced by public credentials.
+There is no private Git token on the host. A root-only lock excludes deploy/reset overlap;
+failed deploys retain evidence and images and do not silently attempt a schema downgrade.
+
+## Public credentials and fixture reset
+
+These deliberately public credentials grant only the single **fictional demo tenant**:
+
+| Login | Public password | Role |
+|---|---|---|
+| `alice@example.invalid` | `PolicyOps-public-demo-alice` | analyst / simulated customer consent |
+| `bob@example.invalid` | `PolicyOps-public-demo-bob` | reviewer / separate staff approval |
+| `carol@example.invalid` | `PolicyOps-public-demo-carol` | auditor / read-only |
+
+They are not database, migration, AWS or admin credentials. Visitors share these users
+and fixtures and can interfere with each other's demo state. Do not enter personal data.
+Choose the newest address-change case in the queue, supply simulated consent as
+Alice, then sign in as Bob to approve; no model call is needed. Base seeding never supplies
+consent, staff approval or execution. A fresh investigation reports `runtime.unconfigured`.
+
+A second timer presents a fresh independent case every five minutes, because proposal
+and run expiry must remain enforced. It supplies no consent or approval. Daily reset
+bounds this to about 289 fixture cases/day (below the worker's 1,000-binding cap). Visitors
+may consume a shared case; choose the newest still-pending proposal. A prolonged reset
+failure stops periodic seeding at a hard cap of 300 between successful resets; operator
+deploys can add further cases. Repair the timer before the worker's binding cap is reached.
+The seed/reset/deploy scripts all take the same lock.
+
+The systemd timer resets at 08:00 UTC nightly (plus up to five minutes jitter). It takes
+the same deployment lock, stops writers, verifies the exact Compose volume owner/project/run
+labels, deletes **only** `policyops-public_pgdata`, renews the existing DB TLS certificate,
+then recreates migrations/fixtures and presents a fresh deterministic proposal. Sessions,
+entered text, approvals, receipts and retail mutations are disposable; there is downtime.
+It retains secret values and ACME state. Missed timers run at next activation. Inspect
+`systemctl list-timers policyops-reset.timer` and `journalctl -u policyops-reset.service`;
+a failed reset requires operator intervention. Never run this against retained real data.
+
+## Hardening and live acceptance
+
+- Confirm Lightsail ingress: TCP 80/443 from all IPv4, 22 only from admin `/32`, no IPv6.
+  Confirm ufw default-deny INPUT, key-only SSH/no root login, and DOCKER-USER forwarding
+  restrictions after bootstrap, reboot and Docker restart. Docker publishing bypasses
+  ufw INPUT; Lightsail firewall and DOCKER-USER are essential additional boundaries.
+- This host owns the entire `DOCKER-USER` chain. The locked firewall script flushes it
+  and appends exactly: ESTABLISHED/RELATED ACCEPT, public-NIC TCP 80/443 ACCEPT,
+  public-NIC DROP, then RETURN. Reruns remove an old early RETURN and duplicate rules.
+  The systemd unit starts with Docker and is restarted with it; bootstrap enables it
+  immediately. Rebuild is not atomic: briefly no fence exists between flush and append,
+  so keep the Lightsail ingress restrictions active and perform maintenance before
+  public acceptance. A script failure requires repair before exposure.
+- Docker's [iptables documentation](https://docs.docker.com/engine/network/firewall-iptables/)
+  places `DOCKER-USER` before Docker's forwarding accepts. This profile requires that
+  backend; do not enable Docker 29's experimental
+  [native nftables backend](https://docs.docker.com/engine/network/firewall-nftables/),
+  which has no `DOCKER-USER` chain. Ubuntu's iptables-nft compatibility frontend is
+  distinct from Docker's native nftables backend. DNAT precedes `DOCKER-USER`, so the
+  80/443 rule matches container ports; this profile publishes the same host/container
+  ports. Review the fence if port mappings change.
+- Run the following after bootstrap, after reboot, after Docker restart, and after
+  manually rerunning `sudo /usr/local/sbin/policyops-firewall` twice. Privately record
+  timestamps, Docker/backend version, service status, the FORWARD jump to DOCKER-USER
+  before Docker's accepts, and exactly the four ordered rules above (with the real
+  public NIC). Verify both 80/443 reachability and denial of unintended ports from
+  outside the host. Offline order tests do not prove live packet filtering or restart
+  behavior. Do not expose the demo if the unit fails or the backend/jump/rules differ.
+
+  ```powershell
+  ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo docker info; sudo systemctl status --no-pager policyops-firewall.service; sudo iptables -S FORWARD; sudo iptables -S DOCKER-USER'
+  ```
+
+- Confirm `ss -lntup`, `docker compose ... config`, container effective UID/capabilities,
+  internal network membership, bounded logs, memory/swap/disk and separate migration roles.
+  No service except Caddy may publish; API binds namespace loopback. Keep Docker root-only.
+- Verify no provider credentials in the process configuration, mounts, images or user-data.
+  Avoid dumping environments/config/secrets into evidence. There is no admin web identity.
+- Verify TLS chain, redirect, HSTS/CSP/frame/nosniff/referrer, Dex login and cookie properties
+  with `deploy_verify.py`. It signs in with public Alice and writes a sanitized report to
+  `POLICYOPS_TEMP_DIR/deployment/`. Port checks cover a fixed small list, not all 65,535
+  ports; firewall/config inspection complements the probe. API session and login cookies
+  must be Secure/HttpOnly/SameSite=Lax; CSRF must be Secure/Strict and readable.
+- Repeat the existing real-browser consent -> Bob approval -> one receipt scenario over
+  HTTPS, denial for Carol/foreign tenant, API 429 behavior, reboot, nightly reset, backup
+  restore and the A/B/A drill. Static tests do not establish these composed behaviors.
+- Verify correct auto-renewal state and retain Caddy storage. sslip.io/DNS/ACME availability
+  and issuance rate limits are external dependencies. An owned domain is optional; set
+  `hostname` before initial seeding and point its A record to the static IP. Changing an
+  existing issuer requires a fresh disposable volume and new sessions.
+
+## Backup, rollback, retention and teardown
+
+For a private recovery artifact, disable both timers and stop API/worker/retail/Dex
+as described in [operations](operations.md#consistent-backup-and-separate-database-restore). Use its stopped-writer
+logical dump/restore procedure and role/migration/RLS/receipt checks. Stream dumps out of
+the container; `docker cp` cannot read tmpfs. Protect dumps, secrets, Caddy storage and
+state under root-only directories; export encrypted backups to an operator-controlled
+destination with separately reviewed cost. No automatic paid snapshot or external backup
+service is provisioned. For the selected public project, stream a coherent dump on the
+host in a root shell (binary redirection here is Bash, not PowerShell text redirection):
+
+```bash
+sudo -i
+umask 077
+base=/var/lib/policyops
+systemctl stop policyops-reset.timer policyops-seed.timer
+exec 9>"$base/deploy.lock"
+flock -w 10 9
+cd "$(readlink -f "$base/current")"
+export COMPOSE_PROJECT_NAME=policyops-public POLICYOPS_RUN_ID=public-demo
+export POLICYOPS_IMAGE_TAG="$(git rev-parse HEAD)" POLICYOPS_HOSTNAME="$(cat "$base/hostname")"
+export POLICYOPS_SECRETS_DIR="$base/secrets" POLICYOPS_HTTP_PORT=8080
+compose=(docker compose -f compose.yaml -f infra/compose/public.yaml)
+backup="$base/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -m 0700 -p "$backup"
+"${compose[@]}" stop worker api retail dex
+"${compose[@]}" exec -T postgres pg_dump -U postgres -d policyops -Fc > "$backup/database.dump"
+sha256sum "$backup/database.dump" > "$backup/SHA256SUMS"
+printf '%s\n' "$POLICYOPS_IMAGE_TAG" > "$backup/commit"
+"${compose[@]}" start dex retail api worker
+flock -u 9
+systemctl start policyops-reset.timer policyops-seed.timer
+exit
+```
+
+On failure preserve stopped writers and repair/verify before resuming; do not silently
+restart after a failed dump. Retain secrets/ACME state separately under root-only access.
+Restore into a separate database with the existing operations commands, using **both**
+Compose files and the same exported public environment for every command. Stream a dump
+back with `docker compose ... exec -T postgres pg_restore -U postgres --exit-on-error
+-d policyops_restore_a < /absolute/backup/database.dump`; do not depend on `docker cp`
+for tmpfs. Verify schema versions/owners, RLS and receipts before switching the selected
+database. Keep all source writers stopped until that decision. Restore is a separate
+drill; a backup file alone is not evidence.
+
+The rollback driver records A deploy -> B deploy -> A image rollback with health/auth/
+header checks and elapsed time per step. Review schema compatibility first and supply
+`--schema-compatible`. It uses strict known-host SSH, and stops at the first failed step.
+Timeout means remote work may still run; inspect the host/lock before retrying. A failed
+B is retained for diagnosis; inspect state and manually invoke the same script with
+`<A> <hostname> --rollback` only after compatibility is confirmed. It uses retained images,
+does not build or execute older migrations, and reattaches API to Caddy's new namespace.
+Health checks cannot prove all data/authorization behavior survived rollback; run the
+browser/receipt and migration-version checks as well. The script does not promise zero
+downtime. **Irreversible migrations cannot be rolled back by an image change.** Keep B
+running, deploy a forward fix, or restore a verified coherent backup into a separate
+environment after explicitly accepting lost demo writes. Never promise schema downgrade.
+
+Keep current and previous images/checkouts until rollback acceptance and evidence are
+sealed; never run global `docker system prune`. Then inventory exact task-owned image IDs
+and release directories before removing old versions. Container logs rotate at 2 x 5 MiB
+per service. Scenario JSON files are overwritten per commit/nightly/latest; retain only current,
+previous and drill evidence. Journald is bounded to 64 MiB persistent / 32 MiB runtime and
+seven days; verify with `journalctl --disk-usage`. Demo database retention is
+one reset interval. DB certificate renewal retains its key/passwords and happens while
+stopped at nightly reset; operator must repair prolonged timer failure before certificate expiry.
+Private deployment/verification/drill reports and backup hashes stay external; retain raw
+evidence necessary for reviewed claims. After destroy, confirm the instance, static IP,
+key-pair resource and budget are gone in the same region/account; inspect billing for
+orphaned resources. Local state, plans, SSH key and private evidence are not deleted by
+Terraform. Clean exact disposable paths only after preserving the required evidence.

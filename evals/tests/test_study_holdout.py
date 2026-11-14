@@ -11,6 +11,7 @@ from typing import Any
 from policyops_evals import upstream
 from policyops_evals.build import RETAIL_SPLIT, default_manifest_dir
 from policyops_evals.canonical import canonical_bytes, load_manifest, sha256_bytes
+from policyops_evals.retail_sim import fixture
 from policyops_evals.studies import registration
 from policyops_evals.studies.config import StudyV3, load_study, preflight
 
@@ -79,7 +80,10 @@ def test_holdout_config_is_v6_protocol_with_only_prespecified_changes() -> None:
 
 def test_holdout_strata_preflight_and_registration_payload_are_offline() -> None:
     study = _holdout()
-    tree = Path(os.environ["POLICYOPS_RETAIL_FIXTURE_TREE"])
+    # Same source as the retail-simulator tests: an explicit tree, else the checkout `uv sync` materialized (CI).
+    explicit = os.environ.get("POLICYOPS_RETAIL_FIXTURE_TREE")
+    tree = Path(explicit) if explicit else fixture.find_reviewed_tree(Path(os.environ.get("UV_CACHE_DIR", "")))
+    assert tree is not None, "no verified tau2 checkout: run through scripts/devenv.py after `uv sync`"
     rows = json.loads((tree / upstream.RETAIL_TASKS).read_bytes())
     selected = [row for row in rows if row["id"] in study.tasks]
     assert {row["id"] for row in selected} == set(study.tasks)

@@ -22,6 +22,7 @@ from collections.abc import Sequence
 import json
 from pathlib import Path
 import sys
+from uuid import UUID
 
 from policyops_evals import upstream
 from policyops_evals.acquire import AcquisitionError, acquire
@@ -196,12 +197,20 @@ def parser() -> argparse.ArgumentParser:
                 sub.add_argument("--config-out", type=Path, required=True)
     qa = groups.add_parser("qa-study", help="validate, digest or preflight a frozen QA contract")
     qa_commands = qa.add_subparsers(dest="qa_command", required=True)
-    for qa_name in ("validate", "digest", "preflight"):
+    for qa_name in ("validate", "digest", "preflight", "run", "status", "report"):
         qa_command = qa_commands.add_parser(qa_name)
         qa_command.add_argument("--study", type=Path, required=True)
         qa_command.set_defaults(handler=command_qa_study)
         if qa_name == "preflight":
             qa_command.add_argument("--register", action="store_true")
+        if qa_name in {"run", "status", "report"}:
+            qa_command.add_argument("--materialization", type=Path, required=True)
+            qa_command.add_argument("--app-dsn-file", type=Path, required=True)
+            qa_command.add_argument("--eval-dsn-file", type=Path, required=True)
+            qa_command.add_argument("--workspace", type=UUID, required=True)
+            qa_command.add_argument("--corpus", default="multidoc2dial-v1-struct")
+            qa_command.add_argument("--allow-paid", action="store_true")
+            qa_command.add_argument("--resume", action="store_true")
     for name in ("preflight", "run"):
         study = groups.add_parser(name, help="plan or execute a durable dev study")
         study.add_argument("--study", type=Path, required=True)
@@ -318,11 +327,20 @@ def command_qa_study(args: argparse.Namespace) -> int:
         elif args.qa_command == "digest":
             result = {"registration_payload_sha256": registration_digest(study, source_provenance()),
                       "registered": False}
-        else:
+        elif args.qa_command == "preflight":
             result = command(study, register_requested=args.register)
+        else:
+            from policyops_evals.qa_studies.runner import command as runner_command
+
+            result = runner_command(study, args.qa_command, materialization=args.materialization,
+                app_dsn_file=args.app_dsn_file, eval_dsn_file=args.eval_dsn_file, workspace=args.workspace,
+                corpus=args.corpus, allow_paid=args.allow_paid, resume=args.resume)
     except Exception as error:
         # Never print DB exceptions, credentials, or a Pydantic input payload.
-        print(f"policyops-evals: QA study refused: {type(error).__name__}", file=sys.stderr)
+        from policyops_evals.qa_studies.runner import Refused
+
+        reason = str(error) if isinstance(error, Refused) else type(error).__name__
+        print(f"policyops-evals: QA study refused: {reason}", file=sys.stderr)
         return 1
     report(result)
     return 0 if result.get("within_caps", True) else 1

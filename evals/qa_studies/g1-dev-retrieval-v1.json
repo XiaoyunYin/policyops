@@ -1,0 +1,356 @@
+{
+  "schema_version": "policyops.qa-study/v1",
+  "study_id": "caf6efe4-cb93-5f1b-b6eb-c7f058dc9039",
+  "name": "g1-dev-retrieval-v1",
+  "purpose": "dev",
+  "protocol_version": "g0.qa-protocol-v1",
+  "registration_sha256": null,
+  "example": false,
+  "data": {
+    "dataset": "multidoc2dial-v1",
+    "archive_sha256": "f0c034c249663d7b3cb08b19cf2cc2c3d101372485be982621d4711931a1ce00",
+    "revision": "v1.0-archive-20261114",
+    "members": [
+      {
+        "name": "multidoc2dial/multidoc2dial_doc.json",
+        "sha256": "7205be05b7c260fd3c0eda4d98a4abddf7af66c364238f1be509aa139414012d"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_train.json",
+        "sha256": "c9a6ef2e0be22306429e0affa51c2ca164b2808a89a999e7756700170ed15d96"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_validation.json",
+        "sha256": "ce063938b53d96f6128275d76c0ba967a435e3d865d011aaeb6461c2538b2ce4"
+      }
+    ],
+    "corpus": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "passages": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "queries": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "qrels": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "references": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "splits": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "sampling": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "eligibility_version": "md2d.adjacent-agent-exclude-no-solution-v1"
+  },
+  "arms": [
+    {
+      "kind": "retrieval_only",
+      "name": "fts-history",
+      "retrieval": {
+        "method": "fts",
+        "query_profile": "history-four-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "72f017a983e5e51dd45952dc201286a881406dcca41fb567258e815323bd3b47"
+      }
+    },
+    {
+      "kind": "retrieval_only",
+      "name": "dense-history",
+      "retrieval": {
+        "method": "dense",
+        "query_profile": "history-four-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "b0719f37d85211eabe5674701f6aa9cd1222ee357d8075f2a85d46eca52cef36"
+      }
+    },
+    {
+      "kind": "retrieval_only",
+      "name": "rrf-history",
+      "retrieval": {
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "4d09e95715002100dfdebe099c6b77ec7ad72da7c8dae23861cc98f70a172f2c"
+      }
+    },
+    {
+      "kind": "retrieval_only",
+      "name": "fts-last",
+      "retrieval": {
+        "method": "fts",
+        "query_profile": "last-user-turn-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "ee63b86538a93c3c223f7f36d1ed27fd88d662ff0a9e472ba745df232d4a67cd"
+      }
+    },
+    {
+      "kind": "retrieval_only",
+      "name": "dense-last",
+      "retrieval": {
+        "method": "dense",
+        "query_profile": "last-user-turn-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "94af22ea98e99c9fca7586373b40ed1c889e756fa606c71852bced4ddea05978"
+      }
+    },
+    {
+      "kind": "retrieval_only",
+      "name": "rrf-last",
+      "retrieval": {
+        "method": "rrf",
+        "query_profile": "last-user-turn-v1",
+        "candidate_count": 20,
+        "branch_limit": 20,
+        "rrf_k": 60,
+        "configuration_sha256": "f490e47aad017652d099b1850af98452e247c91ed35ef52eac009d97c1e10db8"
+      }
+    }
+  ],
+  "judge": null,
+  "schedule": {
+    "cohorts": [
+      {
+        "name": "dev",
+        "manifest": {
+          "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+          "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+        },
+        "split": "train",
+        "question_count": 500,
+        "dialogue_count": 80,
+        "optional": false,
+        "included": true,
+        "manifest_cohort": "dev"
+      }
+    ],
+    "assignments": [
+      {
+        "arm": "fts-history",
+        "cohort": "dev"
+      },
+      {
+        "arm": "dense-history",
+        "cohort": "dev"
+      },
+      {
+        "arm": "rrf-history",
+        "cohort": "dev"
+      },
+      {
+        "arm": "fts-last",
+        "cohort": "dev"
+      },
+      {
+        "arm": "dense-last",
+        "cohort": "dev"
+      },
+      {
+        "arm": "rrf-last",
+        "cohort": "dev"
+      }
+    ],
+    "repetitions": 1,
+    "balanced_order_seed": 20261114,
+    "order_algorithm": "sha256-rotation-v1",
+    "slot_algorithm": "uuid5-study-cohort-question-arm-repetition-v1"
+  },
+  "analysis": {
+    "comparisons": [
+      {
+        "name": "rrf-vs-fts-history",
+        "candidate": "rrf-history",
+        "reference": "fts-history",
+        "cohort": "dev",
+        "stratum": "all",
+        "required_questions": 500,
+        "estimand": "recall_at_5",
+        "denominator": "scheduled-questions-strict-non-success",
+        "decision": "superiority",
+        "margin": "0",
+        "direction": "candidate-minus-reference",
+        "alpha": "0.0125",
+        "compound": null
+      },
+      {
+        "name": "rrf-vs-dense-history",
+        "candidate": "rrf-history",
+        "reference": "dense-history",
+        "cohort": "dev",
+        "stratum": "all",
+        "required_questions": 500,
+        "estimand": "recall_at_5",
+        "denominator": "scheduled-questions-strict-non-success",
+        "decision": "superiority",
+        "margin": "0",
+        "direction": "candidate-minus-reference",
+        "alpha": "0.0125",
+        "compound": null
+      },
+      {
+        "name": "rrf-vs-fts-last",
+        "candidate": "rrf-last",
+        "reference": "fts-last",
+        "cohort": "dev",
+        "stratum": "all",
+        "required_questions": 500,
+        "estimand": "recall_at_5",
+        "denominator": "scheduled-questions-strict-non-success",
+        "decision": "superiority",
+        "margin": "0",
+        "direction": "candidate-minus-reference",
+        "alpha": "0.0125",
+        "compound": null
+      },
+      {
+        "name": "rrf-vs-dense-last",
+        "candidate": "rrf-last",
+        "reference": "dense-last",
+        "cohort": "dev",
+        "stratum": "all",
+        "required_questions": 500,
+        "estimand": "recall_at_5",
+        "denominator": "scheduled-questions-strict-non-success",
+        "decision": "superiority",
+        "margin": "0",
+        "direction": "candidate-minus-reference",
+        "alpha": "0.0125",
+        "compound": null
+      }
+    ],
+    "estimand_version": "g0.qa-estimands-v1",
+    "bootstrap_algorithm": "sha256-whole-dialogue-question-weighted-ratio-v1",
+    "bootstrap_seed": 20261114,
+    "bootstrap_replicates": 10000,
+    "ordinary_interval": "two-sided-95-percent",
+    "multiplicity": "bonferroni-directional-intersection-union-v1",
+    "familywise_alpha": "0.05",
+    "missingness": "strict-non-success",
+    "judge_gate": {
+      "min_kappa": "0.6",
+      "lower_kappa_exclusive": "0.4",
+      "max_false_pass": "0.10",
+      "require_complete": true,
+      "transfer_limitation": "benchmark-agreement-not-domain-calibration"
+    }
+  },
+  "execution": {
+    "price_snapshot_id": "pricing.2026-11-05.v1",
+    "stages": [
+      {
+        "name": "structural-ingest",
+        "arm": null,
+        "cohort": null,
+        "role": "embedding",
+        "model": "text-embedding-3-small",
+        "planned_calls": 90,
+        "planned_counts": 90,
+        "max_input_tokens": 8192,
+        "max_output_tokens": 0,
+        "cache_policy": "none",
+        "caps": {
+          "usd": "1",
+          "calls": 90,
+          "counts": 90,
+          "input_tokens": 737280,
+          "output_tokens": 0,
+          "seconds": 3600
+        }
+      },
+      {
+        "name": "shared-query-embedding",
+        "arm": null,
+        "cohort": "dev",
+        "role": "embedding",
+        "model": "text-embedding-3-small",
+        "planned_calls": 1000,
+        "planned_counts": 1000,
+        "max_input_tokens": 1024,
+        "max_output_tokens": 0,
+        "cache_policy": "none",
+        "caps": {
+          "usd": "1",
+          "calls": 1000,
+          "counts": 1000,
+          "input_tokens": 1024000,
+          "output_tokens": 0,
+          "seconds": 3600
+        }
+      },
+      {
+        "name": "lexical-retrieval",
+        "arm": null,
+        "cohort": "dev",
+        "role": "local",
+        "model": null,
+        "planned_calls": 0,
+        "planned_counts": 0,
+        "max_input_tokens": 0,
+        "max_output_tokens": 0,
+        "cache_policy": "none",
+        "caps": {
+          "usd": "0",
+          "calls": 0,
+          "counts": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "seconds": 3600
+        }
+      }
+    ],
+    "cumulative_caps": {
+      "usd": "5",
+      "calls": 1090,
+      "counts": 1090,
+      "input_tokens": 1761280,
+      "output_tokens": 0,
+      "seconds": 10800
+    },
+    "program_ledger_key": "gap-program-v1",
+    "program_cap_usd": "46",
+    "retries": 0,
+    "repairs": 0,
+    "request_deadline_seconds": 30,
+    "unresolved_liability_policy": "hold-worst-case-block-decisions-and-resume-no-reissue",
+    "artifact_max_observations": 10000
+  },
+  "provenance": {
+    "source_revision": null,
+    "dirty_sha256": null,
+    "locks": [
+      {
+        "path": "uv.lock",
+        "sha256": "ac32a8a452e9e601a994f239e8f306766d45f79e9dedac19049b2cb3e382b4db"
+      },
+      {
+        "path": "evals/uv.lock",
+        "sha256": "d1ffbcf480536a0ee6c0dcf65c176cc2af300050a8d0993a579836a8b89075bb"
+      }
+    ],
+    "machine": "Windows-11-10.0.26200-SP0; AMD64; Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "database": "qa_env: policyops-qa, pinned pgvector 0.8.7 / PostgreSQL 17.11",
+    "runtime": "Python 3.12; cl100k/tiktoken 0.14.0; exact PostgreSQL FTS/dense/RRF",
+    "development_selection_receipts": []
+  }
+}

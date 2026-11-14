@@ -87,6 +87,8 @@ EVAL_COMPOSITION_IMPORTS = {
     "policyops.orchestration.minimal", "policyops.orchestration.ports", "policyops.budget",
     "policyops.providers", "policyops.persistence.budget", "policyops.persistence.evaluation",
     "policyops.runtime.clock",
+    "policyops.persistence.database", "policyops.persistence.embeddings", "policyops.persistence.retrieval",
+    "policyops.retrieval.rank",  # G0.4 composes runtime-role snapshots and the existing embedding/cache path.
 }
 EVAL_COMPOSITION_FILES = {
     "harness/inprocess.py", "harness/actors.py", "studies/config.py", "studies/runner.py",
@@ -98,8 +100,10 @@ EVAL_COMPOSITION_FILES = {
     "datasets/multidoc2dial.py", "qa_studies/config.py", "qa_studies/registration.py",
     # G6 composes the bounded provider, tokenizer, budget and evaluation registration APIs.
     "qa_studies/judges.py", "qa_studies/calibration.py",
+    "qa_studies/runner.py",
 }
-EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persistence.roles"}
+EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persistence.roles",
+                          "policyops.retrieval.ingest"}  # G0.4 real structural-corpus integration fixture.
 
 
 @pytest.mark.parametrize("subdir", ["src", "tests"])

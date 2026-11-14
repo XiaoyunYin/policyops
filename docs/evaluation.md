@@ -466,3 +466,46 @@ Declared corruption produces an integrity diagnostic and nonzero exit, never a r
 decision. Reports omit raw transcripts, prompts, reasoning, provider request IDs,
 credentials and local paths. In-process isolation is a reviewed code boundary rather
 than an OS sandbox; synchronous work and dispatched requests may outlive cancellation.
+## QA study runner
+
+The unregistered `evals/qa_studies/g1-dev-retrieval-v1.json` runs 500 dev questions
+through FTS, dense and RRF under both frozen query profiles (3,000 slots). Its
+results are descriptive. Provision and ingest the [persistent QA environment](operations.md#persistent-qa-evaluation-environment)
+first, retaining the same database for registration and subsequent execution.
+
+```powershell
+python -B scripts/devenv.py uv --directory evals run --offline --frozen policyops-evals qa-study preflight --study qa_studies/g1-dev-retrieval-v1.json
+$qaArgs = @('--study','qa_studies/g1-dev-retrieval-v1.json','--materialization',$materialization,
+  '--app-dsn-file',"$qa/secrets/policyops_app_runtime.dsn",
+  '--eval-dsn-file',"$qa/secrets/policyops_eval_runtime.dsn",'--workspace',$workspace)
+python -B scripts/devenv.py uv --directory evals run --offline --frozen policyops-evals qa-study run @qaArgs --allow-paid
+python -B scripts/devenv.py uv --directory evals run --offline --frozen policyops-evals qa-study status @qaArgs
+python -B scripts/devenv.py uv --directory evals run --offline --frozen policyops-evals qa-study report @qaArgs
+# Continue an interrupted run with the same arguments and --resume --allow-paid.
+```
+
+Preflight reserves at most 90 ingest calls × 8,192 tokens and 1,000 query calls ×
+1,024 tokens, at the frozen embedding price ($0.0147456 and $0.02048 ceilings).
+The previously measured empty-cache ingest plan is 70 calls / 523,675 distinct-input
+tokens ($0.0104735 estimate). Query cache hits send no requests. Runtime admission
+counts shared ingest usage, settled spend, held liabilities, call/count/input/output
+envelopes and active slot time across resumes; a new invocation cannot reset caps.
+The parent money gate conservatively includes every evaluator study in this
+dedicated database plus workspace preprocessing. Other study families retain their
+own ledgers and are included when their spend is in these evaluator tables.
+
+Queries, references and passages are independently hash-checked. Gold never enters
+the typed retrieval executor. Existing claim fencing and dual-ledger embedding
+admission prevent a replacement dispatch after a crash. Abandoned claims become
+failed observations; unknown bills remain held. Resume can execute later slots
+within the remaining envelopes. SQL waits and remote cancellation are bounded by
+existing stack limits and may delay return beyond a deadline; such slots fail.
+
+`status` emits a schedule-complete, text-free public projection: IDs, metrics,
+cost/holds, latency and failure codes. `report` includes strict query-macro retrieval
+metrics, costs/censored latency, and declared paired whole-dialogue comparisons
+through the G0.5 statistics and status functions. The runner retains immutable
+source/schedule bindings, exports, reports and bounded raw inventories privately
+under `POLICYOPS_TEMP_DIR/benchmarks`. Sealed execution requires prior registration
+bound to the current source/locks. Answer generation, reranking, closed book,
+cascade/selective reranking and full context explicitly await later slices.

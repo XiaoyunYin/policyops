@@ -464,3 +464,47 @@ The application has no `policyops eval` command; evaluation is the separate
 The API does not automatically load `.env`; export explicit configuration or use mounted
 secrets. Hosted CI covers the workflow above; it does not build or run the Compose stack,
 the real-browser flows or any paid evaluation.
+## Persistent QA evaluation environment
+
+`scripts/qa_env.py` owns one local, digest-pinned pgvector PostgreSQL container and
+named volume. Run it through `scripts/devenv.py`; `POLICYOPS_TEMP_DIR` must point
+outside the checkout. The image must already be installed. It never pulls images.
+`up`, `status`, `migrate`, `bootstrap`, `down`, and `destroy --confirm policyops-qa`
+are separate commands. `down` keeps data; `destroy` verifies container and volume
+owner/run/project labels before removing the exact owned container ID and volume.
+A failed create/start leaves resources for inspection, without automatic removal.
+
+From the repository root, with the reviewed structural ingest manifest and private
+G0.1 materialization assigned to `$ingestManifest` and `$materialization`:
+
+```powershell
+python -B scripts/devenv.py uv run --offline --frozen python -B scripts/qa_env.py up
+python -B scripts/devenv.py uv run --offline --frozen python -B scripts/qa_env.py migrate
+python -B scripts/devenv.py uv run --offline --frozen python -B scripts/qa_env.py bootstrap
+$qa = "$env:POLICYOPS_TEMP_DIR/qa-env/policyops-qa"
+$workspace = (Get-Content -Raw "$qa/workspace.txt").Trim()
+$env:PGSERVICEFILE = "$qa/secrets/pg_service.conf"
+$env:PGSERVICE = 'policyops_app_runtime'
+$ingestHash = (Get-FileHash -Algorithm SHA256 $ingestManifest).Hash.ToLowerInvariant()
+$inputArgs = @('ingest','--workspace',$workspace,'--corpus-key','multidoc2dial-v1-struct',
+  '--profile','structural','--manifest',$ingestManifest,'--manifest-sha256',$ingestHash,
+  '--acquisition-root',$materialization)
+$caps = @('--model','text-embedding-3-small','--dimensions','1536','--max-usd','1',
+  '--max-calls','90','--max-input-tokens','600000','--max-seconds','3600')
+python -B scripts/devenv.py uv run --offline --frozen python -B -m policyops.retrieval.cli @inputArgs --offline-preflight --paid @caps
+# Only after inspecting preflight; OPENAI_API_KEY is supplied securely to this process:
+python -B scripts/devenv.py uv run --offline --frozen python -B -m policyops.retrieval.cli @inputArgs --execute --paid @caps
+```
+
+`migrate` provisions restricted database roles, the database and vector extension,
+then runs the existing application migration chain, including evaluator tables, to
+head. `bootstrap` idempotently creates a fictional workspace, operator and four
+memberships. Runtime ingestion and retrieval use `policyops_app_runtime`; study
+claims/accounting use `policyops_eval_runtime`. Passwords, DSN files and the libpq
+service file live in a restricted private directory; output contains their paths.
+Do not print, publish or copy their contents into a command line or log. Port
+assignments can change after restart: rerun `up`/`status` to refresh connection files.
+Retain that directory across processes and use one environment for registration,
+dev and sealed runs. Serialize ingestion and QA execution in this dedicated database.
+
+See [QA study runner](evaluation.md#qa-study-runner) for execution and reports.

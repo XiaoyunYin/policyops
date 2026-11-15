@@ -1,6 +1,14 @@
 # AWS public fictional demo
 
-Status: **idle CPU repair awaiting live verification**. The first
+Status: **live and verified on 2026-11-15 at `3609714`; the A/B/A rollback drill is
+pending**. That deploy reported a healthy release after 201 seconds with zero API, worker
+and retail restarts. `scripts/deploy_verify.py --allow-admin-ssh` then passed: a valid
+certificate chain, the security headers and banner checks on the root, API and Dex
+routes, the HTTP redirect, the `__Host-` login/session/CSRF cookies, a real Dex login
+session and only ports 22, 80 and 443 open. The idle host was 98-99% idle with no CPU
+steal; the worker container used about 1% CPU and every other service less than 0.4%.
+Retail used about 237 MiB of its 256 MiB memory limit, which leaves little headroom.
+How the profile got there follows. The first
 2026-11-15 Lightsail attempt exposed launch-script handling of user-data and a shared
 resource-name namespace; that host was destroyed. The replacement host bootstrapped
 successfully. At 19:10Z, deploy A built images but failed after 183 seconds creating API:

@@ -35,7 +35,8 @@ class Unstable(ValueError):
 
 
 def read_rows(path: Path, manifest: Path) -> list[dict[str, Any]]:
-    if manifest.stat().st_size > 1_000_000 or path.stat().st_size > 512_000_000:
+    # 6,600 mined queries with 40 frozen validation candidates each measured 743 MB; bound at 1 GB.
+    if manifest.stat().st_size > 1_000_000 or path.stat().st_size > 1_000_000_000:
         raise ValueError("triples_manifest_bounds")
     value = json.loads(manifest.read_bytes())
     if sha256(path) != value["triples_sha256"]:

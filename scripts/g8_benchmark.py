@@ -23,7 +23,7 @@ from typing import Any
 
 
 def peak_ram_bytes() -> int:
-    if os.name == "nt":
+    if sys.platform == "win32":  # a platform check mypy narrows, so Linux type checks skip WinDLL
         from ctypes import wintypes
 
         class Counters(ctypes.Structure):
@@ -42,9 +42,9 @@ def peak_ram_bytes() -> int:
         if not psapi.GetProcessMemoryInfo(kernel.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
             raise OSError("process_memory_unavailable")
         return int(counters.PeakWorkingSetSize)
-    resource = importlib.import_module("resource")
-
-    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * (1 if sys.platform == "darwin" else 1024)
+    else:  # an explicit platform branch, so mypy on Windows skips it instead of flagging unreachable code
+        resource = importlib.import_module("resource")
+        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * (1 if sys.platform == "darwin" else 1024)
 
 
 def percentile(values: list[float], probability: float) -> float | None:

@@ -121,7 +121,8 @@ def test_v3_bm25_dev_pairs_and_preserved_dense_baselines() -> None:
                                             else "last-user-turn-v1")
                for a in study.arms if isinstance(a, RetrievalOnly))
     admission = preflight(study)
-    assert admission["within_caps"] and Decimal(admission["ceiling_usd"]) == Decimal("0.03522560")
+    # v3's shared preprocessing envelope is 300 * 8192 (not the older 90-call envelope).
+    assert admission["within_caps"] and Decimal(admission["ceiling_usd"]) == Decimal("0.06963200")
 
 
 def test_offline_cli_preflight_digest_and_example_registration_refusal(capsys: pytest.CaptureFixture[str],

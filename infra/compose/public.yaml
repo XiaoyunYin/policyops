@@ -6,6 +6,9 @@ x-origin: &origin
 
 services:
   caddy:
+    # API joins this namespace and uses its /etc/hosts; Docker rejects extra_hosts on API.
+    extra_hosts:
+      - "${POLICYOPS_HOSTNAME:?Set public DNS hostname}:127.0.0.1"
     ports: !override ["0.0.0.0:80:80", "0.0.0.0:443:443"]
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
@@ -28,8 +31,6 @@ services:
       <<: *origin
       POLICYOPS_ENV: deployment
       POLICYOPS_PUBLIC_RATE_LIMIT: "1"
-    extra_hosts:
-      - "${POLICYOPS_HOSTNAME:?Set public DNS hostname}:127.0.0.1"
     mem_limit: 320m
     restart: unless-stopped
     logging: *logs

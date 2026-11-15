@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 from typing import Any
 
@@ -22,6 +24,39 @@ from scripts.check_publication import SECRET_PATTERNS
 
 ROOT = Path(__file__).resolve().parents[2]
 AWS = ROOT / "infra/terraform/aws"
+BOOTSTRAP = ROOT / "infra/deploy/bootstrap.sh.tftpl"
+
+
+def rendered_launch_script() -> str:
+    raw = BOOTSTRAP.read_text(encoding="utf-8")
+    # This template intentionally has just one Terraform interpolation.
+    assert re.findall(r"(?<!\$)\$\{([^}]+)\}", raw) == ["admin_cidr"]
+    return "#!/bin/sh\n" + raw.replace("${admin_cidr}", "192.0.2.10/32").replace("$${", "${")
+
+
+def launch_parts(rendered: str) -> tuple[str, str]:
+    opening = 'cat > "$bootstrap_tmp" <<\'POLICYOPS_BOOTSTRAP\'\n'
+    assert opening in rendered, "Lightsail needs a POSIX stub with a quoted bootstrap heredoc"
+    before, body = rendered.split(opening, 1)
+    bootstrap, after = body.split("\nPOLICYOPS_BOOTSTRAP\n", 1)
+    return before + opening + "POLICYOPS_BOOTSTRAP\n" + after, bootstrap + "\n"
+
+
+def shell_binary(name: str) -> str:
+    # Prefer Git's real shells over Windows' bash.exe WSL launcher.
+    git_shell = Path("C:/Program Files/Git/bin") / f"{name}.exe"
+    binary = str(git_shell) if sys.platform == "win32" and git_shell.is_file() else shutil.which(name)
+    if binary is None:
+        pytest.skip(f"{name} binary absent; shell syntax/runtime check unavailable")
+    return binary
+
+
+def check_stub(stub: str) -> None:
+    assert not re.search(r"pipefail|\[\[|\]\]|\bfunction\b|\bsource\b|\$'|(?:^|\n|;)\s*(?:local|declare|typeset)\s|"
+                         r"\w+=\(|\$\{[^}]*\[|<\(|>\(|&>|==", stub)
+    assert "set -eu\n" in stub and "umask 077\n" in stub
+    assert 'trap finish EXIT' in stub
+    assert 'bash /usr/local/sbin/policyops-bootstrap >> /var/log/policyops-bootstrap.log 2>&1' in stub
 
 
 class ProfileLoader(yaml.SafeLoader):  # type: ignore[misc]  # untyped dependency; inherits only SafeLoader
@@ -112,33 +147,182 @@ def test_terraform_pins_firewall_budget_state_and_secret_policy() -> None:
         assert not any(pattern.search(path.read_bytes()) for pattern in SECRET_PATTERNS.values()), path
 
 
-def test_cloud_init_security_and_idempotence_markers() -> None:
-    raw = (ROOT / "infra/deploy/cloud-init.yaml.tftpl").read_text(encoding="utf-8")
-    data = yaml.safe_load(raw)
-    assert data["package_update"] and "unattended-upgrades" in data["packages"]
+def test_lightsail_resource_names_are_unique_across_resource_types() -> None:
+    # Lightsail rejects an instance or static IP whose name a key pair already holds.
+    main = (AWS / "main.tf").read_text(encoding="utf-8")
+    names = re.findall(r'resource "aws_lightsail_(?:key_pair|instance|static_ip)" "\w+" \{\n\s+name\s+= "([^"]+)"',
+                       main)
+    assert len(names) == 3 and len(set(names)) == 3
+
+
+def test_launch_script_security_and_idempotence_markers() -> None:
+    raw = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "apt-get update" in raw and "unattended-upgrades" in raw
     for required in ("fallocate -l 2G", "chmod 0600 /swapfile", "swapon", "ufw default deny incoming",
                      "ufw allow from ${admin_cidr}", "PasswordAuthentication no", "PermitRootLogin no",
+                     "KbdInteractiveAuthentication no", "PubkeyAuthentication yes",
                      "docker-ce=", "docker-compose-plugin=", "DOCKER-USER", "ESTABLISHED,RELATED"):
         assert required in raw
     assert 'test -f /swapfile' in raw and "flock -w 10" in raw
+    assert "grep -q '^/swapfile ' /etc/fstab" in raw
+    assert "write_file 0644 /etc/fstab" in raw and ">> /etc/fstab" not in raw
+    assert 'mv -f "$file_tmp" /swapfile' in raw
+    assert "APT::Periodic::Unattended-Upgrade \"1\";" in raw
+    assert "SystemMaxUse=64M" in raw and "RuntimeMaxUse=32M" in raw and "MaxRetentionSec=7day" in raw
+    assert "apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" in raw
+    assert "install -d -m 0700 /var/lib/policyops /var/lib/policyops/tmp /var/lib/policyops/releases" in raw
+    assert not re.search(r"curl[^\n]*\|\s*(?:sh|bash)", raw)
     assert not re.search(r"(?i)(access_key|secret_key|password\s*:|PRIVATE KEY|OPENAI_|ANTHROPIC_)", raw)
     assert not any(pattern.search(raw.encode()) for pattern in SECRET_PATTERNS.values())
     # Terraform templatefile must not accidentally interpret Bash parameter expansion.
     assert re.findall(r"\$\{([^}]+)\}", raw) == ["admin_cidr"]
+    main = (AWS / "main.tf").read_text(encoding="utf-8")
+    assert 'templatefile("${path.module}/../../deploy/bootstrap.sh.tftpl"' in main
+    assert not (ROOT / "infra/deploy/cloud-init.yaml.tftpl").exists()
+
+
+def test_lightsail_wrapper_has_posix_stub() -> None:
+    stub, bootstrap = launch_parts(rendered_launch_script())
+    check_stub(stub)
+    assert bootstrap.startswith("#!/bin/bash\nset -euo pipefail\n")
+
+
+@pytest.mark.parametrize("name", ["sh", "bash"])
+def test_lightsail_shell_syntax(name: str) -> None:
+    stub, bootstrap = launch_parts(rendered_launch_script())
+    # sh parses the whole wrapped launch script, including nested quoted heredocs.
+    script = rendered_launch_script() if name == "sh" else bootstrap
+    result = subprocess.run([shell_binary(name), "-n"], input=script, text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    if name == "sh":
+        result = subprocess.run([shell_binary(name), "-n"], input=stub, text=True, capture_output=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+
+
+def test_launch_contract_rejects_cloud_config_negative_control() -> None:
+    with pytest.raises(AssertionError, match="POSIX stub"):
+        launch_parts("#!/bin/sh\n#cloud-config\npackages: [curl]\nwrite_files: []\n")
+
+
+@pytest.mark.parametrize("outcome", ["success", "bootstrap_failure", "missing_bash"])
+def test_lightsail_stub_execution_and_markers(tmp_path: Path, outcome: str) -> None:
+    rendered = rendered_launch_script()
+    _, bootstrap = launch_parts(rendered)
+    # Execute only the real stub in a sandbox, replacing the privileged payload.
+    payload = "#!/bin/bash\nset -euo pipefail\nprintf '%s\\n' '$unexpanded'\n"
+    payload += "false\necho must-not-run\n" if outcome == "bootstrap_failure" else "true\n"
+    rendered = rendered.replace(bootstrap, payload)
+    for directory in ("/var/lib/policyops", "/var/log", "/usr/local/sbin"):
+        target = tmp_path / directory.lstrip("/")
+        target.mkdir(parents=True)
+        rendered = rendered.replace(directory, directory.lstrip("/"))
+    if outcome == "missing_bash":
+        rendered = rendered.replace("command -v bash", "command -v policyops-missing-bash")
+    if sys.platform == "win32":
+        # The Windows sandbox denies MSYS chmod. Check modes statically above;
+        # exercise shell control flow here without POSIX permission emulation.
+        rendered = rendered.replace("install -d -m 0700", "mkdir -p")
+        rendered = re.sub(r"(?m)^chmod (?:0600|0700) ", ": ", rendered)
+    state = tmp_path / "var/lib/policyops/bootstrap"
+    state.mkdir()
+    # A failed rerun must invalidate an earlier success, and vice versa.
+    (state / "success").write_text("stale", encoding="utf-8")
+    (state / "failure").write_text("stale", encoding="utf-8")
+    result = subprocess.run([shell_binary("sh"), "-s"], input=rendered, text=True,
+                            capture_output=True, timeout=15, cwd=tmp_path)
+    expected = "success" if outcome == "success" else "failure"
+    assert (result.returncode == 0) == (outcome == "success"), result.stderr
+    assert (state / expected).read_text(encoding="utf-8").strip() == str(result.returncode)
+    assert not (state / ("failure" if expected == "success" else "success")).exists()
+    log = (tmp_path / "var/log/policyops-bootstrap.log").read_text(encoding="utf-8")
+    if outcome != "missing_bash":
+        assert "$unexpanded" in log  # The stub must not expand the bootstrap heredoc.
+        assert "must-not-run" not in log  # Bash errexit must propagate through the stub.
+    assert not list((tmp_path / "usr/local/sbin").glob(".policyops-bootstrap.*"))
+    assert not list(state.glob(".result.*"))
+
+
+def test_ca_removal_and_ssh_restart_order() -> None:
+    _, bootstrap = launch_parts(rendered_launch_script())
+    config = rendered_host_file("/etc/ssh/sshd_config.d/00-policyops.conf")
+    assert "TrustedUserCAKeys none\n" in config
+    removal = "rm -f /etc/ssh/lightsail_instance_ca.pub"
+    assert "sed -E '/^[[:space:]]*TrustedUserCAKeys" in bootstrap
+    assert "| write_file 0644 /etc/ssh/sshd_config" in bootstrap
+    assert (bootstrap.index(removal) < bootstrap.index("/usr/sbin/sshd -t")
+            < bootstrap.index("systemctl restart ssh.service"))
+    assert "sshd.service" not in bootstrap
+
+
+def test_ssh_runtime_directory_precedes_validation_and_restart() -> None:
+    _, bootstrap = launch_parts(rendered_launch_script())
+    # Socket activation may leave /run/sshd absent until ssh.service first starts.
+    assert ("install -d -m 0755 /run/sshd\n/usr/sbin/sshd -t\n"
+            "systemctl restart ssh.service\n") in bootstrap
+
+
+def test_ca_directive_filter_is_idempotent() -> None:
+    _, bootstrap = launch_parts(rendered_launch_script())
+    line = next(line for line in bootstrap.splitlines() if line.startswith("sed -E "))
+    command = shlex.split(line.split(" | write_file", 1)[0])
+    assert command[-1] == "/etc/ssh/sshd_config"
+    config = ("Include /etc/ssh/sshd_config.d/*.conf\n"
+              "# TrustedUserCAKeys /etc/ssh/lightsail_instance_ca.pub\n"
+              "TrustedUserCAKeys /etc/ssh/lightsail_instance_ca.pub\n"
+              "  trustedusercakeys   /etc/ssh/lightsail_instance_ca.pub # duplicate\n"
+              "Port 22\n")
+    expected = ("Include /etc/ssh/sshd_config.d/*.conf\n"
+                "# TrustedUserCAKeys /etc/ssh/lightsail_instance_ca.pub\nPort 22\n")
+    for _ in range(2):
+        result = subprocess.run([shell_binary("sh"), "-c", shlex.join(command[:-1])], input=config,
+                                text=True, capture_output=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == expected
+        config = result.stdout
+
+
+def test_rendered_files_are_atomic_and_have_original_modes() -> None:
+    stub, bootstrap = launch_parts(rendered_launch_script())
+    assert 'chmod 0700 "$bootstrap_tmp"\nmv -f "$bootstrap_tmp" /usr/local/sbin/policyops-bootstrap' in stub
+    assert 'file_tmp=$(mktemp "$target.XXXXXX")' in bootstrap
+    assert 'chown root:root "$file_tmp"\n  chmod "$mode" "$file_tmp"\n  mv -f "$file_tmp" "$target"' in bootstrap
+    for mode, path in (("0644", "/etc/ssh/sshd_config.d/00-policyops.conf"),
+                       ("0644", "/etc/apt/apt.conf.d/20auto-upgrades"),
+                       ("0644", "/etc/systemd/journald.conf.d/policyops.conf"),
+                       ("0700", "/usr/local/sbin/policyops-firewall"),
+                       ("0644", "/etc/systemd/system/policyops-firewall.service")):
+        assert f"write_file {mode} {path} <<'" in bootstrap
+        assert rendered_host_file(path)
+
+
+def test_ufw_only_allows_admin_ssh_and_enables_last() -> None:
+    _, bootstrap = launch_parts(rendered_launch_script())
+    assert [line for line in bootstrap.splitlines() if line.startswith("ufw ")] == [
+        "ufw default deny incoming", "ufw default allow outgoing",
+        "ufw allow from 192.0.2.10/32 to any port 22 proto tcp", "ufw allow 80/tcp", "ufw allow 443/tcp",
+        "ufw --force enable",
+    ]
 
 
 def rendered_host_file(path: str) -> str:
-    raw = (ROOT / "infra/deploy/cloud-init.yaml.tftpl").read_text(encoding="utf-8")
-    data = yaml.safe_load(raw.replace("${admin_cidr}", "192.0.2.10/32"))
-    content: str = next(item["content"] for item in data["write_files"] if item["path"] == path)
-    return content
+    _, bootstrap = launch_parts(rendered_launch_script())
+    if path == "/usr/local/sbin/policyops-bootstrap":
+        return bootstrap
+    match = re.search(rf"^write_file \d+ {re.escape(path)} <<'([^']+)'\n(.*?)^\1$", bootstrap, re.M | re.S)
+    assert match, path
+    return match[2]
 
 
 def test_docker_pins_include_complete_ubuntu_release_suffix() -> None:
     script = rendered_host_file("/usr/local/sbin/policyops-bootstrap")
-    installs = [shlex.split(line) for line in script.splitlines() if line.startswith("apt-get install ")]
+    installs = [shlex.split(line) for line in script.splitlines()
+                if line.startswith("apt-get install ") and "docker-ce=" in line]
     assert len(installs) == 1
     pins = dict(argument.split("=", 1) for argument in installs[0][3:])
+    coordinator_pins = re.findall(
+        r"\b(docker-ce(?:-cli)?|containerd\.io|docker-buildx-plugin|docker-compose-plugin)=([^\s]+)",
+        BOOTSTRAP.read_text(encoding="utf-8"))
+    assert len(coordinator_pins) == 5 and dict(coordinator_pins) == pins
     assert set(pins) == {"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"}
     for package, version in pins.items():
         assert re.fullmatch(r"(?:5:)?\d+\.\d+\.\d+-\d+~ubuntu\.24\.04~noble", version), (package, version)
@@ -175,8 +359,8 @@ def test_rendered_firewall_replaces_stale_rules_in_exact_order() -> None:
     unit = rendered_host_file("/etc/systemd/system/policyops-firewall.service")
     assert "After=docker.service" in unit and "PartOf=docker.service" in unit
     assert "WantedBy=docker.service" in unit
-    raw = (ROOT / "infra/deploy/cloud-init.yaml.tftpl").read_text(encoding="utf-8")
-    assert ["systemctl", "enable", "--now", "policyops-firewall.service"] in yaml.safe_load(raw)["runcmd"]
+    _, bootstrap = launch_parts(rendered_launch_script())
+    assert "systemctl enable --now policyops-firewall.service" in bootstrap
 
 
 def test_state_and_tfvars_ignored_and_example_is_placeholder_only() -> None:

@@ -1,8 +1,13 @@
 # AWS public fictional demo
 
-Status: **offline preparation only**. No AWS apply, public URL, image build, certificate,
-host sizing measurement or rollback drill has been verified for this profile yet. The
-coordinator must complete the live gates below before claiming deployment evidence.
+Status: **public issuer networking repair awaiting live verification**. The first
+2026-11-15 Lightsail attempt exposed launch-script handling of user-data and a shared
+resource-name namespace; that host was destroyed. The replacement host bootstrapped
+successfully. At 19:10Z, deploy A built images but failed after 183 seconds creating API:
+Docker rejected the overlay's `extra_hosts` combined with inherited
+`network_mode: service:caddy`. Structural overlay tests had missed the merged conflict.
+The mapping now belongs to Caddy; a real Compose merge regression covers the failure.
+Daemon creation, public login/certificate, host sizing and rollback remain live gates.
 
 ## Architecture and cost
 
@@ -12,6 +17,8 @@ attached static IPv4, firewall and an account-wide $20 monthly Budget with 80% a
 100% forecast email alerts. Credentials use `AWS_PROFILE`; the provider does not receive
 keys in configuration. Terraform 1.15.8 and AWS provider 6.25.0 are exact pins. The
 coordinator generates and reviews `.terraform.lock.hcl` with network access.
+Lightsail resource names share one per-region namespace across resource types: the
+instance is `policyops-demo`, key pair `policyops-demo-key`, and static IP `policyops-demo-ip`.
 
 | Item | Monthly USD assumption |
 |---|---:|
@@ -50,6 +57,44 @@ HSTS has a one-year max age, without preload or `includeSubDomains` on a shared 
 Dex issuer/callback come from the hostname; the existing template already parameterizes
 both. API uses deployment-mode settings and Secure `__Host-` cookies. The CSRF cookie is
 intentionally readable by JavaScript; login/session cookies are HttpOnly.
+
+### Public issuer networking
+
+The issuer remains exactly `https://<hostname>/dex` for tokens, discovery and stored
+principals. `api` uses `network_mode: service:caddy`, which Compose implements as Docker
+`container:` networking. Docker reuses the owner's `/etc/hosts` and resolver paths when
+initializing that container (see Moby's
+[namespace initialization](https://github.com/moby/moby/blob/master/daemon/container_operations.go)
+and [networking paths](https://github.com/moby/moby/blob/master/daemon/container_operations_unix.go)).
+Thus only **Caddy** declares `<hostname>:127.0.0.1` in `extra_hosts`. API resolves through
+that shared hosts file, connects to Caddy on loopback TCP 443 with the public hostname
+as SNI, and verifies the normal public certificate. Caddy proxies `/dex/*` to `dex:5556`
+on the internal default network. Docker's
+[container-network restrictions](https://docs.docker.com/engine/network/#container-networks)
+prohibit custom hosts, DNS, hostname, MAC and port options on the joining container;
+Compose also forbids specifying its own `networks` alongside `network_mode`.
+
+| Service | Issuer/callback use | Route or reason no issuer route is needed |
+|---|---|---|
+| `api` | `auth/oidc.py`: discovery GET, JWKS GET, token POST; exact issuer validation | Owner's hosts file -> loopback 443 -> Caddy -> Dex; callback URI is sent as a parameter, not fetched |
+| `dex` | `infra/dex/config.yaml.tmpl`: advertises issuer and endpoints; validates registered redirect URI, redirects browser | Serves requests; local health probe uses `127.0.0.1:5556`; local password DB and signer make no outbound issuer/callback requests |
+| `seed-demo` | `infra/compose/runtime.py:seed_demo` stores issuer as principal identity | Database writes only; no discovery, keys or token exchange |
+| `worker` | Inherits issuer environment; worker entry point never reads it or constructs OIDC client | Database scheduling and retail HTTP only |
+| `bootstrap-app`, `migrate-app`, `bootstrap-retail`, `migrate-retail`, `retail` | Inherit local issuer environment but entry points never use it | Provisioning/migrations/database or retail serving only |
+| `postgres`, `caddy` | No OIDC issuer setting consumed | Database server / TLS reverse proxy; Caddy uses hostname for routing and ACME |
+| External browser | Follows authorization and callback redirects | Public DNS -> host's published Caddy 443 |
+
+The default-network services need no hostname override: none calls the public issuer,
+including at startup. Public-IP hairpin routing is **not relied upon or validated**;
+the internal network does not promise public egress. If another issuer client is added,
+provide and verify its internal route to Caddy rather than assuming public-IP hairpin
+works. Do not put loopback mappings on a service with its own network namespace.
+
+`tests/unit/test_public_compose_networking.py` invokes the real `docker compose config`
+merge without contacting the daemon (explicit skip if the CLI is unavailable), checks
+namespace conflicts and the owner's mapping, and rejects the old overlay as a negative
+control. A successful config check alone does not prove daemon creation, hosts-file
+sharing or TLS/login. Verify those against the pinned Engine before live acceptance.
 
 PostgreSQL, retail, worker and Dex remain on the internal Docker network. API/Caddy retain
 outbound internet reachability (ACME and issuer TLS); this is not destination-allowlisted
@@ -110,7 +155,7 @@ if len(pins) != 5 or any(pin not in versions for pin in pins):
     raise SystemExit("Missing or incomplete Docker pins; revise and review before apply")
 for package, version in pins:
     print(f"Verified {package}={version}")
-'@ | python -B - "$pinEvidence/Packages.gz" infra/deploy/cloud-init.yaml.tftpl
+'@ | python -B - "$pinEvidence/Packages.gz" infra/deploy/bootstrap.sh.tftpl
 if ($LASTEXITCODE -ne 0) { throw 'Docker pin verification failed' }
 Get-FileHash "$pinEvidence/Packages.gz" -Algorithm SHA256
 ```
@@ -122,6 +167,53 @@ fails instead of falling back to an unpinned package. Packages are held; securit
 for Ubuntu are unattended, Docker pin updates require operator review. Review the Docker
 signing-key fingerprint against official documentation before use. No curl-to-shell.
 
+### Lightsail bootstrap and SSH management
+
+Lightsail appends user-data verbatim to its own `#!/bin/sh` launch script; it does not
+deliver this data as a cloud-config YAML part. `infra/deploy/bootstrap.sh.tftpl` therefore
+starts with a POSIX dash-compatible stub. A quoted heredoc writes the real bash bootstrap
+atomically to `/usr/local/sbin/policyops-bootstrap` (0700). The stub invokes it with bash;
+the payload uses `set -euo pipefail`. Only `admin_cidr` is interpolated by Terraform.
+Configuration files are written through temporary files and renamed on the same filesystem.
+The script preserves package pins/holds, automatic Ubuntu updates, swap, journal limits,
+SSH hardening, the Docker forwarding fence, UFW order and private deploy directories.
+The Ubuntu blueprint supplies the `ubuntu` user; no extra management user is created.
+
+The stub appends diagnostics to `/var/log/policyops-bootstrap.log` (0600) and records exit
+code `0` in `/var/lib/policyops/bootstrap/success`, or the nonzero exit code in `failure`.
+The marker directory is 0700 and both markers are root-only. Each launch clears stale
+markers; missing bash or a failed bootstrap returns nonzero to cloud-init. To rerun the
+entire bootstrap with fresh markers, run the reviewed rendered launch script under
+`sudo sh`, rather than invoking the payload alone. Reruns replace managed files, avoid
+duplicate swap activation/fstab entries and UFW rules, and rebuild DOCKER-USER in order.
+
+Lightsail's wrapper also installs `/etc/ssh/lightsail_instance_ca.pub` and appends a
+`TrustedUserCAKeys` directive. This profile permits no alternate remote-management path.
+Bootstrap removes that directive and file idempotently and sets `TrustedUserCAKeys none`
+in the hardening drop-in. It creates `/run/sshd` (0755) before `/usr/sbin/sshd -t`,
+because socket activation may precede the service's runtime-directory creation, then restarts
+`ssh.service`, the Ubuntu 24.04 unit (the wrapper's `sshd.service` restart fails there).
+Browser SSH certificate trust is disabled; key-authenticated SSH from the operator `/32`
+remains the management path. Verify the effective settings with `sudo sshd -T` live.
+
+`aws lightsail get-instance-access-details` returned no `hostKeys` for this profile:
+AWS witnesses host keys only through browser SSH, which the operator `/32` rule blocks.
+The coordinator's decision is to record keys with `ssh-keyscan` from that `/32`, minutes
+after creation, into a dedicated known_hosts file, then pin that file and require
+`StrictHostKeyChecking=yes` thereafter. This is **trust on first use**: an on-path attacker
+at first contact could supply substituted keys. Later strict checks detect a changed key;
+the initial scan is not independent host authentication. Retain the file and fingerprints
+privately and investigate mismatches; never silently overwrite the pinned file.
+
+On Windows, OpenSSH 9.5 `ssh-keyscan` fails with
+`unsupported KEX method sntrup761x25519-sha512`; use a newer OpenSSH (Git for Windows
+OpenSSH 9.9 worked). The sequence prepends Git's `usr\bin` to the process-local PATH
+and checks for OpenSSH 9.9 or later, so SSH, SCP, key scanning and the rollback drill
+use the same client build. The coordinator's pinned known_hosts file uses LF line endings.
+A `-o UserKnownHostsFile=` path containing spaces must be quoted
+**inside the option value**, as the command sequence below does. Use the same dedicated
+file for SSH, SCP and the rollback drill; disable global host-key lookup for these commands.
+
 ## Coordinator command sequence
 
 From the reviewed checkout in PowerShell (paths below are operator-chosen external paths).
@@ -129,6 +221,12 @@ Keep Terraform logging disabled; never publish state, saved plans, tfvars or raw
 logs. Set temp routing for every local process, as in the development instructions.
 
 ```powershell
+$gitSshBin = 'C:\Program Files\Git\usr\bin'
+$env:PATH = "$gitSshBin;$env:PATH"
+$sshVersion = (ssh -V 2>&1 | Out-String).Trim()
+$sshVersionMatch = [regex]::Match($sshVersion, '\bOpenSSH_(\d+\.\d+)')
+if ($LASTEXITCODE -ne 0 -or -not $sshVersionMatch.Success) { throw 'Cannot verify Git OpenSSH version' }
+if ([version]$sshVersionMatch.Groups[1].Value -lt [version]'9.9') { throw 'OpenSSH 9.9 or later is required' }
 $env:POLICYOPS_TEMP_DIR = 'D:\path\outside\checkout\policyops'
 $env:TEMP = "$env:POLICYOPS_TEMP_DIR/tmp"
 $env:TMP = $env:TEMP
@@ -152,17 +250,25 @@ $hostName = terraform -chdir=infra/terraform/aws output -raw hostname
 $key = 'D:\path\to\local\ssh-key'
 $commitA = '<reviewed-and-published-full-40-character-commit-A>'
 $commitB = '<reviewed-and-published-full-40-character-compatible-commit-B>'
-# Verify SSH host-key fingerprint via a trusted independent AWS console channel first.
-# Enroll that verified key in known_hosts; never use StrictHostKeyChecking=no.
-ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo cloud-init status --wait'
-scp -i $key -o StrictHostKeyChecking=yes infra/deploy/deploy.sh "ubuntu@${ip}:/home/ubuntu/policyops-deploy"
-ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo install -m 0755 /home/ubuntu/policyops-deploy /usr/local/sbin/policyops-deploy'
-ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" "sudo bash /usr/local/sbin/policyops-deploy $commitA $hostName"
+$knownHosts = "$stateDir/known_hosts"
+if (Test-Path -LiteralPath $knownHosts) { throw 'Pinned known_hosts already exists; investigate before changing it' }
+# First contact from the operator /32, minutes after creation: TOFU risk described above.
+$scan = ssh-keyscan -T 10 -t ed25519,ecdsa,rsa $ip
+if ($LASTEXITCODE -ne 0 -or -not $scan) { throw 'Host-key scan failed' }
+$knownHostsText = ([string[]]$scan -join "`n") + "`n"
+[System.IO.File]::WriteAllBytes($knownHosts, [System.Text.UTF8Encoding]::new($false).GetBytes($knownHostsText))
+ssh-keygen -lf $knownHosts
+$sshOptions = @('-o', 'StrictHostKeyChecking=yes', '-o', ('UserKnownHostsFile="{0}"' -f ($knownHosts -replace '\\', '/')), '-o', 'GlobalKnownHostsFile=none')
+ssh -i $key @sshOptions "ubuntu@$ip" 'sudo cloud-init status --wait && sudo test ! -e /var/lib/policyops/bootstrap/failure && sudo grep -qx 0 /var/lib/policyops/bootstrap/success'
+if ($LASTEXITCODE -ne 0) { throw 'Bootstrap incomplete or failed; inspect the root-only bootstrap log' }
+scp -i $key @sshOptions infra/deploy/deploy.sh "ubuntu@${ip}:/home/ubuntu/policyops-deploy"
+ssh -i $key @sshOptions "ubuntu@$ip" 'sudo install -m 0755 /home/ubuntu/policyops-deploy /usr/local/sbin/policyops-deploy'
+ssh -i $key @sshOptions "ubuntu@$ip" "sudo bash /usr/local/sbin/policyops-deploy $commitA $hostName"
 python -B scripts/devenv.py uv run --offline --frozen python -B scripts/deploy_verify.py $hostName --allow-admin-ssh
 # Run again from a non-admin network without --allow-admin-ssh to establish anonymous 22 denial.
-python -B scripts/devenv.py uv run --offline --frozen python -B scripts/deploy_rollback_drill.py $hostName --ssh-host "ubuntu@$ip" --identity $key --commit-a $commitA --commit-b $commitB --schema-compatible --allow-admin-ssh
+python -B scripts/devenv.py uv run --offline --frozen python -B scripts/deploy_rollback_drill.py $hostName --ssh-host "ubuntu@$ip" --identity $key --known-hosts $knownHosts --commit-a $commitA --commit-b $commitB --schema-compatible --allow-admin-ssh
 # Teardown, after preserving required private evidence/backups:
-ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo systemctl disable --now policyops-reset.timer policyops-seed.timer'
+ssh -i $key @sshOptions "ubuntu@$ip" 'sudo systemctl disable --now policyops-reset.timer policyops-seed.timer'
 terraform -chdir=infra/terraform/aws plan -destroy "-var-file=$stateDir/demo.tfvars" "-out=$stateDir/destroy.plan"
 terraform -chdir=infra/terraform/aws apply "$stateDir/destroy.plan"
 ```
@@ -283,7 +389,7 @@ a failed reset requires operator intervention. Never run this against retained r
   behavior. Do not expose the demo if the unit fails or the backend/jump/rules differ.
 
   ```powershell
-  ssh -i $key -o StrictHostKeyChecking=yes "ubuntu@$ip" 'sudo docker info; sudo systemctl status --no-pager policyops-firewall.service; sudo iptables -S FORWARD; sudo iptables -S DOCKER-USER'
+  ssh -i $key @sshOptions "ubuntu@$ip" 'sudo docker info; sudo systemctl status --no-pager policyops-firewall.service; sudo iptables -S FORWARD; sudo iptables -S DOCKER-USER'
   ```
 
 - Confirm `ss -lntup`, `docker compose ... config`, container effective UID/capabilities,

@@ -136,10 +136,14 @@ def test_rollback_records_a_b_a_and_stops_on_failure(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(rollback, "verify", lambda *_a, **_k: {"passed": not (failure == "health"
                                                                                          and len(commands) == 2)})
-    result = rollback.drill(HOST, "ubuntu@192.0.2.1", Path("identity"), "a" * 40, "b" * 40)
+    known_hosts = Path("directory with spaces") / "known_hosts"
+    result = rollback.drill(HOST, "ubuntu@192.0.2.1", Path("identity"), "a" * 40, "b" * 40,
+                            known_hosts=known_hosts)
     assert result["passed"] is (failure is None)
     assert len(commands) == (3 if failure is None else 2)
     assert all("StrictHostKeyChecking=yes" in command for command in commands)
+    option = f'UserKnownHostsFile="{known_hosts.resolve().as_posix()}"'
+    assert all(option in command and "GlobalKnownHostsFile=none" in command for command in commands)
     assert "must not retain" not in json.dumps(result)
     if failure is None:
         assert commands[-1][-1].endswith("--rollback")

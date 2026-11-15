@@ -1,0 +1,149 @@
+# Lightsail appends this text to its /bin/sh launch script. Keep this stub POSIX.
+# No application credentials, API keys or private SSH key belong in user-data.
+set -eu
+umask 077
+install -d -m 0700 /var/lib/policyops/bootstrap
+rm -f /var/lib/policyops/bootstrap/success /var/lib/policyops/bootstrap/failure
+bootstrap_tmp=
+finish() {
+  result=$?
+  trap - EXIT
+  if [ -n "$bootstrap_tmp" ]; then rm -f "$bootstrap_tmp"; fi
+  if [ "$result" -eq 0 ]; then marker=success; else marker=failure; fi
+  marker_tmp=$(mktemp /var/lib/policyops/bootstrap/.result.XXXXXX)
+  printf '%s\n' "$result" > "$marker_tmp"
+  mv -f "$marker_tmp" "/var/lib/policyops/bootstrap/$marker"
+  if [ "$result" -ne 0 ]; then
+    echo "PolicyOps bootstrap failed ($result); see /var/log/policyops-bootstrap.log" >&2
+  fi
+  exit "$result"
+}
+trap finish EXIT
+# Append rerun logs; umask and chmod keep diagnostics root-only.
+touch /var/log/policyops-bootstrap.log
+chmod 0600 /var/log/policyops-bootstrap.log
+command -v bash >> /var/log/policyops-bootstrap.log 2>&1
+bootstrap_tmp=$(mktemp /usr/local/sbin/.policyops-bootstrap.XXXXXX)
+cat > "$bootstrap_tmp" <<'POLICYOPS_BOOTSTRAP'
+#!/bin/bash
+set -euo pipefail
+umask 077
+export DEBIAN_FRONTEND=noninteractive
+
+# Write in the destination directory, then rename atomically on the same filesystem.
+file_tmp=
+trap 'if test -n "$file_tmp"; then rm -f "$file_tmp"; fi' EXIT
+write_file() {
+  local mode=$1 target=$2
+  file_tmp=$(mktemp "$target.XXXXXX")
+  cat > "$file_tmp"
+  chown root:root "$file_tmp"
+  chmod "$mode" "$file_tmp"
+  mv -f "$file_tmp" "$target"
+  file_tmp=
+}
+
+install -d -m 0755 /etc/ssh/sshd_config.d /etc/apt/apt.conf.d /etc/systemd/journald.conf.d
+write_file 0644 /etc/ssh/sshd_config.d/00-policyops.conf <<'POLICYOPS_SSH'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+TrustedUserCAKeys none
+POLICYOPS_SSH
+# Lightsail's wrapper registers a browser-SSH CA before appending this script.
+# Remove its directive and key as well as explicitly disabling CA trust above.
+sed -E '/^[[:space:]]*TrustedUserCAKeys[[:space:]]+\/etc\/ssh\/lightsail_instance_ca\.pub([[:space:]]|$)/Id' /etc/ssh/sshd_config | write_file 0644 /etc/ssh/sshd_config
+rm -f /etc/ssh/lightsail_instance_ca.pub
+# ssh.socket can be active before ssh.service creates its RuntimeDirectory.
+install -d -m 0755 /run/sshd
+/usr/sbin/sshd -t
+systemctl restart ssh.service
+
+write_file 0644 /etc/apt/apt.conf.d/20auto-upgrades <<'POLICYOPS_UPGRADES'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+POLICYOPS_UPGRADES
+write_file 0644 /etc/systemd/journald.conf.d/policyops.conf <<'POLICYOPS_JOURNAL'
+[Journal]
+SystemMaxUse=64M
+RuntimeMaxUse=32M
+MaxRetentionSec=7day
+POLICYOPS_JOURNAL
+write_file 0700 /usr/local/sbin/policyops-firewall <<'POLICYOPS_FIREWALL'
+#!/bin/bash
+set -euo pipefail
+# Docker's forwarding bypasses ufw INPUT. Fence its forwarding chain too.
+# This dedicated host owns DOCKER-USER; discard stale/misordered rules.
+umask 077
+exec 9>/run/policyops-firewall.lock
+flock -w 10 9
+nic=$(ip -4 route show default | awk 'NR==1 {print $5}')
+test -n "$nic"
+iptables -w 10 -F DOCKER-USER
+iptables -w 10 -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -w 10 -A DOCKER-USER -i "$nic" -p tcp -m multiport --dports 80,443 -j ACCEPT
+iptables -w 10 -A DOCKER-USER -i "$nic" -j DROP
+iptables -w 10 -A DOCKER-USER -j RETURN
+POLICYOPS_FIREWALL
+write_file 0644 /etc/systemd/system/policyops-firewall.service <<'POLICYOPS_UNIT'
+[Unit]
+Description=PolicyOps Docker forwarding firewall
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/policyops-firewall
+[Install]
+WantedBy=docker.service
+POLICYOPS_UNIT
+
+if ! test -f /swapfile; then
+  file_tmp=$(mktemp /.policyops-swap.XXXXXX)
+  fallocate -l 2G "$file_tmp"
+  chmod 0600 "$file_tmp"
+  mkswap "$file_tmp"
+  mv -f "$file_tmp" /swapfile
+  file_tmp=
+fi
+chmod 0600 /swapfile
+swapon --show=NAME --noheadings | grep -qx /swapfile || swapon /swapfile
+if ! grep -q '^/swapfile ' /etc/fstab; then
+  { cat /etc/fstab; printf '%s\n' '/swapfile none swap sw 0 0'; } | write_file 0644 /etc/fstab
+fi
+apt-get update
+apt-get install -y ca-certificates curl git ufw unattended-upgrades python3-venv util-linux
+install -m 0755 -d /etc/apt/keyrings
+file_tmp=$(mktemp /etc/apt/keyrings/.docker.asc.XXXXXX)
+curl --fail --silent --show-error https://download.docker.com/linux/ubuntu/gpg -o "$file_tmp"
+chmod 0644 "$file_tmp"
+mv -f "$file_tmp" /etc/apt/keyrings/docker.asc
+file_tmp=
+write_file 0644 /etc/apt/sources.list.d/docker.list <<'POLICYOPS_DOCKER'
+deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable
+POLICYOPS_DOCKER
+apt-get update
+# Exact upstream apt versions; coordinator verifies availability before apply (deployment.md).
+apt-get install -y docker-ce=5:29.7.2-1~ubuntu.24.04~noble docker-ce-cli=5:29.7.2-1~ubuntu.24.04~noble containerd.io=2.4.2-4~ubuntu.24.04~noble docker-buildx-plugin=0.36.1-1~ubuntu.24.04~noble docker-compose-plugin=5.3.1-1~ubuntu.24.04~noble
+apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl daemon-reload
+systemctl enable --now docker
+/usr/local/sbin/policyops-firewall
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow from ${admin_cidr} to any port 22 proto tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+systemctl restart systemd-journald
+# Ubuntu's blueprint supplies the ubuntu SSH user; no extra management user is created.
+install -d -m 0700 /var/lib/policyops /var/lib/policyops/tmp /var/lib/policyops/releases
+systemctl enable --now policyops-firewall.service
+POLICYOPS_BOOTSTRAP
+chmod 0700 "$bootstrap_tmp"
+mv -f "$bootstrap_tmp" /usr/local/sbin/policyops-bootstrap
+bootstrap_tmp=
+# Do not put bash in an if/! condition: its errexit must remain active.
+bash /usr/local/sbin/policyops-bootstrap >> /var/log/policyops-bootstrap.log 2>&1

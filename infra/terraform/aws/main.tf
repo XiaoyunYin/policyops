@@ -1,5 +1,6 @@
+# Lightsail names share one per-region namespace across resource types.
 resource "aws_lightsail_key_pair" "demo" {
-  name       = "policyops-demo"
+  name       = "policyops-demo-key"
   public_key = var.ssh_public_key
 }
 
@@ -10,13 +11,13 @@ resource "aws_lightsail_instance" "demo" {
   bundle_id         = "small_3_0"
   ip_address_type   = "ipv4"
   key_pair_name     = aws_lightsail_key_pair.demo.name
-  user_data = templatefile("${path.module}/../../deploy/cloud-init.yaml.tftpl", {
+  user_data = templatefile("${path.module}/../../deploy/bootstrap.sh.tftpl", {
     admin_cidr = var.admin_cidr
   })
 }
 
 resource "aws_lightsail_static_ip" "demo" {
-  name = "policyops-demo"
+  name = "policyops-demo-ip"
 }
 
 resource "aws_lightsail_static_ip_attachment" "demo" {

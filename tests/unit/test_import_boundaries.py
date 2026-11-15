@@ -101,6 +101,7 @@ EVAL_COMPOSITION_FILES = {
     # G6 composes the bounded provider, tokenizer, budget and evaluation registration APIs.
     "qa_studies/judges.py", "qa_studies/calibration.py",
     "qa_studies/runner.py",
+    "qa_studies/g8_mining.py",
 }
 EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persistence.roles",
                           "policyops.retrieval.ingest"}  # G0.4 real structural-corpus integration fixture.

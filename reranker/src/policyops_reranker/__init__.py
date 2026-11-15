@@ -1,1 +1,1 @@
-"""Isolated CPU reranker; training and bounded inference follow in phase 2."""
+"""Isolated offline CPU cross-encoder training and bounded inference."""

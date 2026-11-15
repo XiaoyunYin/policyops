@@ -509,3 +509,38 @@ source/schedule bindings, exports, reports and bounded raw inventories privately
 under `POLICYOPS_TEMP_DIR/benchmarks`. Sealed execution requires prior registration
 bound to the current source/locks. Answer generation, reranking, closed book,
 cascade/selective reranking and full context explicitly await later slices.
+## G8 local cross-encoder tooling
+
+The isolated `reranker/` project supplies offline, safetensors-only BERT loading,
+shared prefix truncation (query 128 tokens, pair 384), a capped CPU training recipe,
+and a bounded stdio worker. Artifact identity is the SHA-256 of the exact artifact
+manifest bytes; every listed file is verified before loading. The evaluator uses
+`CrossEncoderClient` with the expected identity and launches the Python selected by
+`scripts/devenv.py`'s reranker routing, avoiding launcher descendants on timeout.
+Its equivalent command is `python scripts/devenv.py uv --project reranker run
+--offline --frozen python -B -m policyops_reranker.serve --artifact DIR
+--expected-sha256 SHA --threads 4`. Requests contain only `query`, `passages`
+(`id`, `text`) and `top_k`: at most 50 passages, 20,000 characters per text and
+4,200,000 bytes per JSON line. Responses include every score and per-pair token
+counts plus the selected ranking; EOF ends the worker. Client deadlines cover
+pipe writes and reads and kill/reap the owned process on failure.
+
+`policyops-evals g8 preflight|mine` recomputes the pinned train-only G8 pool and
+duplicate exclusions. Internal validation uses a separately hash-ranked 10% of
+eligible dialogues, then independently samples at most 600 validation and 6,000
+training queries. Mining freezes dense/FTS/RRF candidates with an explicit lexical
+mode, excludes every qrel and overlapping positive span, and uses the existing
+cached, ledgered embedding job with explicit call/token/USD/time caps and paid
+opt-in. Unlabelled negatives may still be relevant. Official validation and dev
+queries are never mined. All text, triples, training receipts and weights stay private.
+
+Training uses FP32 CPU, pairwise logistic loss, batch 8, accumulation 4, AdamW
+2e-5, seed 20261114 and one epoch (at most 1,500 optimizer steps). Internal
+nDCG@10 selects the earliest best checkpoint, including baseline. Nonfinite
+loss/gradients or a final nDCG drop greater than 0.02 from baseline permit exactly
+one fresh 1e-5 retry; attempts and failures remain recorded. No quality or CPU
+latency improvement is claimed by these tools. `scripts/g8_benchmark.py` measures
+cold loading and warmed synthetic top-20 latency, threads, peak process RAM,
+nearest-rank p50/p95 and failures. The pinned base model card is Apache-2.0;
+its MS MARCO lineage has non-commercial research terms. MultiDoc2Dial is treated
+as CC BY 3.0; trained artifacts require the same provenance disclosures.

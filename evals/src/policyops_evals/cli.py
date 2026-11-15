@@ -165,6 +165,29 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="policyops-evals", description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
     groups = root.add_subparsers(dest="group", required=True)
+    # G8 dispatch stays lazy: frozen report commands must not import live providers or persistence.
+    g8 = groups.add_parser("g8", help="G8 train-only cross-encoder mining")
+    g8_commands = g8.add_subparsers(dest="g8_command", required=True)
+    for name in ("preflight", "mine"):
+        from decimal import Decimal
+
+        sub = g8_commands.add_parser(name)
+        sub.set_defaults(handler=command_g8)
+        sub.add_argument("--archive", type=Path, required=True)
+        sub.add_argument("--out", type=Path, required=True,
+                         help="private JSON file (preflight) or new directory (mine)")
+        sub.add_argument("--lexical-mode", choices=("all_terms", "any_terms"), required=True)
+        sub.add_argument("--train-limit", type=int, default=6000)
+        sub.add_argument("--validation-limit", type=int, default=600)
+        sub.add_argument("--max-usd", type=Decimal, required=True)
+        sub.add_argument("--max-calls", type=int, required=True)
+        sub.add_argument("--max-input-tokens", type=int, required=True)
+        sub.add_argument("--max-seconds", type=int, required=True)
+        if name == "mine":
+            sub.add_argument("--app-dsn-file", type=Path, required=True)
+            sub.add_argument("--workspace", type=UUID, required=True)
+            sub.add_argument("--corpus", default="multidoc2dial-v1-struct")
+            sub.add_argument("--allow-paid", action="store_true")
     judge = groups.add_parser("judge-calibration", help="G6 evaluation-only claim-support calibration")
     judge_commands = judge.add_subparsers(dest="judge_command", required=True)
     for judge_name in ("sample", "preflight", "run", "report", "select"):
@@ -260,6 +283,12 @@ def parser() -> argparse.ArgumentParser:
     add("seed-bindings", command_seed_bindings, "derive server-only seed customer bindings").add_argument(
         "--out", type=outside_repository, required=True, help="private output directory outside the repository")
     return root
+
+
+def command_g8(args: argparse.Namespace) -> int:
+    from policyops_evals.qa_studies.g8_mining import command
+
+    return command(args)
 
 
 def command_judge_calibration(args: argparse.Namespace) -> int:

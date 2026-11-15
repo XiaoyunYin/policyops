@@ -220,9 +220,10 @@ def parser() -> argparse.ArgumentParser:
                 sub.add_argument("--config-out", type=Path, required=True)
     qa = groups.add_parser("qa-study", help="validate, digest or preflight a frozen QA contract")
     qa_commands = qa.add_subparsers(dest="qa_command", required=True)
-    for qa_name in ("validate", "digest", "preflight", "run", "status", "report"):
+    for qa_name in ("select", "validate", "digest", "preflight", "run", "status", "report"):
         qa_command = qa_commands.add_parser(qa_name)
-        qa_command.add_argument("--study", type=Path, required=True)
+        if qa_name != "select":
+            qa_command.add_argument("--study", type=Path, required=True)
         qa_command.set_defaults(handler=command_qa_study)
         if qa_name == "preflight":
             qa_command.add_argument("--register", action="store_true")
@@ -351,6 +352,11 @@ def command_qa_study(args: argparse.Namespace) -> int:
     from policyops_evals.qa_studies.registration import command, registration_digest, source_provenance
 
     try:
+        if args.qa_command == "select":
+            from policyops_evals.qa_studies.selection import command as select_command
+
+            report(select_command())
+            return 0
         study = load_study(args.study)
         if args.qa_command == "validate":
             study.validate_data()
@@ -377,7 +383,8 @@ def command_qa_study(args: argparse.Namespace) -> int:
         print(f"policyops-evals: QA study refused: {reason}", file=sys.stderr)
         return 1
     report(result)
-    return 0 if result.get("within_caps", True) and result.get("execution_complete", True) else 1
+    return 0 if (result.get("within_caps", True) and result.get("execution_complete", True)
+                 and result.get("abort_reason") is None) else 1
 
 
 def command_study(args: argparse.Namespace) -> int:

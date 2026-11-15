@@ -131,6 +131,7 @@ class RetrievalOnly(Frozen):
     kind: Literal["retrieval_only"]
     name: Name
     retrieval: Retrieval
+    selection_receipt_sha256: Digest | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AnswerGeneration(Frozen):
@@ -175,6 +176,7 @@ class Rerank(Frozen):
     generator: ModelBinding | None
     context: Context
     max_claims: Annotated[int, Field(ge=1, le=4)] = Field(default=4, exclude_if=lambda value: value == 4)
+    selection_receipt_sha256: Digest | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CascadePolicy(Frozen):
@@ -319,6 +321,10 @@ class Analysis(Frozen):
     familywise_alpha: Literal["0.05"]
     missingness: Literal["strict-non-success"]
     judge_gate: JudgeGate
+    policy_latency_rule: Literal["failure-as-worst-v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None)
+    declared_claims: tuple[Literal[1, 2, 3, 4], ...] = Field(default=(), exclude_if=lambda value: not value)
+    withdrawn_claims: tuple[Literal[1, 2, 3, 4], ...] = Field(default=(), exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def allocation(self) -> Analysis:
@@ -372,6 +378,14 @@ class Stage(Frozen):
         return self
 
 
+class IncidentGuards(Frozen):
+    ce_health_check: Literal["synthetic-score-before-each-use-v1"]
+    ce_restarts_per_use: Literal[1]
+    ce_consecutive_failures: Literal[3]
+    provider_consecutive_failures: Literal[3]
+    streak_scope: Literal["per-invocation-across-uses-not-slots"]
+
+
 class Execution(Frozen):
     price_snapshot_id: Literal["pricing.2026-11-05.v1"]
     stages: Annotated[tuple[Stage, ...], Field(min_length=1, max_length=256)]
@@ -383,6 +397,7 @@ class Execution(Frozen):
     request_deadline_seconds: Annotated[int, Field(ge=1, le=300)]
     unresolved_liability_policy: Literal["hold-worst-case-block-decisions-and-resume-no-reissue"]
     artifact_max_observations: Annotated[int, Field(ge=1, le=1_000_000)]
+    incident_guards: IncidentGuards | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class LockBinding(Frozen):
@@ -514,6 +529,42 @@ class QAStudy(Frozen):
         if self.purpose != "dev" and any(isinstance(a, PolicyArm) and a.selection_receipt_sha256 is None
                                          for a in self.arms):
             raise ValueError("non-dev policy requires selection receipt")
+        if self.purpose == "sealed_test" and self.protocol_version == "g1.sealed-v1":
+            if (self.analysis.declared_claims != (1, 2, 3, 4) or self.analysis.withdrawn_claims != (2,)
+                    or self.analysis.policy_latency_rule != "failure-as-worst-v1"
+                    or self.execution.incident_guards is None
+                    or any(c.alpha != Decimal("0.0125") or c.uses_judge for c in self.analysis.comparisons)
+                    or not self.provenance.development_selection_receipts):
+                raise ValueError("G1 requires deterministic claims, fixed four-claim allocation, receipts and guards")
+            retrieval_test = self.name == "g1-test-retrieval-v1"
+            cohort_name, questions, dialogues = (("retrieval", 1940, 300) if retrieval_test
+                                                 else ("answers", 1302, 200))
+            if (self.name not in {"g1-test-retrieval-v1", "g1-test-answers-v1"}
+                    or len(cohorts) != 1 or cohort_name not in cohorts
+                    or (cohorts[cohort_name].question_count, cohorts[cohort_name].dialogue_count,
+                        cohorts[cohort_name].manifest_cohort) != (questions, dialogues, cohort_name)
+                    or self.schedule.repetitions != 1):
+                raise ValueError("G1 sealed cohort mismatch")
+            expected = ({"claim-1": ("rrf-bm25-history", "dense-history", "recall_at_5", "superiority")}
+                        if retrieval_test else {
+                            "claim-3": ("rrf-bm25-base-ce", "rrf-bm25-history-luna", "gold_citation", "superiority"),
+                            "claim-4": ("rrf-bm25-base-ce", "rrf-bm25-luna-rerank", "gold_citation",
+                                        "noninferior_and_cheaper")})
+            actual = {c.name: (c.candidate, c.reference, c.estimand, c.decision) for c in self.analysis.comparisons}
+            if (actual != expected or any(c.stratum != "all" or c.cohort != cohort_name
+                                         or c.required_questions != questions for c in self.analysis.comparisons)):
+                raise ValueError("G1 deterministic claims mismatch")
+            winner = arms["dense-history" if retrieval_test else "rrf-bm25-base-ce"]
+            if getattr(winner, "selection_receipt_sha256", None) is None:
+                raise ValueError("G1 selected arm requires receipt")
+            if not retrieval_test and (self.judge is None or self.judge.max_input_tokens < 8192):
+                raise ValueError("G1 Haiku input headroom requires 8192")
+        if self.purpose == "sealed_test":
+            receipts = self.provenance.development_selection_receipts
+            if any(isinstance(a, (PolicyArm, RetrievalOnly, Rerank))
+                   and a.selection_receipt_sha256 is not None and a.selection_receipt_sha256 not in receipts
+                   for a in self.arms):
+                raise ValueError("selected arm receipt absent from provenance")
         for comparison in self.analysis.comparisons:
             if any((a, comparison.cohort) not in assignments
                    for a in (comparison.candidate, comparison.reference)):

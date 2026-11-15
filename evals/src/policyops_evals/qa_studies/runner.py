@@ -81,6 +81,7 @@ from policyops_evals.qa_studies.config import (
     preflight,
 )
 from policyops_evals.qa_studies.cross_encoder import POLICY, CrossEncoderClient, Passage, WorkerError
+from policyops_evals.qa_studies.guards import Client, HealthyWorker, Streaks
 from policyops_evals.qa_studies.metrics import (
     Citation,
     Measurement,
@@ -422,6 +423,7 @@ class RetrieverExecutor:
                  env: str = "evaluation", expected_passages: dict[str, str] | None = None) -> None:
         self.engine, self.workspace, self.corpus = engine, workspace, corpus
         self.providers, self.tokenizer, self.env = providers, tokenizer or load_tokenizer(), env
+        self.incidents: Streaks | None = None
         self.embeddings = EmbeddingStore(engine, workspace, env=env)
         self.retrieval = RetrievalStore(engine, workspace)
         self.generation = self.retrieval.pointer(corpus)
@@ -484,6 +486,8 @@ class RetrieverExecutor:
             job = EmbeddingJob(purpose="qa-study-v1", subject_key="qa." + str(identity.id), inputs=(value,))
             prepared = prepare_job(job, app.configuration, self.tokenizer, deadline=deadline)
             report = run_job_sync(app, self.embeddings, self.providers(), prepared, deadline=deadline)
+            if self.incidents is not None and (report.physical_requests or report.status != "complete"):
+                self.incidents.observe_provider(report.status != "complete", "text-embedding-3-small")
             if report.status != "complete" or len(report.vectors) != 1:
                 raise Refused("query_embedding_incomplete")
             vector = "[" + ",".join(str(v) for v in report.vectors[0].vector) + "]"
@@ -676,6 +680,7 @@ class AnswerState:
     stage_latency_ms: dict[str, int] = field(default_factory=dict)
     stage_cost_usd: dict[str, str | None] = field(default_factory=dict)
     rerank_metadata: dict[str, Any] = field(default_factory=dict)
+    provider_outcomes: list[tuple[str, bool]] = field(default_factory=list)
     policy_latency_ms: int | None = None
     policy_started_at: float = field(default_factory=time.time)
     policy_started_monotonic: float = field(default_factory=time.monotonic)
@@ -735,6 +740,7 @@ class AnswerExecutor:
             state.stage_latency_ms[role] = (state.stage_latency_ms.get(role, 0)
                                             + int((time.monotonic() - started) * 1000))
         state.audit.append({"role": role, "index": index, "billing": billing_record(report)})
+        state.provider_outcomes.append((model.model, report.status != "result"))
         state.audit[-1]["output"] = None if report.result is None else report.result.structured_json
         # Usage is read from this claim's attempts; no content is retained in public metadata.
         state.stage_cost_usd[role] = self.cost(actor, role) if role.startswith("answer.") else self.cost(actor)
@@ -759,7 +765,7 @@ class AnswerExecutor:
     def execute(self, arm: AnswerGeneration | Rerank | ClosedBook | PolicyArm, query: QueryInput,
                 retriever: ArmExecutor, passage_text: dict[str, answers.Passage], tokenizer: Tokenizer,
                 state: AnswerState, judge: judges.JudgeArm | None,
-                ce: Callable[[CrossEncoder, float], CrossEncoderClient],
+                ce: Callable[[CrossEncoder, float], Client],
                 deadline: float, *, resumed: bool = False) -> None:
         if not query.generation:
             raise Refused("chronological_generation_history_required")
@@ -872,18 +878,20 @@ class AnswerExecutor:
                       composition_configuration(self.study))
 
     def rerank(self, arm: Rerank, query: QueryInput, passages: dict[str, answers.Passage], state: AnswerState,
-               ce: Callable[[CrossEncoder, float], CrossEncoderClient], deadline: float) -> None:
+               ce: Callable[[CrossEncoder, float], Client], deadline: float) -> None:
         started = time.monotonic()
         self.boundary("before_rerank")
         value = query.history if arm.retrieval.query_profile == "history-four-v1" else query.last_turn
         try:
             if isinstance(arm.reranker, CrossEncoder):
                 state.stage_cost_usd["rerank"] = "0"
+                state.rerank_metadata["ce_failed"] = True
                 result = ce(arm.reranker, deadline).rerank(value,
                     [Passage(id=p, text=passages[p].heading + "\n\n" + passages[p].body) for p in state.ranking],
                     top_k=len(state.ranking))
                 state.ranking = tuple(result.ranking)
-                state.rerank_metadata = {"truncation": [s.truncation.model_dump() for s in result.scores]}
+                state.rerank_metadata = {"ce_failed": False,
+                    "truncation": [s.truncation.model_dump() for s in result.scores]}
                 self.boundary("after_rerank")
             else:
                 fused, rows = [], {}
@@ -1352,7 +1360,10 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
         source: dict[str, Any] | None = None, boundary: Callable[[str], None] = lambda _: None,
         providers: Callable[[], Providers] | None = None, tokenizer: Tokenizer | None = None,
         selection_receipt: Path | None = None,
-        cross_encoder: Callable[[CrossEncoder, float], CrossEncoderClient] | None = None) -> dict[str, Any]:
+        cross_encoder: Callable[[CrossEncoder, float], Client] | None = None) -> dict[str, Any]:
+    from policyops_evals.qa_studies.selection import verify
+
+    verify(study)
     study.validate_data()
     supported(study)
     arms = {arm.name: arm for arm in study.arms}
@@ -1367,6 +1378,10 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
     registration.validate_source(study, source)
     order = schedule(study, inputs)
     cap = study.execution.cumulative_caps
+    incidents = Streaks() if study.execution.incident_guards is not None else None
+    if isinstance(executor, RetrieverExecutor):
+        executor.incidents = incidents
+    abort_reason: str | None = None
     scope = store.ensure_study(str(study.study_id), study.digest(), cap_usd=cap.usd, cap_calls=cap.calls)
     # All QA runners share a DB advisory program lock. It outlives no process and requires no migration.
     program = uuid5(NAMESPACE_URL, "policyops-qa-program/" + study.execution.program_ledger_key)
@@ -1472,7 +1487,7 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                         if cross_encoder is None:
                             def absent_ce(binding: CrossEncoder, deadline: float) -> CrossEncoderClient:
                                 raise WorkerError("worker_not_configured")
-                            ce: Callable[[CrossEncoder, float], CrossEncoderClient] = absent_ce
+                            ce: Callable[[CrossEncoder, float], Client] = absent_ce
                         else:
                             ce = cross_encoder
                         composed = AnswerExecutor(study, repository, scope, token, item, shared, providers,
@@ -1533,6 +1548,17 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                     latency_ms=int((time.monotonic() - started) * 1000), artifact_sha256=digest,
                     created_at=datetime.now(UTC)), token, lease)
                 boundary("finalized")
+                if incidents is not None:
+                    if "ce_failed" in state.rerank_metadata:
+                        incidents.observe_ce(bool(state.rerank_metadata["ce_failed"]))
+                    for channel, failed in state.provider_outcomes:
+                        incidents.observe_provider(failed, channel)
+                    abort_reason = incidents.reason()
+                    if abort_reason is not None:
+                        bundles.write(invocation / "incident.json", canonical_bytes({"reason": abort_reason,
+                            "trigger_slot_id": str(item.id), "ce_streak": incidents.ce,
+                            "provider_streaks": incidents.provider}))
+                        break  # finalize this failure, never claim the next slot
                 if not known or usage["overrun"] or usage["contract_block"]:
                     break
         except BaseException as failure:
@@ -1553,13 +1579,17 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
             repository.finish_run(run_id, lease)
         return {"scheduled": len(order), "recorded": sum(s["outcome"] != "missing" for s in public["slots"]),
                 "failed": sum(s["outcome"] not in {"success", "missing"} for s in public["slots"]),
-                "output": str(directory), "execution_complete": all(s["outcome"] != "missing" for s in public["slots"])}
+                "output": str(directory), "execution_complete": all(s["outcome"] != "missing" for s in public["slots"]),
+                "abort_reason": abort_reason}
 
 
 def command(study: QAStudy, action: str, *, materialization: Path, app_dsn_file: Path,
             eval_dsn_file: Path, workspace: UUID, corpus: str, allow_paid: bool = False,
             resume: bool = False, selection_receipt: Path | None = None, judge_report: Path | None = None,
             ce_artifacts: Sequence[Path] = ()) -> dict[str, Any]:
+    from policyops_evals.qa_studies.selection import verify
+
+    verify(study)  # refuse before reading materialization or opening either database
     supported(study)
     if (action == "run" and not allow_paid
             and any(not isinstance(a, RetrievalOnly) or a.retrieval.method != "fts" for a in study.arms)):
@@ -1591,10 +1621,24 @@ def command(study: QAStudy, action: str, *, materialization: Path, app_dsn_file:
                                  transport=lambda _: httpx2.AsyncHTTPTransport(trust_env=False))
             with ExitStack() as workers:
                 clients: dict[str, CrossEncoderClient] = {}
-                def ce(binding: CrossEncoder, deadline: float) -> CrossEncoderClient:
+                guarded: dict[str, HealthyWorker] = {}
+                def ce(binding: CrossEncoder, deadline: float) -> Client:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise WorkerError("worker_deadline")
+                    if study.execution.incident_guards is not None:
+                        if binding.artifact_sha256 not in guarded:
+                            def fresh(timeout: float) -> CrossEncoderClient:
+                                # Discard only a closed worker; HealthyWorker owns cleanup before restart.
+                                clients.pop(binding.artifact_sha256, None)
+                                return create_client(binding, timeout)
+                            guarded[binding.artifact_sha256] = HealthyWorker(fresh)
+                        healthy = guarded[binding.artifact_sha256]
+                        healthy.deadline = deadline
+                        return healthy
+                    return create_client(binding, remaining)
+
+                def create_client(binding: CrossEncoder, remaining: float) -> CrossEncoderClient:
                     if binding.artifact_sha256 not in clients:
                         matches = []
                         for path in ce_artifacts:

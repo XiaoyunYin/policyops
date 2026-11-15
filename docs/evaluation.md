@@ -629,3 +629,117 @@ cold loading and warmed synthetic top-20 latency, threads, peak process RAM,
 nearest-rank p50/p95 and failures. The pinned base model card is Apache-2.0;
 its MS MARCO lineage has non-commercial research terms. MultiDoc2Dial is treated
 as CC BY 3.0; trained artifacts require the same provenance disclosures.
+
+
+## G1 sealed deterministic design
+
+`g1-test-retrieval-v1.json` schedules the manifest's official-validation retrieval
+cohort: 300 complete dialogues, 1,940 questions, one repetition and history-four
+queries. `g1-test-answers-v1.json` schedules the separate answers cohort: 200
+complete dialogues and 1,302 questions. Both use the frozen MultiDoc2Dial
+manifest and its human grounding labels. No sealed materialization is needed to
+validate, select or preflight. Public benchmark contamination cannot be excluded.
+
+The family declares four claims at familywise alpha .05, Bonferroni alpha .0125
+per claim. Claim 2 is withdrawn, with no alpha reallocation or replacement by a
+cascade comparison. The remaining one-sided claims are:
+
+| Claim | Candidate minus reference | Deterministic decision |
+|---|---|---|
+| 1 | RRF(BM25, dense) minus R1-selected single retriever | R@5 superiority on retrieval cohort |
+| 3 | R2-selected rerank of RRF pool minus no-rerank RRF | Gold-citation superiority on answers cohort |
+| 4 | Base CE minus Luna rerank, same RRF pool and generator | Gold-citation non-inferiority above -0.05, mean policy-cost ratio upper bound <= .80, candidate policy p95 <= 1.5 times reference and <= 30 seconds |
+
+Gold citation means a validated policy answer cites at least one human-gold
+passage; it does not prove correctness or entailment. Failed and missing policy
+answers are strict non-successes. Downstream judge failures preserve completed
+deterministic policy metrics. The existing G6 gate controls judged claim support,
+faithfulness and Q: these are descriptive, never confirmatory here. Closed book
+is descriptive; its citations, faithfulness and Q remain N/A. No dense answer,
+trained reranker or cascade arm is added to the sealed schedule.
+
+Analysis uses the registered
+`sha256-whole-dialogue-question-weighted-ratio-v1` paired bootstrap: 10,000
+replicates, seed 20261115 fixed before registration, whole dialogues resampled
+with question-weighted ratios. Report the ordinary two-sided 95% interval as
+well as the one-sided Bonferroni lower bound. Claim 4 is an intersection-union
+compound decision; its cost upper bound uses the same alpha and paired dialogue
+resampling. Policy p95 uses `failure-as-worst-v1`: failed or unavailable policy
+latencies rank as infinity. An unavailable required p95 prevents adoption.
+Policy cost excludes the descriptive judge; experimental spend includes it.
+
+### Dev selection receipts and registration
+
+Run `policyops-evals qa-study select` offline with `POLICYOPS_TEMP_DIR` pointing
+to the private evidence root. It reads only the two digest-pinned development
+reports, not sealed questions or outputs. R1 maximizes history R@5 over dense
+and BM25, ties in that order. R2 maximizes gold-citation rate over base CE and
+Luna rerank, ties in that order. Reports must match their frozen dev study
+specifications, with all 500 scheduled questions recorded, integral full binary
+rate denominators, integrity and settled accounting. Recorded failures remain
+in that denominator. Missing, altered or incomplete reports fail closed.
+
+Receipts are canonical JSON in `benchmarks/qa-selections/<sha256>.json` below
+the private root. Each binds its rule, source report relative path and path
+digest, report byte digest, per-arm exact fractions, tie order and winner's
+frozen arm. Both receipt hashes enter `development_selection_receipts`; the
+selected retriever and reranked arm carry `selection_receipt_sha256` too.
+These fields also support selected `PolicyArm` contracts. Preflight and run
+regenerate and compare both receipts and all tested dev arm bindings before
+credentials or claims. Only the Haiku input envelope changes; its selected
+model, effort, prompt, output schema and output budget remain frozen.
+
+Use `qa-study validate|digest|preflight --study <config>` offline first. The
+coordinator performs publication gates and commits the test configurations
+before calculating and filling their registration digests, then invokes
+`qa-study preflight --study <config> --register` with the evaluation database.
+Registration requires a clean normalized source diff (only the top-level
+registration-digest fill is normalized), immutable binding and prior database
+timestamp. The builder does not register. Paid execution remains an explicit
+coordinator opt-in, under per-stage and cumulative caps, zero provider retries
+and repairs, no expensive fallback, and worst-case held liability on uncertainty.
+The two study caps sum to $26.10; preflight assumes every scheduled embedding,
+answer, rerank and up to four judges per grounded answer, with no cache discount.
+Shared preprocessing is conservatively counted in each study.
+
+### Sealed infrastructure guards and headroom
+
+Haiku judge input is bounded at 8,192 tokens, with unchanged 512-token output.
+This is 1,676 tokens (25.7%) above the largest observed 6,516-token count, and
+26% above the prior 6,500 envelope. The answer design still delivers at most
+five whole passages within 4,096 cl100k evidence tokens, plus bounded query,
+claim, schema and prompt wrappers. cl100k and the official Haiku counter differ;
+the extra allowance is a conservative operational reserve, not proof of a
+universal tokenizer ratio. Official counting still rejects over-bound requests.
+The application's unchanged admission rule adds 10% (minimum 256 tokens) to the
+official count: 6,516 requires 7,168, leaving another 1,024 tokens in the new
+envelope. This also explains why raw counts below 6,500 could be rejected.
+The Luna answer envelope and prompt are unchanged. No evidence trimming,
+provider retry or silent arm change repairs a rejected sealed slot.
+
+Before each CE use, a synthetic one-pair scoring request checks the worker's
+pipes, model identity and response contract under the slot's remaining deadline.
+A failed health check or score kills and reaps the worker, then replaces it once
+and repeats health and score. Unconfirmed cleanup refuses replacement. Probes
+are local and carry no benchmark text. They count in policy latency. Successful
+workers are reused. Artifact, tokenizer, pool and truncation bindings remain
+identical to the tested dev CE; there is no trained-model substitution.
+
+Both configs declare N=3 consecutive CE-use failures. Other arms do not reset
+this streak; only a successful CE use does. Three tolerates two transient
+incidents while limiting damage to three CE slots, rather than an entire outage.
+A separate N=3 streak per provider model/embedding channel counts provider calls
+that return no result, including count/transport/deadline failures. This broader
+cheap check also stops repeated admission or configuration failures. Successfully
+returned invalid structured outputs remain scoring failures and do not count as
+transport incidents. Other channels and cache hits do not reset a channel's
+streak. Unknown billing stops immediately under the existing ledger guard.
+
+At threshold the triggering slot is finalized as failed, an incident receipt is
+sealed with the private invocation inventory, and the run stops before claiming
+another slot. CLI exits nonzero for the incomplete schedule. Explicit `--resume`
+after infrastructure recovery starts fresh invocation-local streaks and runs only
+still-scheduled slots. **Finalized successes and failures are never reissued;
+slots already failed stay failed.** Abandoned running claims retain the existing
+abort/no-reissue semantics. This is an operational stop, not an exclusion rule:
+all scheduled questions remain in analysis and no failure is selectively removed.

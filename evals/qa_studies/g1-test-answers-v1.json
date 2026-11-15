@@ -1,0 +1,548 @@
+{
+  "analysis": {
+    "bootstrap_algorithm": "sha256-whole-dialogue-question-weighted-ratio-v1",
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 20261115,
+    "comparisons": [
+      {
+        "alpha": "0.0125",
+        "candidate": "rrf-bm25-base-ce",
+        "cohort": "answers",
+        "compound": null,
+        "decision": "superiority",
+        "denominator": "scheduled-questions-strict-non-success",
+        "direction": "candidate-minus-reference",
+        "estimand": "gold_citation",
+        "margin": "0",
+        "name": "claim-3",
+        "reference": "rrf-bm25-history-luna",
+        "required_questions": 1302,
+        "stratum": "all"
+      },
+      {
+        "alpha": "0.0125",
+        "candidate": "rrf-bm25-base-ce",
+        "cohort": "answers",
+        "compound": {
+          "cost_ratio_upper": "0.80",
+          "latency_ratio_max": "1.5",
+          "latency_seconds_max": "30"
+        },
+        "decision": "noninferior_and_cheaper",
+        "denominator": "scheduled-questions-strict-non-success",
+        "direction": "candidate-minus-reference",
+        "estimand": "gold_citation",
+        "margin": "-0.05",
+        "name": "claim-4",
+        "reference": "rrf-bm25-luna-rerank",
+        "required_questions": 1302,
+        "stratum": "all"
+      }
+    ],
+    "declared_claims": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "estimand_version": "g0.qa-estimands-v1",
+    "familywise_alpha": "0.05",
+    "judge_gate": {
+      "lower_kappa_exclusive": "0.4",
+      "max_false_pass": "0.10",
+      "min_kappa": "0.6",
+      "require_complete": true,
+      "transfer_limitation": "benchmark-agreement-not-domain-calibration"
+    },
+    "missingness": "strict-non-success",
+    "multiplicity": "bonferroni-directional-intersection-union-v1",
+    "ordinary_interval": "two-sided-95-percent",
+    "policy_latency_rule": "failure-as-worst-v1",
+    "withdrawn_claims": [
+      2
+    ]
+  },
+  "arms": [
+    {
+      "context": {
+        "evidence_tokens": 4096,
+        "max_passages": 5,
+        "policy": "whole-passages-skip-overflow-v1"
+      },
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "answer_generation",
+      "max_claims": 4,
+      "name": "rrf-bm25-history-luna",
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "0f10be401e2f0d599dd2b7e9a2535178bdc667af3f8bdca755a1a7ee9a9813bb",
+        "lexical_mode": "bm25",
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      }
+    },
+    {
+      "context": {
+        "evidence_tokens": 4096,
+        "max_passages": 5,
+        "policy": "whole-passages-skip-overflow-v1"
+      },
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "rerank",
+      "max_claims": 4,
+      "name": "rrf-bm25-luna-rerank",
+      "reranker": {
+        "excerpt_policy_sha256": "1312c1e74c1ba66ca1787a0a90947d6e761a13308fa68975f38090b6fcbe8f7a",
+        "kind": "luna",
+        "model": {
+          "cache_policy": "none",
+          "effort": "none",
+          "max_input_tokens": 8000,
+          "max_output_tokens": 1024,
+          "model": "gpt-6-luna",
+          "prompt_sha256": "e89a09496c24503e98d3b12dffeaf2baad9faef0b177510ec5539b3804302aff",
+          "schema_sha256": "12fe81963474a53b7bb7c9d1cd1b10ca88442e9da55902f054704c43de35cbb1"
+        }
+      },
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "0f10be401e2f0d599dd2b7e9a2535178bdc667af3f8bdca755a1a7ee9a9813bb",
+        "lexical_mode": "bm25",
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      }
+    },
+    {
+      "context": {
+        "evidence_tokens": 4096,
+        "max_passages": 5,
+        "policy": "whole-passages-skip-overflow-v1"
+      },
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "rerank",
+      "max_claims": 4,
+      "name": "rrf-bm25-base-ce",
+      "reranker": {
+        "artifact_sha256": "e7d8edecf92c7263757bedaa89ffd84c4f002a2b67d31c2df4fdd4cd78b7a4a5",
+        "candidate_pool_sha256": "645fb3a46d6fd9e56608bc35a22197df649bcf463c77503891016f6a3422cf24",
+        "kind": "cross_encoder",
+        "max_length": 384,
+        "query_token_cap": 128,
+        "runtime_sha256": "0ee3ffcee231e5da79a83dba8a97ea9fd0aed897a9618631be686ab1ddbbb1c1",
+        "threads": 4,
+        "tokenizer_sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        "training_receipt_sha256": null,
+        "truncation_policy_sha256": "3f71671ed540ebb3441a1aca9c0796ffa3bc80ba40be2bf2b345b7c97e6b1e9c"
+      },
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "0f10be401e2f0d599dd2b7e9a2535178bdc667af3f8bdca755a1a7ee9a9813bb",
+        "lexical_mode": "bm25",
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      },
+      "selection_receipt_sha256": "ca2c4b106143699520413029bb2c46d3169ee818179c903e8bc568fccabdf6cb"
+    },
+    {
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "closed_book",
+      "max_claims": 4,
+      "name": "closed-book-luna"
+    }
+  ],
+  "data": {
+    "archive_sha256": "f0c034c249663d7b3cb08b19cf2cc2c3d101372485be982621d4711931a1ce00",
+    "corpus": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "dataset": "multidoc2dial-v1",
+    "eligibility_version": "md2d.adjacent-agent-exclude-no-solution-v1",
+    "members": [
+      {
+        "name": "multidoc2dial/multidoc2dial_doc.json",
+        "sha256": "7205be05b7c260fd3c0eda4d98a4abddf7af66c364238f1be509aa139414012d"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_train.json",
+        "sha256": "c9a6ef2e0be22306429e0affa51c2ca164b2808a89a999e7756700170ed15d96"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_validation.json",
+        "sha256": "ce063938b53d96f6128275d76c0ba967a435e3d865d011aaeb6461c2538b2ce4"
+      }
+    ],
+    "passages": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "qrels": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "queries": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "references": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "revision": "v1.0-archive-20261114",
+    "sampling": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "splits": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    }
+  },
+  "example": false,
+  "execution": {
+    "artifact_max_observations": 200000,
+    "cumulative_caps": {
+      "calls": 23736,
+      "counts": 23736,
+      "input_tokens": 176050656,
+      "output_tokens": 14665728,
+      "seconds": 604800,
+      "usd": "26"
+    },
+    "incident_guards": {
+      "ce_consecutive_failures": 3,
+      "ce_health_check": "synthetic-score-before-each-use-v1",
+      "ce_restarts_per_use": 1,
+      "provider_consecutive_failures": 3,
+      "streak_scope": "per-invocation-across-uses-not-slots"
+    },
+    "price_snapshot_id": "pricing.2026-11-05.v1",
+    "program_cap_usd": "46",
+    "program_ledger_key": "gap-program-v1",
+    "repairs": 0,
+    "request_deadline_seconds": 300,
+    "retries": 0,
+    "stages": [
+      {
+        "arm": null,
+        "cache_policy": "none",
+        "caps": {
+          "calls": 300,
+          "counts": 300,
+          "input_tokens": 2457600,
+          "output_tokens": 0,
+          "seconds": 18000,
+          "usd": "0.04915200"
+        },
+        "cohort": null,
+        "max_input_tokens": 8192,
+        "max_output_tokens": 0,
+        "model": "text-embedding-3-small",
+        "name": "shared-preprocessing",
+        "planned_calls": 300,
+        "planned_counts": 300,
+        "role": "embedding"
+      },
+      {
+        "arm": null,
+        "cache_policy": "none",
+        "caps": {
+          "calls": 1302,
+          "counts": 1302,
+          "input_tokens": 1333248,
+          "output_tokens": 0,
+          "seconds": 78120,
+          "usd": "0.02666496"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 1024,
+        "max_output_tokens": 0,
+        "model": "text-embedding-3-small",
+        "name": "shared-query-embedding",
+        "planned_calls": 1302,
+        "planned_counts": 1302,
+        "role": "embedding"
+      },
+      {
+        "arm": "rrf-bm25-history-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 1302,
+          "counts": 1302,
+          "input_tokens": 8463000,
+          "output_tokens": 1333248,
+          "seconds": 78120,
+          "usd": "1.51292400"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-history-luna.answer",
+        "planned_calls": 1302,
+        "planned_counts": 1302,
+        "role": "answer"
+      },
+      {
+        "arm": "rrf-bm25-history-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 5208,
+          "counts": 5208,
+          "input_tokens": 42663936,
+          "output_tokens": 2666496,
+          "seconds": 312480,
+          "usd": "5.59964160"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 8192,
+        "max_output_tokens": 512,
+        "model": "claude-haiku-5-5",
+        "name": "rrf-bm25-history-luna.judge",
+        "planned_calls": 5208,
+        "planned_counts": 5208,
+        "role": "judge"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 1302,
+          "counts": 1302,
+          "input_tokens": 8463000,
+          "output_tokens": 1333248,
+          "seconds": 78120,
+          "usd": "1.51292400"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-luna-rerank.answer",
+        "planned_calls": 1302,
+        "planned_counts": 1302,
+        "role": "answer"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 5208,
+          "counts": 5208,
+          "input_tokens": 42663936,
+          "output_tokens": 2666496,
+          "seconds": 312480,
+          "usd": "5.59964160"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 8192,
+        "max_output_tokens": 512,
+        "model": "claude-haiku-5-5",
+        "name": "rrf-bm25-luna-rerank.judge",
+        "planned_calls": 5208,
+        "planned_counts": 5208,
+        "role": "judge"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 1302,
+          "counts": 1302,
+          "input_tokens": 10416000,
+          "output_tokens": 1333248,
+          "seconds": 78120,
+          "usd": "1.70822400"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 8000,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-luna-rerank.rerank",
+        "planned_calls": 1302,
+        "planned_counts": 1302,
+        "role": "rerank"
+      },
+      {
+        "arm": "rrf-bm25-base-ce",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 1302,
+          "counts": 1302,
+          "input_tokens": 8463000,
+          "output_tokens": 1333248,
+          "seconds": 78120,
+          "usd": "1.51292400"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-base-ce.answer",
+        "planned_calls": 1302,
+        "planned_counts": 1302,
+        "role": "answer"
+      },
+      {
+        "arm": "rrf-bm25-base-ce",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 5208,
+          "counts": 5208,
+          "input_tokens": 42663936,
+          "output_tokens": 2666496,
+          "seconds": 312480,
+          "usd": "5.59964160"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 8192,
+        "max_output_tokens": 512,
+        "model": "claude-haiku-5-5",
+        "name": "rrf-bm25-base-ce.judge",
+        "planned_calls": 5208,
+        "planned_counts": 5208,
+        "role": "judge"
+      },
+      {
+        "arm": "closed-book-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 1302,
+          "counts": 1302,
+          "input_tokens": 8463000,
+          "output_tokens": 1333248,
+          "seconds": 78120,
+          "usd": "1.51292400"
+        },
+        "cohort": "answers",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "closed-book-luna.answer",
+        "planned_calls": 1302,
+        "planned_counts": 1302,
+        "role": "answer"
+      }
+    ],
+    "unresolved_liability_policy": "hold-worst-case-block-decisions-and-resume-no-reissue"
+  },
+  "judge": {
+    "cache_policy": "none",
+    "effort": "low",
+    "max_input_tokens": 8192,
+    "max_output_tokens": 512,
+    "model": "claude-haiku-5-5",
+    "prompt_sha256": "4192bf039d46e1e7b50f6e846c7f1ea61a1f1b36baf582ffa4d7ef35b54ebaee",
+    "schema_sha256": "60a0103256204f90ff1f28457e7383694ac2020483a7a7436ecfb6eee2beb9d6",
+    "selection_receipt_sha256": "c8e81b239733d05779a1b359f6014f4da742a0282379fc35549a2e548440c384",
+    "test_report_sha256": "57404482d99a93ed2524ecec513621f5a249f38695c4e1900737456420dc4fc9"
+  },
+  "name": "g1-test-answers-v1",
+  "protocol_version": "g1.sealed-v1",
+  "provenance": {
+    "database": "qa_env: policyops-qa, pinned pgvector 0.8.7 / PostgreSQL 17.11",
+    "development_selection_receipts": [
+      "bfad7dcd30d1985bac23d760936df7fef90bf56a63201c0e706c0790a6ad1067",
+      "ca2c4b106143699520413029bb2c46d3169ee818179c903e8bc568fccabdf6cb"
+    ],
+    "dirty_sha256": null,
+    "locks": [
+      {
+        "path": "uv.lock",
+        "sha256": "ac32a8a452e9e601a994f239e8f306766d45f79e9dedac19049b2cb3e382b4db"
+      },
+      {
+        "path": "evals/uv.lock",
+        "sha256": "d1ffbcf480536a0ee6c0dcf65c176cc2af300050a8d0993a579836a8b89075bb"
+      },
+      {
+        "path": "reranker/uv.lock",
+        "sha256": "290d42ab3bfb05c2b1729fabb44935c09f2aeaefcc77f470a59c59fad028b56f"
+      }
+    ],
+    "machine": "Windows-11-10.0.26200-SP0; AMD64; Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "runtime": "Python 3.12; frozen dev arms; Haiku input8192; CE probe/restart1; incident N3; no paid retries",
+    "source_revision": null
+  },
+  "purpose": "sealed_test",
+  "registration_sha256": null,
+  "schedule": {
+    "assignments": [
+      {
+        "arm": "rrf-bm25-history-luna",
+        "cohort": "answers"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cohort": "answers"
+      },
+      {
+        "arm": "rrf-bm25-base-ce",
+        "cohort": "answers"
+      },
+      {
+        "arm": "closed-book-luna",
+        "cohort": "answers"
+      }
+    ],
+    "balanced_order_seed": 20261115,
+    "cohorts": [
+      {
+        "dialogue_count": 200,
+        "included": true,
+        "manifest": {
+          "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+          "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+        },
+        "manifest_cohort": "answers",
+        "name": "answers",
+        "optional": false,
+        "question_count": 1302,
+        "split": "validation"
+      }
+    ],
+    "order_algorithm": "sha256-rotation-v1",
+    "repetitions": 1,
+    "slot_algorithm": "uuid5-study-cohort-question-arm-repetition-v1"
+  },
+  "schema_version": "policyops.qa-study/v1",
+  "study_id": "527511a9-336d-4e99-ac2b-9d9c1020eed5"
+}

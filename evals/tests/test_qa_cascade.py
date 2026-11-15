@@ -413,6 +413,9 @@ def test_dev_selection_receipt_optional_but_sealed_required(tmp_path: Path, valu
         with pytest.raises(ValueError, match="selection receipt"):
             parse(raw)
     else:
+        with pytest.raises(ValueError, match="absent from provenance"):
+            parse(raw)
+        raw["provenance"]["development_selection_receipts"] = [value]
         assert parse(raw).purpose == "sealed_test"
 
 

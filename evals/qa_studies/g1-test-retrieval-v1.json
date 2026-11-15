@@ -1,0 +1,270 @@
+{
+  "analysis": {
+    "bootstrap_algorithm": "sha256-whole-dialogue-question-weighted-ratio-v1",
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 20261115,
+    "comparisons": [
+      {
+        "alpha": "0.0125",
+        "candidate": "rrf-bm25-history",
+        "cohort": "retrieval",
+        "compound": null,
+        "decision": "superiority",
+        "denominator": "scheduled-questions-strict-non-success",
+        "direction": "candidate-minus-reference",
+        "estimand": "recall_at_5",
+        "margin": "0",
+        "name": "claim-1",
+        "reference": "dense-history",
+        "required_questions": 1940,
+        "stratum": "all"
+      }
+    ],
+    "declared_claims": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "estimand_version": "g0.qa-estimands-v1",
+    "familywise_alpha": "0.05",
+    "judge_gate": {
+      "lower_kappa_exclusive": "0.4",
+      "max_false_pass": "0.10",
+      "min_kappa": "0.6",
+      "require_complete": true,
+      "transfer_limitation": "benchmark-agreement-not-domain-calibration"
+    },
+    "missingness": "strict-non-success",
+    "multiplicity": "bonferroni-directional-intersection-union-v1",
+    "ordinary_interval": "two-sided-95-percent",
+    "policy_latency_rule": "failure-as-worst-v1",
+    "withdrawn_claims": [
+      2
+    ]
+  },
+  "arms": [
+    {
+      "kind": "retrieval_only",
+      "name": "rrf-bm25-history",
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "0f10be401e2f0d599dd2b7e9a2535178bdc667af3f8bdca755a1a7ee9a9813bb",
+        "lexical_mode": "bm25",
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      }
+    },
+    {
+      "kind": "retrieval_only",
+      "name": "dense-history",
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "cc2d03aaed23d8b38354b44ef7f5a3a7ba9781bec101ab62fda6f5d1fc644b0d",
+        "lexical_mode": "any_terms",
+        "method": "dense",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      },
+      "selection_receipt_sha256": "bfad7dcd30d1985bac23d760936df7fef90bf56a63201c0e706c0790a6ad1067"
+    }
+  ],
+  "data": {
+    "archive_sha256": "f0c034c249663d7b3cb08b19cf2cc2c3d101372485be982621d4711931a1ce00",
+    "corpus": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "dataset": "multidoc2dial-v1",
+    "eligibility_version": "md2d.adjacent-agent-exclude-no-solution-v1",
+    "members": [
+      {
+        "name": "multidoc2dial/multidoc2dial_doc.json",
+        "sha256": "7205be05b7c260fd3c0eda4d98a4abddf7af66c364238f1be509aa139414012d"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_train.json",
+        "sha256": "c9a6ef2e0be22306429e0affa51c2ca164b2808a89a999e7756700170ed15d96"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_validation.json",
+        "sha256": "ce063938b53d96f6128275d76c0ba967a435e3d865d011aaeb6461c2538b2ce4"
+      }
+    ],
+    "passages": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "qrels": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "queries": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "references": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "revision": "v1.0-archive-20261114",
+    "sampling": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "splits": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    }
+  },
+  "example": false,
+  "execution": {
+    "artifact_max_observations": 200000,
+    "cumulative_caps": {
+      "calls": 2240,
+      "counts": 2240,
+      "input_tokens": 4444160,
+      "output_tokens": 0,
+      "seconds": 604800,
+      "usd": "0.10"
+    },
+    "incident_guards": {
+      "ce_consecutive_failures": 3,
+      "ce_health_check": "synthetic-score-before-each-use-v1",
+      "ce_restarts_per_use": 1,
+      "provider_consecutive_failures": 3,
+      "streak_scope": "per-invocation-across-uses-not-slots"
+    },
+    "price_snapshot_id": "pricing.2026-11-05.v1",
+    "program_cap_usd": "46",
+    "program_ledger_key": "gap-program-v1",
+    "repairs": 0,
+    "request_deadline_seconds": 30,
+    "retries": 0,
+    "stages": [
+      {
+        "arm": null,
+        "cache_policy": "none",
+        "caps": {
+          "calls": 300,
+          "counts": 300,
+          "input_tokens": 2457600,
+          "output_tokens": 0,
+          "seconds": 18000,
+          "usd": "0.04915200"
+        },
+        "cohort": null,
+        "max_input_tokens": 8192,
+        "max_output_tokens": 0,
+        "model": "text-embedding-3-small",
+        "name": "structural-ingest",
+        "planned_calls": 300,
+        "planned_counts": 300,
+        "role": "embedding"
+      },
+      {
+        "arm": null,
+        "cache_policy": "none",
+        "caps": {
+          "calls": 1940,
+          "counts": 1940,
+          "input_tokens": 1986560,
+          "output_tokens": 0,
+          "seconds": 116400,
+          "usd": "0.03973120"
+        },
+        "cohort": "retrieval",
+        "max_input_tokens": 1024,
+        "max_output_tokens": 0,
+        "model": "text-embedding-3-small",
+        "name": "shared-query-embedding",
+        "planned_calls": 1940,
+        "planned_counts": 1940,
+        "role": "embedding"
+      },
+      {
+        "arm": null,
+        "cache_policy": "none",
+        "caps": {
+          "calls": 0,
+          "counts": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "seconds": 3600,
+          "usd": "0"
+        },
+        "cohort": "retrieval",
+        "max_input_tokens": 0,
+        "max_output_tokens": 0,
+        "model": null,
+        "name": "lexical-retrieval",
+        "planned_calls": 0,
+        "planned_counts": 0,
+        "role": "local"
+      }
+    ],
+    "unresolved_liability_policy": "hold-worst-case-block-decisions-and-resume-no-reissue"
+  },
+  "judge": null,
+  "name": "g1-test-retrieval-v1",
+  "protocol_version": "g1.sealed-v1",
+  "provenance": {
+    "database": "qa_env: policyops-qa, pinned pgvector 0.8.7 / PostgreSQL 17.11",
+    "development_selection_receipts": [
+      "bfad7dcd30d1985bac23d760936df7fef90bf56a63201c0e706c0790a6ad1067",
+      "ca2c4b106143699520413029bb2c46d3169ee818179c903e8bc568fccabdf6cb"
+    ],
+    "dirty_sha256": null,
+    "locks": [
+      {
+        "path": "uv.lock",
+        "sha256": "ac32a8a452e9e601a994f239e8f306766d45f79e9dedac19049b2cb3e382b4db"
+      },
+      {
+        "path": "evals/uv.lock",
+        "sha256": "d1ffbcf480536a0ee6c0dcf65c176cc2af300050a8d0993a579836a8b89075bb"
+      }
+    ],
+    "machine": "Windows-11-10.0.26200-SP0; AMD64; Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "runtime": "Python 3.12; frozen dev arms; Haiku input8192; CE probe/restart1; incident N3; no paid retries",
+    "source_revision": null
+  },
+  "purpose": "sealed_test",
+  "registration_sha256": null,
+  "schedule": {
+    "assignments": [
+      {
+        "arm": "rrf-bm25-history",
+        "cohort": "retrieval"
+      },
+      {
+        "arm": "dense-history",
+        "cohort": "retrieval"
+      }
+    ],
+    "balanced_order_seed": 20261115,
+    "cohorts": [
+      {
+        "dialogue_count": 300,
+        "included": true,
+        "manifest": {
+          "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+          "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+        },
+        "manifest_cohort": "retrieval",
+        "name": "retrieval",
+        "optional": false,
+        "question_count": 1940,
+        "split": "validation"
+      }
+    ],
+    "order_algorithm": "sha256-rotation-v1",
+    "repetitions": 1,
+    "slot_algorithm": "uuid5-study-cohort-question-arm-repetition-v1"
+  },
+  "schema_version": "policyops.qa-study/v1",
+  "study_id": "8359351a-b403-4298-920c-0c9152e06251"
+}

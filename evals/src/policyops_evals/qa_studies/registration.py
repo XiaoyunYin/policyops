@@ -159,6 +159,12 @@ def run_records(study: QAStudy, scope_id: UUID, source: dict[str, Any]) -> list[
 
 
 def validate_registration(study: QAStudy, source: dict[str, Any]) -> None:
+    from policyops_evals.qa_studies.selection import verify
+
+    verify(study)
+    if (study.purpose == "sealed_test" and study.protocol_version == "g1.sealed-v1"
+            and source["dirty_sha256"] != sha256_bytes(canonical_bytes([]))):
+        raise ValueError("G1 requires gated commit before registration")
     if study.example or study.registration_sha256 in {None, PLACEHOLDER}:
         raise ValueError("QA example/placeholder cannot be registered")
     study.validate_data()
@@ -304,6 +310,9 @@ def comparison_status(study: QAStudy, result: ComparisonResult, repository: Eval
 
 
 def command(study: QAStudy, *, register_requested: bool) -> dict[str, Any]:
+    from policyops_evals.qa_studies.selection import verify
+
+    verify(study)
     study.validate_data()
     source = source_provenance()
     result = preflight(study) | {"source": source, "registration_payload_sha256": registration_digest(study, source),

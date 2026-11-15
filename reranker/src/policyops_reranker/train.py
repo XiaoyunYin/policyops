@@ -1,7 +1,7 @@
-"""Preregistered G8 CPU recipe. No paid calls, downloads or pickle checkpoints.
+"""Preregistered G8 CPU recipes. No paid calls, downloads or pickle checkpoints.
 
 Unstable means nonfinite loss/gradient or final internal nDCG@10 more than 0.02
-below the initial checkpoint. Only that condition permits one fresh 1e-5 attempt.
+below the initial checkpoint. Recipe v1 retries once at 1e-5; v2 makes one attempt.
 Every attempt survives in attempts.json, including exceptions and interrupted runs.
 """
 from __future__ import annotations
@@ -28,6 +28,12 @@ RECIPE = {"dtype": "float32", "device": "cpu", "batch": 8, "accumulation": 4,
           "optimizer": "AdamW", "weight_decay": 0.01, "learning_rate": 2e-5, "retry_learning_rate": 1e-5,
           "epochs": 1, "seed": SEED, "max_optimizer_steps": 1500, "checkpoint_every": 100,
           "truncation_policy": POLICY, "unstable": "nonfinite loss/gradient or final ndcg10 < initial - 0.02"}
+RECIPE_V2 = {"dtype": "float32", "device": "cpu", "batch": 8, "accumulation": 4,
+             "optimizer": "AdamW", "weight_decay": 0.01, "peak_learning_rate": 1e-5,
+             "schedule": "linear warmup for first 10% of optimizer steps, then linear decay to zero",
+             "epochs": 2, "seed": SEED, "max_optimizer_steps": 1500, "checkpoint_every": 75,
+             "truncation_policy": POLICY, "unstable": "nonfinite loss/gradient or final ndcg10 < initial - 0.02"}
+RECIPES: dict[str, dict[str, Any]] = {"v1": RECIPE, "v2": RECIPE_V2}
 
 
 class Unstable(ValueError):
@@ -80,22 +86,65 @@ def ndcg(model: Any, tokenizer: Any, rows: list[dict[str, Any]]) -> float:
     return total / len(rows)
 
 
-def fit(model: Any, tokenizer: Any, train: list[dict[str, Any]], validation: list[dict[str, Any]], *,
-        learning_rate: float, record: dict[str, Any]) -> dict[str, torch.Tensor]:
-    """One shuffled epoch; a partial final accumulation is normalized by its actual examples."""
-    torch.manual_seed(SEED)
+def schedule_multiplier(step: int, total_steps: int) -> float:
+    """Linear 10% warmup followed by linear decay, evaluated at optimizer-step index."""
+    if total_steps < 1 or step < 0 or step > total_steps:
+        raise ValueError("schedule_bounds")
+    if step == total_steps:
+        return 0.0
+    warmup_steps = max(1, math.ceil(total_steps * 0.1))
+    if step < warmup_steps:
+        return step / warmup_steps
+    return max(0.0, (total_steps - step) / (total_steps - warmup_steps))
+
+
+def examples_for_recipe(train: list[dict[str, Any]], recipe_name: str) -> list[tuple[str, str, str]]:
+    """Expand and deterministically order training pairs for each recipe epoch."""
+    if recipe_name not in RECIPES:
+        raise ValueError("unknown_recipe")
     examples = [(r["query"], r["positive"]["text"], n["text"]) for r in train for n in r["negatives"]]
-    random.Random(SEED).shuffle(examples)  # noqa: S311 -- reproducible experimental order, not security
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
+    epochs = RECIPES[recipe_name]["epochs"]
+    ordered: list[tuple[str, str, str]] = []
+    for epoch in range(epochs):
+        order = examples.copy()
+        random.Random(SEED + epoch).shuffle(order)  # noqa: S311 -- reproducible experimental order, not security
+        ordered.extend(order)
+    return ordered
+
+
+def optimizer_steps(example_count: int) -> int:
+    """Number of 32-pair optimizer steps, including a partial final step."""
+    return math.ceil(example_count / 32)
+
+
+def fit(model: Any, tokenizer: Any, train: list[dict[str, Any]], validation: list[dict[str, Any]], *,
+        recipe_name: str = "v1", learning_rate: float | None = None,
+        record: dict[str, Any]) -> dict[str, torch.Tensor]:
+    """Train a selected recipe; a partial final accumulation uses its actual example count."""
+    if recipe_name not in RECIPES:
+        raise ValueError("unknown_recipe")
+    torch.manual_seed(SEED)
+    examples = examples_for_recipe(train, recipe_name)
+    recipe = RECIPES[recipe_name]
+    configured_rate = recipe.get("learning_rate", recipe.get("peak_learning_rate", 1e-5))
+    peak_rate = learning_rate if learning_rate is not None else float(configured_rate)
+    steps = min(optimizer_steps(len(examples)), 1500)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_rate, weight_decay=0.01)
+    scheduler: torch.optim.lr_scheduler.LambdaLR | None = None
+    if recipe_name == "v2":
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda step: schedule_multiplier(step, steps))
     baseline = ndcg(model, tokenizer, validation)
     record.update(initial_ndcg10=baseline, steps=0, checkpoints=[{"step": 0, "ndcg10": baseline}], selected_step=0)
     best, selected = baseline, {k: v.detach().clone() for k, v in model.state_dict().items()}
     # 32 examples = batch8 x accumulation4. Forward halves keep physical batches at <=8 pairs.
+    checkpoint_every = int(recipe["checkpoint_every"])
     for offset in range(0, min(len(examples), 1500 * 32), 32):
         group = examples[offset:offset + 32]
         optimizer.zero_grad(set_to_none=True)
         model.train()
         loss_sum = 0.0
+        step_learning_rate = optimizer.param_groups[0]["lr"]
         for start in range(0, len(group), 8):
             micro = group[start:start + 8]
             positive, _ = batch(tokenizer, [(q, p) for q, p, _ in micro])
@@ -109,10 +158,13 @@ def fit(model: Any, tokenizer: Any, train: list[dict[str, Any]], validation: lis
         if any(p.grad is not None and not torch.isfinite(p.grad).all().item() for p in model.parameters()):
             raise Unstable("nonfinite_gradient")
         optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
         record["steps"] += 1
         record.setdefault("loss", []).append(loss_sum)
+        record.setdefault("step_learning_rate", []).append(step_learning_rate)
         final = offset + 32 >= min(len(examples), 1500 * 32)
-        if record["steps"] % 100 == 0 or final:
+        if record["steps"] % checkpoint_every == 0 or final:
             value = ndcg(model, tokenizer, validation)
             record["checkpoints"].append({"step": record["steps"], "ndcg10": value})
             if value > best:  # deterministic ties retain the earliest checkpoint, including baseline
@@ -129,7 +181,11 @@ def code_hash() -> str:
     return hashlib.sha256(canonical({p.name: sha256(p) for p in sorted(directory.glob("*.py"))})).hexdigest()
 
 
-def train(base: Path, triples: Path, mining_manifest: Path, output: Path, *, threads: int) -> str:
+def train(base: Path, triples: Path, mining_manifest: Path, output: Path, *, threads: int,
+          recipe_name: str = "v2") -> str:
+    if recipe_name not in RECIPES:
+        raise ValueError("unknown_recipe")
+    recipe = RECIPES[recipe_name]
     private_output(output)
     rows = read_rows(triples, mining_manifest)
     output.mkdir(parents=True, exist_ok=False)
@@ -137,11 +193,13 @@ def train(base: Path, triples: Path, mining_manifest: Path, output: Path, *, thr
     validation = [r for r in rows if r["partition"] == "internal_validation"]
     attempts: list[dict[str, Any]] = []
     started = time.monotonic()
-    for learning_rate in (2e-5, 1e-5):
-        record: dict[str, Any] = {"attempt": len(attempts) + 1, "learning_rate": learning_rate, "status": "running"}
+    learning_rates = (2e-5, 1e-5) if recipe_name == "v1" else (1e-5,)
+    for learning_rate in learning_rates:
+        record: dict[str, Any] = {"attempt": len(attempts) + 1, "recipe_name": recipe_name,
+                                  "recipe": recipe, "learning_rate": learning_rate, "status": "running"}
         attempts.append(record)
         receipt = output / "attempts.json"
-        receipt.write_bytes(canonical({"recipe": RECIPE, "attempts": attempts}))
+        receipt.write_bytes(canonical({"recipe_name": recipe_name, "recipe": recipe, "attempts": attempts}))
         attempt_started = time.monotonic()
         try:
             model, tokenizer, base_identity = load(base, threads=threads)
@@ -154,11 +212,12 @@ def train(base: Path, triples: Path, mining_manifest: Path, output: Path, *, thr
                             _, truncation = pair(tokenizer, row["query"], passage["text"])
                             handle.write(canonical({"query_id": row["query_id"], "passage_id": passage["id"],
                                                     **asdict(truncation)}) + b"\n")
-            selected = fit(model, tokenizer, train_rows, validation, learning_rate=learning_rate, record=record)
+            selected = fit(model, tokenizer, train_rows, validation, recipe_name=recipe_name,
+                           learning_rate=learning_rate, record=record)
             record["status"] = "complete"
         except Unstable as error:
             record.update(status="unstable", reason=str(error))
-            if len(attempts) == 2:
+            if recipe_name == "v2" or len(attempts) == 2:
                 raise
             continue
         except BaseException as error:
@@ -166,7 +225,7 @@ def train(base: Path, triples: Path, mining_manifest: Path, output: Path, *, thr
             raise
         finally:
             record["seconds"] = time.monotonic() - attempt_started
-            receipt.write_bytes(canonical({"recipe": RECIPE, "attempts": attempts}))
+            receipt.write_bytes(canonical({"recipe_name": recipe_name, "recipe": recipe, "attempts": attempts}))
         artifact = output / "artifact"
         artifact.mkdir()
         model.load_state_dict(selected)
@@ -175,7 +234,8 @@ def train(base: Path, triples: Path, mining_manifest: Path, output: Path, *, thr
         if (base / "README.md").is_file():
             (artifact / "README.md").write_bytes((base / "README.md").read_bytes())
         (artifact / "truncation.jsonl").write_bytes((output / "truncation.jsonl").read_bytes())
-        manifest = {"schema": "policyops.g8-training/v1", "recipe": RECIPE, "attempts": attempts,
+        manifest = {"schema": "policyops.g8-training/v1", "recipe_name": recipe_name, "recipe": recipe,
+                    "attempts": attempts,
                     "base_artifact_sha256": base_identity, "triples_sha256": sha256(triples),
                     "mining_manifest_sha256": sha256(mining_manifest), "code_sha256": code_hash(),
                     "lock_sha256": sha256(Path(__file__).resolve().parents[2] / "uv.lock"),
@@ -196,9 +256,10 @@ def main() -> None:
     parser.add_argument("--mining-manifest", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--recipe", choices=tuple(RECIPES), default="v2")
     args = parser.parse_args()
     print(json.dumps({"artifact_sha256": train(args.base, args.triples, args.mining_manifest,
-                                             args.out, threads=args.threads)}))
+                                             args.out, threads=args.threads, recipe_name=args.recipe)}))
 
 
 if __name__ == "__main__":

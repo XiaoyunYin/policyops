@@ -33,6 +33,7 @@ from policyops.budget.ledger import EvalBinding
 from policyops.budget.preflight import ChatBound, Manifest, preflight
 from policyops.budget.prices import SNAPSHOT_2026_11_05
 from policyops.budget.pricing import worst_case
+from policyops.budget.registry import REGISTRY, Registry
 from policyops.persistence.budget import EvalLedgerStore, build_eval_ledger
 from policyops.persistence.evaluation import EvaluationRepository, EvaluationRun, StudyLock, environment_repository
 from policyops.providers.accounting import AccountingUnconfirmed
@@ -48,7 +49,7 @@ from policyops_evals.qa_studies.judges import (
     ARMS,
     ELIGIBILITY_MAX_INPUT,
     MAX_INPUT,
-    MAX_OUTPUT,
+    SAMPLING_ARMS,
     JudgeArm,
     admitted_tokens,
     arm_named,
@@ -64,6 +65,17 @@ ROOT = Path(__file__).resolve().parents[4]
 PUBLIC_MANIFEST = ROOT / "evals/manifests/llm-aggrefact-g6-v1/manifest.json"
 REVISION = "981dfd0bd8e58e7238a9ab92b2e6ea44bce918e4"
 PROTOCOL = "policyops.g6/v1"
+SELECTION_RULE_VERSION = "g6-selection/v2"
+DEV_REVISION = {
+    "version": "g6-dev/v2",
+    "timing": "After observing the three low-effort dev results; before any test data or test execution.",
+    "arms": "Added two high-effort Luna dev selection candidates with identical v2 prompts/schema; test untouched.",
+    "selection": "Prefer false-pass point <= 0.10, then pooled kappa, macro balanced accuracy, cost, arm name.",
+}
+# The application registry stays unchanged. Only this evaluation composition
+# permits the coordinator-authorized high-effort Luna candidates.
+G6_REGISTRY = Registry(REGISTRY.snapshot, {**REGISTRY.models, "gpt-6-luna": replace(
+    REGISTRY.chat("gpt-6-luna", effort="low", cache_mode="none"), efforts=frozenset({"none", "low", "high"}))})
 SEED = "g6/v1|20261114|"
 CONSTITUENTS = ("RAGTruth", "ExpertQA", "ClaimVerify", "Wice")
 SPLIT_HASHES = {
@@ -71,7 +83,8 @@ SPLIT_HASHES = {
     "test": "88c4365757414a5f4f853dc54dd0d28e90cdb967051d8b7d4e18fa80dc991074",
 }
 SPLIT_ROWS = {"dev": 30420, "test": 29320}
-STAGE_USD = {"dev": Decimal("3"), "test": Decimal("2")}
+# Coordinator 2026-11-14: test raised to $3 (total $6) so a high-effort dev selection fits its conservative reservation.
+STAGE_USD = {"dev": Decimal("3"), "test": Decimal("3")}
 Split = Literal["dev", "test"]
 ITEM_FIELDS = {"id", "constituent", "split", "row_index", "claim_sha256", "document_sha256", "label",
                "local_input_tokens"}
@@ -170,13 +183,13 @@ def configuration(arm: JudgeArm, split: str, usd: Decimal, calls: int, seconds: 
     if (not usd.is_finite() or not 0 < usd <= STAGE_USD[split] or type(calls) is not int or calls < 1
             or type(seconds) is not int or not 1 <= seconds <= 86400):
         raise ValueError("G6 cap outside stage ceiling")
-    caps = Caps(request_max_input=MAX_INPUT, request_max_output=MAX_OUTPUT,
+    caps = Caps(request_max_input=MAX_INPUT, request_max_output=arm.max_output,
         scenario_usd=usd, scenario_calls=1, invocation_usd=usd, invocation_calls=calls,
         study_usd=STAGE_USD[split], study_calls=calls, active_seconds=seconds)
-    actors = {name: replace(value, max_input=MAX_INPUT, max_output=MAX_OUTPUT)
+    actors = {name: replace(value, max_input=MAX_INPUT, max_output=arm.max_output)
               if isinstance(value, ChatActor) else value for name, value in DEFAULT_ACTORS.items()}
-    return Configuration(actors={**actors, "judge": ChatActor("judge", arm.model, arm.effort,
-        max_input=MAX_INPUT, max_output=MAX_OUTPUT)}, caps=caps)
+    return Configuration(registry=G6_REGISTRY, actors={**actors, "judge": ChatActor("judge", arm.model, arm.effort,
+        max_input=MAX_INPUT, max_output=arm.max_output)}, caps=caps)
 
 
 @lru_cache(maxsize=3)
@@ -200,6 +213,7 @@ def _count_template(arm: JudgeArm) -> tuple[bytes, bytes]:
 def count_projection(arm: JudgeArm, row: Row) -> bytes:
     # The published sample is frozen to v1 prompt/schema projections. Runtime
     # v2 prompts and provider caps are bound separately in planning().
+    arm = arm_named(arm.sampling_name)
     req = request(arm, row.document, row.claim, frozen_sampling=True)
     body, marker = _count_template(arm)
     return body.replace(marker, provider_bytes(req.messages[0].parts[0].model_dump()["text"]), 1)
@@ -208,7 +222,7 @@ def count_projection(arm: JudgeArm, row: Row) -> bytes:
 def eligibility(row: Row, tokenizer: Tokenizer) -> tuple[dict[str, int], str | None]:
     counts: dict[str, int] = {}
     try:
-        for arm in ARMS:
+        for arm in SAMPLING_ARMS:
             counts[arm.name] = local_count(tokenizer, count_projection(arm, row))
     except (InputRefused, ValueError):
         return {}, "local_bounds"
@@ -301,6 +315,7 @@ def load_sample(path: Path = PUBLIC_MANIFEST) -> dict[str, Any]:
 def selection(path: Path, sample: dict[str, Any]) -> dict[str, Any]:
     receipt = read_json(path)
     if (receipt.get("schema_version") != "policyops.g6-selection/v1" or receipt.get("protocol") != PROTOCOL
+            or receipt.get("selection_rule_version") != SELECTION_RULE_VERSION
             or receipt.get("sample_sha256") != sample["manifest_sha256"]
             or receipt.get("binding") != arm_named(receipt["binding"]["arm"]).binding()
             or canonical_bytes(receipt) != path.read_bytes()):
@@ -334,22 +349,23 @@ def planning(sample: dict[str, Any], split: str, *, max_usd: Decimal, max_calls:
             prompt_revision=arm.prompt_sha256, price_revision=SNAPSHOT_2026_11_05.revision,
             tasks=tuple(item["id"] for item in items), trials_per_task=1, study_ceiling_usd=STAGE_USD[split],
             actors=(ChatBound(actor="judge", model=arm.model, effort=arm.effort, max_input=MAX_INPUT,
-                max_output=MAX_OUTPUT, logical_calls=1, max_repairs=0, retries_per_request=0),))
-        plan = preflight(budget_manifest, config.caps)
+                max_output=arm.max_output, logical_calls=1, max_repairs=0, retries_per_request=0),))
+        plan = preflight(budget_manifest, config.caps, registry=config.registry)
         plans.append(plan.model_dump(mode="json"))
         local_estimate += sum((worst_case(SNAPSHOT_2026_11_05.price(arm.model),
-            max_input=admitted_tokens(item["local_input_tokens"][arm.name]), max_output=MAX_OUTPUT)
+            max_input=admitted_tokens(item["local_input_tokens"][arm.sampling_name]), max_output=arm.max_output)
             for item in items), Decimal(0))
     worst = sum((Decimal(p["new_study_usd"]) for p in plans), Decimal(0))
     if any(p["verdict"] != "within_caps_prior_unverified" for p in plans) or worst > max_usd:
         raise ValueError("G6 aggregate preflight exceeds caps")
-    return {"protocol": PROTOCOL, "split": split, "sample_sha256": sample["manifest_sha256"],
+    return {"protocol": PROTOCOL, "dev_revision": DEV_REVISION, "split": split,
+        "sample_sha256": sample["manifest_sha256"],
         "selection_receipt_sha256": None if receipt is None else digest(receipt),
         "schedule_sha256": digest([(a.name, r["id"]) for a, r in schedule]),
         "bindings": [arm.binding() for arm in ARMS if any(a == arm for a, _ in schedule)],
         "price_revision": SNAPSHOT_2026_11_05.revision,
         "caps": {"usd": str(max_usd), "calls": max_calls, "counts": max_counts, "seconds": max_seconds,
-                 "stage_usd": str(STAGE_USD[split]), "total_usd": "5", "retries": 0, "repairs": 0},
+                 "stage_usd": str(STAGE_USD[split]), "total_usd": "6", "retries": 0, "repairs": 0},
         "local_count_output_ceiling_usd": str(local_estimate), "reservation_ceiling_usd": str(worst),
         "local_estimate_basis": "frozen v1 sampling projections; not a runtime/provider token ceiling",
         "actor_preflights": plans, "within_caps": True, "authorizes_paid_execution": False}
@@ -382,7 +398,7 @@ def test_configuration(sample: dict[str, Any], receipt: dict[str, Any]) -> dict[
         "sample_sha256": sample["manifest_sha256"], "selection_receipt_sha256": digest(receipt),
         "binding": receipt["binding"], "analysis": {"seed": 20261114, "replicates": 10000,
             "clusters": "document_sha256", "gate": "complete and kappa >= .6 and lower > .4 and false_pass <= .1"},
-        "price_revision": SNAPSHOT_2026_11_05.revision, "stage_cap_usd": "2", "g6_cap_usd": "5",
+        "price_revision": SNAPSHOT_2026_11_05.revision, "stage_cap_usd": str(STAGE_USD["test"]), "g6_cap_usd": "6",
         "schedule_sha256": digest([(a.name, i["id"]) for a, i in scheduled(sample, "test", receipt)])}
 
 
@@ -673,7 +689,13 @@ def report_run(sample: dict[str, Any], run: Path, *, replicates: int = 10000,
     receipt = header["selection"]
     if receipt is not None and plan["selection_receipt_sha256"] != digest(receipt):
         raise ValueError("G6 report selection mismatch")
-    schedule = scheduled(sample, plan["split"], receipt)
+    # Historical three-arm runs retain their frozen schedule. They remain
+    # reportable but cannot satisfy selection's five-candidate requirement.
+    bound_names = {b["arm"] for b in plan["bindings"]}
+    schedule = [(a, i) for a, i in scheduled(sample, plan["split"], receipt) if a.name in bound_names]
+    if (len(bound_names) != len(plan["bindings"]) or {a.name for a, _ in schedule} != bound_names
+            or digest([(a.name, i["id"]) for a, i in schedule]) != plan["schedule_sha256"]):
+        raise ValueError("G6 report frozen schedule mismatch")
     expected = {(a.name, i["id"]) for a, i in schedule}
     recorded: dict[tuple[str, str], dict[str, Any]] = {}
     path = run / "predictions.jsonl"
@@ -690,7 +712,7 @@ def report_run(sample: dict[str, Any], run: Path, *, replicates: int = 10000,
                 recorded[key] = row
     settlement = read_json(run / "settlement.json") if (run / "settlement.json").exists() else None
     scope = None if settlement is None else settlement["scope"]
-    accounting = bool(scope is not None and Decimal(scope["held_usd"]) == 0
+    accounting = bool(scope is not None and Decimal(scope["held_usd"]) == 0 and scope["calls_held"] == 0
                       and not scope["overrun"] and not scope["contract_block"]
                       and all(r["accounting_settled"] for r in recorded.values()))
     arms: dict[str, Any] = {}
@@ -706,11 +728,17 @@ def report_run(sample: dict[str, Any], run: Path, *, replicates: int = 10000,
         balanced = [v["balanced_accuracy"] for v in constituents.values()]
         macro = None if any(v is None for v in balanced) else sum(Decimal(str(v)) for v in balanced) / 4
         costs = [r.get("cost_usd") for (name, _), r in recorded.items() if name == arm.name]
-        complete = (len(predictions) > 0 and all(p is not None for p in predictions) and accounting
+        executed = len(costs)
+        valid = sum(p is not None for p in predictions)
+        complete = (bool(items) and accounting
                     and len(costs) == len(items) and all(c is not None for c in costs)
                     and settlement is not None and settlement["failure"] is None)
         arms[arm.name] = {"binding": next(b for b in plan["bindings"] if b["arm"] == arm.name),
-            "complete": complete, "pooled": pooled,
+            "complete": complete, "pooled": pooled, "scheduled": len(items), "executed": executed,
+            "valid": valid, "coverage": valid / len(items), "errors": len(items) - valid,
+            "execution_coverage": executed / len(items),
+            "error_categories": dict(Counter(r.get("invalidity", {}).get("category") or "unspecified"
+                for (name, _), r in recorded.items() if name == arm.name and r["predicted"] is None)),
             "count_refused": sum(r.get("invalidity", {}).get("category") == "count_refused"
                                  for (name, _), r in recorded.items() if name == arm.name),
             "constituents": constituents, "macro_balanced_accuracy": None if macro is None else str(macro),
@@ -727,7 +755,8 @@ def report_run(sample: dict[str, Any], run: Path, *, replicates: int = 10000,
                 complete=arm_report["complete"] and header["registration"] is not None,
                 kappa=Decimal(str(pooled["kappa"])), kappa_lower=Decimal(str(pooled["kappa_low"])),
                 false_pass=Decimal(str(false_pass)).quantize(Decimal("0.0000000001")))
-    return {"schema_version": "policyops.g6-report/v1", "protocol": PROTOCOL, "split": plan["split"],
+    return {"schema_version": "policyops.g6-report/v1", "protocol": PROTOCOL,
+        "dev_revision": DEV_REVISION, "split": plan["split"],
         "sample_sha256": sample["manifest_sha256"], "run_header_sha256": sha256_bytes((run / "run.json").read_bytes()),
         "predictions_sha256": None if not path.exists() else sha256_bytes(path.read_bytes()),
         "settlement_sha256": (sha256_bytes((run / "settlement.json").read_bytes()) if settlement is not None else None),
@@ -745,16 +774,21 @@ def select_arm(report: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]
             or set(report["arms"]) != {a.name for a in ARMS} or report["replicates"] != 10000
             or any(report["arms"][a.name]["binding"] != a.binding() for a in ARMS)
             or any(not v["complete"] or v["macro_balanced_accuracy"] is None for v in report["arms"].values())):
-        raise ValueError("G6 selection requires all three complete dev arms")
-    def rank(name: str) -> tuple[Decimal, Decimal, Decimal, str]:
+        raise ValueError("G6 selection requires all five complete dev arms")
+    def rank(name: str) -> tuple[bool, Decimal, Decimal, Decimal, str]:
         arm = report["arms"][name]
         rate = arm["pooled"]["false_pass_rate"]
         rate = rate["point"]
-        if rate is None:
-            raise ValueError("G6 undefined false-pass rate")
-        return (-Decimal(arm["macro_balanced_accuracy"]), Decimal(str(rate)), Decimal(arm["cost_usd"]), name)
+        kappa = arm["pooled"]["kappa"]
+        if rate is None or kappa is None:
+            raise ValueError("G6 undefined selection metric")
+        return (Decimal(str(rate)) > Decimal("0.10"), -Decimal(str(kappa)),
+                -Decimal(arm["macro_balanced_accuracy"]), Decimal(arm["cost_usd"]), name)
     chosen = min(report["arms"], key=rank)
     return {"schema_version": "policyops.g6-selection/v1", "protocol": PROTOCOL,
         "sample_sha256": sample["manifest_sha256"], "binding": arm_named(chosen).binding(),
         "dev_report_sha256": digest(report), "dev_metrics": report["arms"],
-        "selection_rule": "macro constituent balanced accuracy, false-pass rate, cost; arm name resolves exact ties"}
+        "dev_revision": DEV_REVISION, "selection_rule_version": SELECTION_RULE_VERSION,
+        "dev_false_pass_criterion_met": rank(chosen)[0] is False,
+        "selection_rule": "false-pass point <= 0.10 first; pooled kappa descending, macro constituent balanced "
+            "accuracy descending, cost ascending, arm name ascending; if none eligible, use the same tie breaks"}

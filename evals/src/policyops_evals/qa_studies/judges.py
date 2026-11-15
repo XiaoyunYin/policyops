@@ -24,13 +24,17 @@ ELIGIBILITY_MAX_INPUT = 6000
 # reserved/priced; it must never change the frozen sampling rule below.
 MAX_INPUT = 10_000
 MAX_OUTPUT = 512
+# 1,664 total output tokens leaves 1,152 beyond the low-effort allowance for
+# reasoning. At the unchanged 10,000 input cap this reserves $2.9728 for all
+# 2,000 dev calls under $3. Test must independently fit its unchanged $2 cap.
+HIGH_MAX_OUTPUT = 1664
 MAX_TEXT_CHARS = 100_000
 MAX_VERDICT_BYTES = 8192
 COUNT_HEADROOM_PERCENT = 10
 COUNT_HEADROOM_MIN = 256
 
-# Generic prompts contain no benchmark examples. The low effort is fixed across
-# Luna arms: a bounded binary entailment task, with room for a brief explanation.
+# Generic prompts contain no benchmark examples. High-effort dev candidates
+# reuse the identical v2 prompts and verdict schema.
 UPSTREAM_ADAPTATION_V1 = """TASK
 - You will be given a document and a statement collected during an evaluation.
 - Your job is to evaluate whether the document supports the statement.
@@ -88,6 +92,11 @@ class JudgeArm:
     effort: str
     prompt: str
     prompt_version: str
+    max_output: int = MAX_OUTPUT
+
+    @property
+    def sampling_name(self) -> str:
+        return self.name.removesuffix("-high")
 
     @property
     def prompt_sha256(self) -> str:
@@ -97,13 +106,20 @@ class JudgeArm:
         return {"arm": self.name, "model": self.model, "effort": self.effort,
                 "prompt_version": self.prompt_version, "prompt_sha256": self.prompt_sha256,
                 "schema_version": SCHEMA_VERSION, "schema_sha256": SCHEMA_SHA256, "max_input_tokens": MAX_INPUT,
-                "max_output_tokens": MAX_OUTPUT, "cache_policy": "none"}
+                "max_output_tokens": self.max_output, "cache_policy": "none"}
 
 
-ARMS = (
+SAMPLING_ARMS = (
     JudgeArm("luna-upstream-adaptation", "gpt-6-luna", "low", UPSTREAM_ADAPTATION_V2, "tau2-adaptation/v2"),
     JudgeArm("luna-entailment", "gpt-6-luna", "low", ENTAILMENT_RUBRIC_V2, "entailment/v2"),
     JudgeArm("haiku-entailment", "claude-haiku-5-5", "low", ENTAILMENT_RUBRIC_V2, "entailment/v2"),
+)
+ARMS = (
+    *SAMPLING_ARMS,
+    JudgeArm("luna-entailment-high", "gpt-6-luna", "high", ENTAILMENT_RUBRIC_V2, "entailment/v2",
+             HIGH_MAX_OUTPUT),
+    JudgeArm("luna-upstream-adaptation-high", "gpt-6-luna", "high", UPSTREAM_ADAPTATION_V2,
+             "tau2-adaptation/v2", HIGH_MAX_OUTPUT),
 )
 
 
@@ -123,11 +139,12 @@ def request(arm: JudgeArm, document: str, statement: str, *, frozen_sampling: bo
     payload = json.dumps({"document": document, "statement": statement}, ensure_ascii=False, sort_keys=True)
     prompt = arm.prompt
     if frozen_sampling:
-        prompt = UPSTREAM_ADAPTATION_V1 if arm.name == ARMS[0].name else ENTAILMENT_RUBRIC_V1
+        prompt = UPSTREAM_ADAPTATION_V1 if arm.sampling_name == ARMS[0].name else ENTAILMENT_RUBRIC_V1
     return ModelRequest(instructions=prompt,
         messages=(Message(role="user", parts=(TextPart(text=payload),)),), tool_choice="none",
         output=OutputSpec(name="claim_support_v1" if frozen_sampling else SCHEMA_VERSION,
-            answer_schema_json=SAMPLING_SCHEMA_JSON if frozen_sampling else SCHEMA_JSON), max_output_tokens=MAX_OUTPUT)
+            answer_schema_json=SAMPLING_SCHEMA_JSON if frozen_sampling else SCHEMA_JSON),
+        max_output_tokens=MAX_OUTPUT if frozen_sampling else arm.max_output)
 
 
 def local_count(tokenizer: Tokenizer, count_body: bytes) -> int:

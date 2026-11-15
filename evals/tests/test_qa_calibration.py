@@ -25,7 +25,7 @@ from policyops_contracts.model import ModelResult, ReportedUsage
 from policyops_evals.canonical import canonical_bytes, sha256_bytes, with_self_digest
 from policyops_evals.cli import main
 from policyops_evals.qa_studies import calibration as g6
-from policyops_evals.qa_studies.judges import ARMS
+from policyops_evals.qa_studies.judges import ARMS, SAMPLING_ARMS
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def sample() -> dict[str, Any]:
         for name in g6.CONSTITUENTS:
             for index in range(2):
                 row = g6.Row(split, index, name, f"Document {split} {name} {index}.", "A claim.", bool(index))
-                items.append(row.public({a.name: 1000 for a in ARMS}))
+                items.append(row.public({a.name: 1000 for a in SAMPLING_ARMS}))
     return with_self_digest({"schema_version": "policyops.g6-sample/v1", "protocol": g6.PROTOCOL,
         "source_revision": g6.REVISION, "source_sha256": g6.SPLIT_HASHES, "items": items})
 
@@ -62,7 +62,7 @@ def fake_run(path: Path, sample: dict[str, Any], *, split: str = "dev",
               "cost_usd": "0.0001"} for a, i in schedule]
     (path / "predictions.jsonl").write_bytes(b"".join((json.dumps(r) + "\n").encode() for r in lines))
     (path / "settlement.json").write_bytes(canonical_bytes({"failure": None, "scope": {
-        "held_usd": "0", "overrun": False, "contract_block": False}}))
+        "held_usd": "0", "calls_held": 0, "overrun": False, "contract_block": False}}))
     return path
 
 
@@ -115,7 +115,7 @@ def test_overlap_folding_and_sampler_determinism(tmp_path: Path, monkeypatch: py
         g6.Row("test", 500, "RAGTruth", "Shared\n document.", "A unique test claim.", True),
         g6.Row("test", 501, "ExpertQA", "Unique document.", "Shared   claim.", False)])
     monkeypatch.setattr(g6, "rows", lambda _, split: iter(source[split]))
-    monkeypatch.setattr(g6, "eligibility", lambda *_: ({a.name: 1000 for a in ARMS}, None))
+    monkeypatch.setattr(g6, "eligibility", lambda *_: ({a.name: 1000 for a in SAMPLING_ARMS}, None))
     (tmp_path / "conversion-manifest.json").write_bytes(b"{}")
     tokenizer: Any = SimpleNamespace(identity_sha256="a" * 64)
     first = g6.build_sample(tmp_path, tokenizer)
@@ -143,13 +143,13 @@ def test_eligibility_common_envelope_and_local_safety(monkeypatch: pytest.Monkey
 
 
 def test_preflight_arithmetic_and_stage_partition(sample: dict[str, Any]) -> None:
-    plan = g6.planning(sample, "dev", max_usd=Decimal("3"), max_calls=24, max_counts=24, max_seconds=7200)
+    plan = g6.planning(sample, "dev", max_usd=Decimal("3"), max_calls=40, max_counts=40, max_seconds=7200)
     assert plan["caps"]["retries"] == plan["caps"]["repairs"] == 0
     assert plan["price_revision"] == "pricing.2026-11-05.v1"
     assert plan["authorizes_paid_execution"] is False
-    assert Decimal(plan["reservation_ceiling_usd"]) == Decimal("24") * Decimal("0.001256")
-    assert Decimal(plan["local_count_output_ceiling_usd"]) == Decimal(24) * Decimal("0.0003816")
-    assert sum(g6.STAGE_USD.values()) == Decimal(5)
+    assert Decimal(plan["reservation_ceiling_usd"]) == Decimal("0.059456")
+    assert Decimal(plan["local_count_output_ceiling_usd"]) == Decimal("0.02448")
+    assert sum(g6.STAGE_USD.values()) == Decimal(6)  # coordinator decision 2026-11-14: dev $3 + test $3
     assert g6.scope_key(sample, "dev") != g6.scope_key(sample, "test")
     changed = sample | {"manifest_sha256": "f" * 64}
     assert g6.scope_key(sample, "dev") == g6.scope_key(changed, "dev")
@@ -157,8 +157,8 @@ def test_preflight_arithmetic_and_stage_partition(sample: dict[str, Any]) -> Non
 
 
 @pytest.mark.parametrize("usd,calls,counts,seconds", [
-    ("3.01", 24, 24, 7200), ("NaN", 24, 24, 7200), ("0", 24, 24, 7200),
-    ("3", 23, 24, 7200), ("3", 24, 25, 7200), ("3", 24, 24, 0), (".001", 24, 24, 7200)])
+    ("3.01", 40, 40, 7200), ("NaN", 40, 40, 7200), ("0", 40, 40, 7200),
+    ("3", 39, 40, 7200), ("3", 40, 41, 7200), ("3", 40, 40, 0), (".001", 40, 40, 7200)])
 def test_caps_refuse(sample: dict[str, Any], usd: str, calls: int, counts: int, seconds: int) -> None:
     with pytest.raises(ValueError):
         g6.planning(sample, "dev", max_usd=Decimal(usd), max_calls=calls, max_counts=counts, max_seconds=seconds)
@@ -169,7 +169,7 @@ def test_paid_opt_in_precedes_database_or_credentials(sample: dict[str, Any],
     def forbidden() -> None:
         pytest.fail("database access before paid admission")
     monkeypatch.setattr(g6, "environment_repository", forbidden)
-    plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=24, max_counts=24, max_seconds=7200)
+    plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=40, max_counts=40, max_seconds=7200)
     with pytest.raises(ValueError, match="execute-paid"):
         g6.command_run(sample, plan, None, directory=tmp_path, output=tmp_path, execute_paid=False, config_path=None)
     with pytest.raises(ValueError, match="selection"):
@@ -179,23 +179,15 @@ def test_paid_opt_in_precedes_database_or_credentials(sample: dict[str, Any],
 def test_selection_tiebreaks_and_receipt_hash(sample: dict[str, Any], tmp_path: Path) -> None:
     run = fake_run(tmp_path / "dev", sample)
     report = g6.report_run(sample, run, calculate=stub_agreement)
-    names = [a.name for a in ARMS]
-    report["arms"][names[0]]["macro_balanced_accuracy"] = "0.90"
-    report["arms"][names[0]]["cost_usd"] = "2.9"
+    names = sorted(report["arms"])
     assert g6.select_arm(report, sample)["binding"]["arm"] == names[0]
-    report["arms"][names[0]]["macro_balanced_accuracy"] = "0.8"
-    report["arms"][names[1]]["pooled"]["false_pass_rate"]["point"] = 0.1
-    report["arms"][names[2]]["cost_usd"] = "0.1"
-    assert g6.select_arm(report, sample)["binding"]["arm"] == names[2]
-    report["arms"][names[1]]["pooled"]["false_pass_rate"]["point"] = 0.0
-    assert g6.select_arm(report, sample)["binding"]["arm"] == names[1]
     receipt = g6.select_arm(report, sample)
     path = tmp_path / "selection.json"
     path.write_bytes(canonical_bytes(receipt))
     assert g6.digest(receipt) == sha256_bytes(path.read_bytes())
     assert g6.selection(path, sample) == receipt
     changed = deepcopy(receipt)
-    changed["binding"]["effort"] = "high"
+    changed["binding"]["effort"] = "high" if receipt["binding"]["effort"] == "low" else "low"
     path.write_bytes(canonical_bytes(changed))
     with pytest.raises(ValueError):
         g6.selection(path, sample)
@@ -204,7 +196,7 @@ def test_selection_tiebreaks_and_receipt_hash(sample: dict[str, Any], tmp_path: 
         g6.select_arm(report, sample)
 
 
-@pytest.mark.parametrize("failure", ["missing", "invalid", "unsettled", "held", "stopped"])
+@pytest.mark.parametrize("failure", ["missing", "unsettled", "held", "held-call", "stopped"])
 def test_incomplete_run_fails_selection_and_judge_gate(sample: dict[str, Any], tmp_path: Path, failure: str) -> None:
     dev = fake_run(tmp_path / "dev", sample)
     receipt = g6.select_arm(g6.report_run(sample, dev, calculate=stub_agreement), sample)
@@ -213,10 +205,10 @@ def test_incomplete_run_fails_selection_and_judge_gate(sample: dict[str, Any], t
     settlement = json.loads((run / "settlement.json").read_bytes())
     if failure == "missing":
         predictions.pop()
-    elif failure == "invalid":
-        predictions[0]["predicted"] = None
     elif failure == "unsettled":
         predictions[0]["accounting_settled"] = False
+    elif failure == "held-call":
+        settlement["scope"]["calls_held"] = 1
     elif failure == "held":
         settlement["scope"]["held_usd"] = "0.001"
     else:
@@ -238,6 +230,94 @@ def test_error_is_none_in_document_cluster_statistics(sample: dict[str, Any], tm
     report = g6.report_run(sample, run, calculate=stub_agreement)
     assert report["arms"][ARMS[0].name]["pooled"]["errors"] == 1
     assert report["arms"][ARMS[0].name]["pooled"]["coverage"] == 7 / 8
+    assert report["arms"][ARMS[0].name]["complete"] is True
+    receipt = g6.select_arm(report, sample)
+    assert receipt["selection_rule_version"] == "g6-selection/v2"
+    assert receipt["dev_metrics"] == report["arms"]
+
+
+@pytest.mark.parametrize("all_errors", [False, True])
+def test_complete_test_execution_with_errors_uses_metrics_for_gate(
+        sample: dict[str, Any], tmp_path: Path, all_errors: bool) -> None:
+    receipt = g6.select_arm(g6.report_run(sample, fake_run(tmp_path / "dev", sample),
+                                         calculate=stub_agreement), sample)
+    run = fake_run(tmp_path / "test", sample, split="test", receipt=receipt)
+    records = [json.loads(line) for line in (run / "predictions.jsonl").read_bytes().splitlines()]
+    for row in records if all_errors else records[:1]:
+        row.update(predicted=None, invalidity={"category": "invalid_output"})
+    (run / "predictions.jsonl").write_bytes(b"".join((json.dumps(r) + "\n").encode() for r in records))
+    # The stub isolates gate completeness; the real statistics check below
+    # verifies that errors actually reduce the scores in the full denominator.
+    report = g6.report_run(sample, run, calculate=stub_agreement)
+    arm = next(iter(report["arms"].values()))
+    assert arm["complete"] is report["judge_result"]["complete"] is True
+    assert arm["scheduled"] == arm["executed"] == 8 and arm["missing"] == 0
+    assert arm["errors"] == (8 if all_errors else 1)
+    assert arm["coverage"] == (0 if all_errors else 7 / 8)
+    assert arm["error_categories"] == {"invalid_output": arm["errors"]}
+    assert report["gate_passed"] is True
+    real = g6.report_run(sample, run, replicates=10)
+    pooled = next(iter(real["arms"].values()))["pooled"]
+    assert pooled["errors"] == arm["errors"] and pooled["balanced_accuracy"] < 1
+    if all_errors:
+        assert real["gate_passed"] is False
+
+
+def test_selection_prioritizes_false_pass_then_kappa_then_ba_cost_name(
+        sample: dict[str, Any], tmp_path: Path) -> None:
+    report = g6.report_run(sample, fake_run(tmp_path / "dev", sample), calculate=stub_agreement)
+    names = sorted(report["arms"])
+    for arm in report["arms"].values():
+        arm["pooled"]["false_pass_rate"]["point"] = 0.11
+    report["arms"][names[0]]["pooled"]["kappa"] = 0.99
+    report["arms"][names[1]]["pooled"]["false_pass_rate"]["point"] = 0.10
+    chosen = g6.select_arm(report, sample)
+    assert chosen["binding"]["arm"] == names[1]
+    assert chosen["dev_false_pass_criterion_met"] is True
+    report["arms"][names[1]]["pooled"]["false_pass_rate"]["point"] = 0.12
+    chosen = g6.select_arm(report, sample)
+    assert chosen["binding"]["arm"] == names[0]
+    assert chosen["dev_false_pass_criterion_met"] is False
+    for arm in report["arms"].values():
+        arm["pooled"]["false_pass_rate"]["point"] = 0.10
+        arm["pooled"]["kappa"] = 0.8
+    assert g6.select_arm(report, sample)["binding"]["arm"] == names[0]
+    report["arms"][names[1]]["macro_balanced_accuracy"] = "0.81"
+    assert g6.select_arm(report, sample)["binding"]["arm"] == names[1]
+    report["arms"][names[0]]["macro_balanced_accuracy"] = "0.81"
+    report["arms"][names[0]]["cost_usd"] = "1"
+    assert g6.select_arm(report, sample)["binding"]["arm"] == names[1]
+    report["arms"][names[0]]["cost_usd"] = report["arms"][names[1]]["cost_usd"]
+    assert g6.select_arm(report, sample)["binding"]["arm"] == names[0]
+
+
+def test_real_sample_dev_admitted_but_high_effort_test_refused() -> None:
+    sample = g6.load_sample()
+    plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=2000, max_counts=2000, max_seconds=7200)
+    assert Decimal(plan["reservation_ceiling_usd"]) == Decimal("2.9728")
+    assert plan["dev_revision"]["timing"].startswith("After observing")
+    for arm in ARMS[3:]:
+        with pytest.raises(ValueError, match="aggregate preflight exceeds caps"):
+            g6.planning(sample, "test", max_usd=Decimal(2), max_calls=1538, max_counts=1538,
+                        max_seconds=7200, receipt={"binding": arm.binding()})
+
+
+def test_historical_three_arm_report_retains_execution_schedule(
+        sample: dict[str, Any], tmp_path: Path) -> None:
+    run = fake_run(tmp_path / "dev", sample)
+    header = g6.read_json(run / "run.json")
+    schedule = [(a, i) for a, i in g6.scheduled(sample, "dev") if a in SAMPLING_ARMS]
+    header["plan"]["bindings"] = [a.binding() for a in SAMPLING_ARMS]
+    header["plan"]["schedule_sha256"] = g6.digest([(a.name, i["id"]) for a, i in schedule])
+    (run / "run.json").write_bytes(canonical_bytes(header))
+    records = [json.loads(line) for line in (run / "predictions.jsonl").read_bytes().splitlines()]
+    records = [r for r in records if r["arm"] in {a.name for a in SAMPLING_ARMS}]
+    records[0]["predicted"] = None
+    (run / "predictions.jsonl").write_bytes(b"".join((json.dumps(r) + "\n").encode() for r in records))
+    report = g6.report_run(sample, run, calculate=stub_agreement)
+    assert len(report["arms"]) == 3 and all(a["complete"] for a in report["arms"].values())
+    with pytest.raises(ValueError, match="all five complete"):
+        g6.select_arm(report, sample)
 
 
 def test_prior_registration_and_changed_selection_refused() -> None:
@@ -299,9 +379,9 @@ def test_real_statistics_adapter_reports_errors_and_confusion(sample: dict[str, 
                                   "budget", "cleanup", "study-held", "count-failed", "deadline", "released-spent"])
 def test_offline_run_driver_caps_and_stop_on_unsettled(sample: dict[str, Any], tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
-    plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=24, max_counts=24, max_seconds=7200)
+    plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=40, max_counts=40, max_seconds=7200)
     scope_id = uuid4()
-    states = {scope_id: Scope(scope_id, "study", Decimal(3), 24, Decimal(0), Decimal(0), 0, 0, False)}
+    states = {scope_id: Scope(scope_id, "study", Decimal(3), 40, Decimal(0), Decimal(0), 0, 0, False)}
     invoked = []
     class Store:
         def scope(self, identity: UUID) -> Scope:
@@ -321,7 +401,7 @@ def test_offline_run_driver_caps_and_stop_on_unsettled(sample: dict[str, Any], t
     monkeypatch.setattr(g6, "require_clean_environment", lambda _: None)
     monkeypatch.setenv("OPENAI_API_KEY", "offline-fixture")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "offline-fixture")
-    monkeypatch.setattr(g6, "eligibility", lambda *_: ({a.name: 1000 for a in ARMS}, None))
+    monkeypatch.setattr(g6, "eligibility", lambda *_: ({a.name: 1000 for a in SAMPLING_ARMS}, None))
     private_rows = [g6.Row(i["split"], i["row_index"], i["constituent"],
         f"Document {i['split']} {i['constituent']} {i['row_index']}.", "A claim.", i["label"])
         for i in sample["items"] if i["split"] == "dev"]
@@ -369,11 +449,11 @@ def test_offline_run_driver_caps_and_stop_on_unsettled(sample: dict[str, Any], t
     predictions = [json.loads(line) for line in (tmp_path / "predictions.jsonl").read_bytes().splitlines()]
     finishes = mode in {"settled", "released", "count-failed"}
     # A held study is also checked before continuing, not just on finalization.
-    assert len(invoked) == (24 if finishes else 1)
+    assert len(invoked) == (40 if finishes else 1)
     assert len(set(invoked)) == len(invoked)
     assert len(predictions) == len(invoked)
     assert outcome["complete"] is finishes
-    assert outcome["executed"] == len(invoked) and outcome["scheduled"] == 24
+    assert outcome["executed"] == len(invoked) and outcome["scheduled"] == 40
     if mode in {"released", "count-failed", "budget", "cleanup", "deadline"}:
         assert predictions[0]["predicted"] is None and predictions[0]["cost_usd"] == "0"
         assert predictions[0]["billing"]["reason"] == report_reason(mode)
@@ -395,15 +475,15 @@ def report_reason(mode: str) -> str:
 
 def test_persisted_admission_precedes_key_read(sample: dict[str, Any], tmp_path: Path,
                                              monkeypatch: pytest.MonkeyPatch) -> None:
-    plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=24, max_counts=24, max_seconds=7200)
+    plan = g6.planning(sample, "dev", max_usd=Decimal(3), max_calls=40, max_counts=40, max_seconds=7200)
     private_rows = [g6.Row(i["split"], i["row_index"], i["constituent"],
         f"Document {i['split']} {i['constituent']} {i['row_index']}.", "A claim.", i["label"])
         for i in sample["items"] if i["split"] == "dev"]
     monkeypatch.setattr(g6, "rows", lambda *_: iter(private_rows))
     monkeypatch.setattr(g6, "load", lambda: object())
-    monkeypatch.setattr(g6, "eligibility", lambda *_: ({a.name: 1000 for a in ARMS}, None))
+    monkeypatch.setattr(g6, "eligibility", lambda *_: ({a.name: 1000 for a in SAMPLING_ARMS}, None))
     identity = uuid4()
-    occupied = Scope(identity, "study", Decimal(3), 24, Decimal(".001"), Decimal(0), 1, 0, False)
+    occupied = Scope(identity, "study", Decimal(3), 40, Decimal(".001"), Decimal(0), 1, 0, False)
     monkeypatch.setattr(g6, "build_eval_ledger", lambda **_: (object(), SimpleNamespace(scope=lambda _: occupied)))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -443,12 +523,12 @@ def test_cli_and_run_header_reflect_stage_completion(sample: dict[str, Any], tmp
     async def execute(*args: Any) -> dict[str, Any]:
         header = g6.read_json(args[-1] / "run.json")
         assert header["complete"] is False
-        return {"complete": complete, "executed": 24 if complete else 1, "scheduled": 24,
+        return {"complete": complete, "executed": 40 if complete else 1, "scheduled": 40,
                 "failure": None if complete else "unsettled_or_cleanup_unconfirmed"}
     monkeypatch.setattr(g6, "execute", execute)
     target = tmp_path / "run"
-    assert main(["judge-calibration", "run", "--split", "dev", "--max-usd", "3", "--max-calls", "24",
-        "--max-counts", "24", "--max-seconds", "7200", "--data", str(tmp_path), "--out", str(target),
+    assert main(["judge-calibration", "run", "--split", "dev", "--max-usd", "3", "--max-calls", "40",
+        "--max-counts", "40", "--max-seconds", "7200", "--data", str(tmp_path), "--out", str(target),
         "--execute-paid"]) == (0 if complete else 1)
     assert g6.read_json(target / "run.json")["complete"] is complete
     assert disposed == [True]

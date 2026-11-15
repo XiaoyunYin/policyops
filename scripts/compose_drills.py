@@ -275,7 +275,7 @@ class Drills(Driver):
         )
         path = "/tmp/policyops-drill.dump"  # noqa: S108 - exact path in owned, private postgres tmpfs
         dump = self.root / "coherent.dump"
-        self.compose("exec", "-T", "postgres", "pg_dump", "-U", "postgres", "-d", "policyops", "-Fc", "-f", path)
+        self.compose("exec", "-T", "postgres", "sh", "/etc/policyops/postgres_client.sh", "dump", "policyops")
         # `docker cp` cannot read the container's tmpfs /tmp; stream the exact bytes instead and cross-check the hash.
         copied = subprocess.run(["docker", "exec", pg, "cat", path], capture_output=True, timeout=300, check=False)
         require(copied.returncode == 0 and bool(copied.stdout), "backup copy from the postgres container failed")
@@ -289,41 +289,8 @@ class Drills(Driver):
             "target": self.database,
             "format": "pg_dump custom",
         }
-        self.compose(
-            "exec",
-            "-T",
-            "postgres",
-            "psql",
-            "-X",
-            "-U",
-            "postgres",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-d",
-            "postgres",
-            "-c",
-            f"CREATE DATABASE {self.database} OWNER policyops_app_migrator TEMPLATE template0",
-        )
-        self.compose(
-            "exec",
-            "-T",
-            "postgres",
-            "psql",
-            "-X",
-            "-U",
-            "postgres",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-d",
-            "postgres",
-            "-c",
-            f"REVOKE ALL ON DATABASE {self.database} FROM PUBLIC; GRANT CONNECT ON DATABASE {self.database} "
-            "TO policyops_app_runtime,policyops_auth_runtime,policyops_eval_runtime,policyops_worker_discovery,"
-            "retail_migrator,retail_runtime",
-        )
-        self.compose(
-            "exec", "-T", "postgres", "pg_restore", "-U", "postgres", "--exit-on-error", "-d", self.database, path
-        )
+        self.compose("exec", "-T", "postgres", "sh", "/etc/policyops/postgres_client.sh", "create", self.database)
+        self.compose("exec", "-T", "postgres", "sh", "/etc/policyops/postgres_client.sh", "restore", self.database)
         self.compose("exec", "-T", "postgres", "rm", path)
         self.env["POLICYOPS_DATABASE"] = self.database
         restored = self.helper("bootstrap-app", "recovery", "snapshot")

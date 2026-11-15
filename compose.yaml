@@ -20,7 +20,8 @@ x-app: &app
     POLICYOPS_DB_HOST: postgres
     POLICYOPS_DB_PORT: "5432"
     POLICYOPS_DB_NAME: ${POLICYOPS_DATABASE:-policyops}
-    POLICYOPS_DB_SSLMODE: require
+    POLICYOPS_DB_SSLMODE: verify-full
+    POLICYOPS_DB_SSLROOTCERT: /run/secrets/postgres_tls_cert
     POLICYOPS_PUBLIC_ORIGIN: http://127.0.0.1:${POLICYOPS_HTTP_PORT:-8080}
     POLICYOPS_OIDC_ISSUER: http://127.0.0.1:${POLICYOPS_HTTP_PORT:-8080}/dex
     POLICYOPS_OIDC_CLIENT_ID: policyops-local
@@ -52,10 +53,13 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres
       POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
       PGDATA: /var/lib/postgresql/data/pgdata
+      POLICYOPS_DB_SSLMODE: verify-full
+      POLICYOPS_DB_SSLROOTCERT: /run/secrets/postgres_tls_cert
     entrypoint: [sh, /etc/policyops/postgres.sh]
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/compose/postgres.sh:/etc/policyops/postgres.sh:ro
+      - ./infra/compose/postgres_client.sh:/etc/policyops/postgres_client.sh:ro
     tmpfs:
       - /tmp:uid=999,gid=999,mode=0700
       - /var/run/postgresql:uid=999,gid=999,mode=0770
@@ -63,13 +67,15 @@ services:
     healthcheck:
       <<: *health
       # The initdb temporary server has only a Unix socket; require the final TCP listener.
-      test: [CMD, pg_isready, -h, 127.0.0.1, -U, postgres, -d, postgres]
+      test:
+        - CMD-SHELL
+        - 'pg_isready -d "host=postgres user=postgres dbname=postgres sslmode=$${POLICYOPS_DB_SSLMODE} sslrootcert=$${POLICYOPS_DB_SSLROOTCERT}"'
     stop_grace_period: 60s
 
   bootstrap-app:
     <<: *app
     command: [bootstrap-app]
-    secrets: [postgres, policyops_app_migrator, policyops_auth_runtime, policyops_app_runtime, policyops_eval_runtime, policyops_worker_discovery]
+    secrets: [postgres, policyops_app_migrator, policyops_auth_runtime, policyops_app_runtime, policyops_eval_runtime, policyops_worker_discovery, postgres_tls_cert]
     depends_on:
       postgres: {condition: service_healthy}
     restart: "no"
@@ -77,7 +83,7 @@ services:
   migrate-app:
     <<: *app
     command: [migrate-app]
-    secrets: [policyops_app_migrator]
+    secrets: [policyops_app_migrator, postgres_tls_cert]
     depends_on:
       bootstrap-app: {condition: service_completed_successfully}
     restart: "no"
@@ -85,7 +91,7 @@ services:
   bootstrap-retail:
     <<: *retail
     command: [bootstrap-retail]
-    secrets: [postgres, retail_migrator, retail_runtime]
+    secrets: [postgres, retail_migrator, retail_runtime, postgres_tls_cert]
     depends_on:
       migrate-app: {condition: service_completed_successfully}
     restart: "no"
@@ -93,7 +99,7 @@ services:
   migrate-retail:
     <<: *retail
     command: [migrate-retail]
-    secrets: [retail_migrator]
+    secrets: [retail_migrator, postgres_tls_cert]
     depends_on:
       bootstrap-retail: {condition: service_completed_successfully}
     restart: "no"
@@ -101,7 +107,7 @@ services:
   seed-demo:
     <<: *app
     command: [seed-demo]
-    secrets: [policyops_auth_runtime, policyops_app_runtime]
+    secrets: [policyops_auth_runtime, policyops_app_runtime, postgres_tls_cert]
     depends_on:
       migrate-retail: {condition: service_completed_successfully}
     restart: "no"
@@ -109,7 +115,7 @@ services:
   retail:
     <<: *retail
     command: [retail]
-    secrets: [retail_runtime, retail_key]
+    secrets: [retail_runtime, retail_key, postgres_tls_cert]
     depends_on:
       migrate-retail: {condition: service_completed_successfully}
     healthcheck:
@@ -178,7 +184,7 @@ services:
     command: [api]
     # Same loopback issuer for the backend and browser, without a DNS/transport override.
     network_mode: service:caddy
-    secrets: [policyops_auth_runtime, policyops_app_runtime, client_secret]
+    secrets: [policyops_auth_runtime, policyops_app_runtime, client_secret, postgres_tls_cert]
     depends_on:
       seed-demo: {condition: service_completed_successfully}
       retail: {condition: service_healthy}
@@ -190,7 +196,7 @@ services:
   worker:
     <<: *app
     command: [worker]
-    secrets: [policyops_app_runtime, policyops_worker_discovery, retail_key]
+    secrets: [policyops_app_runtime, policyops_worker_discovery, retail_key, postgres_tls_cert]
     depends_on:
       api: {condition: service_healthy}
     healthcheck:

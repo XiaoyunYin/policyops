@@ -54,16 +54,14 @@ from policyops.api.logging import LOG_CONFIG
 from policyops.auth.service import AuthError
 from policyops.persistence.database import DatabaseUnavailable, RuntimeRoleError, make_engine, verify_runtime_role
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
+from policyops.settings import REFUSED_LIBPQ_ENV as REFUSED_LIBPQ_ENV
 from policyops.settings import AuthSettings, DatabaseSettings, TelemetrySettings
 from policyops.telemetry import configure
 from policyops_contracts.clock import SystemClock
 from policyops_contracts.errors import ErrorCode
 
 
-# libpq fills any parameter not passed explicitly from PG* variables, and a service entry may supply hostaddr, TLS
-# files and more. These two could silently redirect the configured endpoint, so the server refuses to start with
-# them; every other connection parameter that matters is passed explicitly (see `RuntimeConnector`).
-REFUSED_LIBPQ_ENV = ("PGSERVICE", "PGHOSTADDR")
+# The shared refusal list also applies to the Compose helpers; trust is explicit configuration only.
 SESSION_OPTIONS = ("-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=1000 "
                    "-c idle_in_transaction_session_timeout=5000")  # no ambient PGOPTIONS
 APPLICATION_NAMES = {AUTH_RUNTIME: "policyops-api-auth", APP_RUNTIME: "policyops-api-app"}
@@ -153,8 +151,11 @@ def load_config() -> ServeConfig:
                  for name in REFUSED_LIBPQ_ENV if os.environ.get(name)]
     if auth is not None and auth.env == "test":
         problems.append("POLICYOPS_ENV: test is for the test suite; the API server runs as local or deployment")
-    if auth is not None and database is not None and auth.env == "deployment" and database.sslmode != "verify-full":
-        problems.append("POLICYOPS_DB_SSLMODE: deployment requires verify-full")
+    if auth is not None and database is not None and auth.env == "deployment":
+        if database.sslmode != "verify-full":
+            problems.append("POLICYOPS_DB_SSLMODE: deployment requires verify-full")
+        if database.sslrootcert is None:
+            problems.append("POLICYOPS_DB_SSLROOTCERT: deployment requires an explicit sslrootcert")
     if problems or auth is None or database is None:
         raise ServeConfigError(problems)
     return ServeConfig(auth, database, telemetry)
@@ -179,7 +180,8 @@ class RuntimeConnector:
         return psycopg.connect(
             host=database.host, hostaddr=database.host if database.host_is_ip else None, port=database.port,
             dbname=database.name, user=self.role, password=self._password.get_secret_value(),
-            sslmode=database.sslmode, gssencmode="disable", require_auth="scram-sha-256",
+            sslmode=database.sslmode, sslrootcert=database.sslrootcert,
+            gssencmode="disable", require_auth="scram-sha-256",
             connect_timeout=database.connect_timeout_seconds, options=SESSION_OPTIONS, client_encoding="UTF8",
             application_name=APPLICATION_NAMES[self.role])
 

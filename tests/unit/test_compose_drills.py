@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
 import re
 import runpy
@@ -29,6 +30,78 @@ from scripts import redact_playwright as traces
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def postgres_cli_shell() -> str:
+    git_shell = Path("C:/Program Files/Git/bin/sh.exe")
+    binary = str(git_shell) if sys.platform == "win32" and git_shell.is_file() else shutil.which("sh")
+    if binary is None:
+        pytest.skip("POSIX shell absent; PostgreSQL drill client shell checks unavailable")
+    return binary
+
+
+def postgres_cli_probe(shell: str, operation: str, database: str, environment: dict[str, str]) -> Any:
+    source = (ROOT / "infra/compose/postgres_client.sh").read_text(encoding="utf-8")
+    # Capture env's arguments at the process boundary; never read a real password or launch PostgreSQL tools.
+    source = "capture() { printf '%s\\n' \"$@\"; }\n" + source.replace("exec env -i", "capture -i")
+    return subprocess.run([shell, "-s", "--", operation, database], input=source, text=True,
+                          capture_output=True, env=dict(os.environ, **environment), timeout=30)
+
+
+@pytest.mark.parametrize("operation,tool", [("dump", "pg_dump"), ("create", "psql"), ("restore", "pg_restore")])
+def test_postgres_drill_cli_uses_explicit_tls_and_clean_child(postgres_cli_shell: str,
+                                                           operation: str, tool: str) -> None:
+    done = postgres_cli_probe(postgres_cli_shell, operation, "policyops_restore_test", {
+        "POLICYOPS_DB_SSLMODE": "verify-full", "POLICYOPS_DB_SSLROOTCERT": "/run/secrets/postgres_tls_cert",
+        "PGSSLMODE": "disable", "PGSSLROOTCERT": "/wrong/root", "PGPASSWORD": "ambient-canary",
+    })
+    assert done.returncode == 0, done.stderr
+    args = done.stdout.splitlines()
+    assert args[0] == "-i" and args[2:4] == ["sh", "-ec"]
+    assert args[4] == 'PGPASSWORD=$(cat /run/secrets/postgres); export PGPASSWORD; exec "$@"'
+    assert args[5:8] == ["postgres-client", tool, "--no-password"]
+    assert args[8] == ("--dbname=host=postgres port=5432 user=postgres dbname="
+                       + ("postgres" if operation == "create" else "policyops_restore_test")
+                       + " sslmode=verify-full sslrootcert=/run/secrets/postgres_tls_cert"
+                       " gssencmode=disable require_auth=scram-sha-256 connect_timeout=3")
+    assert "ambient-canary" not in done.stdout and "/wrong/root" not in done.stdout
+
+
+@pytest.mark.parametrize("operation,tool", [("dump", "pg_dump"), ("create", "psql"), ("restore", "pg_restore")])
+def test_postgres_cli_child_removes_ambient_trust(postgres_cli_shell: str, tmp_path: Path,
+                                                operation: str, tool: str) -> None:
+    password = tmp_path / "fake-password"
+    password.write_bytes(b"synthetic-password")
+    fake_tool = tmp_path / "fake-tool.sh"
+    fake_tool.write_bytes(b'printf \'%s\\n\' "$PGPASSWORD" "${PGSSLMODE-unset}" "${PGSSLROOTCERT-unset}" "$@"\n')
+    source = (ROOT / "infra/compose/postgres_client.sh").read_text(encoding="utf-8")
+    # Substitute only file/tool locations; execute the real env -i / child shell / password expansion.
+    source = source.replace("/run/secrets/postgres)", f'"{password.as_posix()}")')
+    source = source.replace("run " + tool + " ", f'run sh "{fake_tool.as_posix()}" ')
+    done = subprocess.run([postgres_cli_shell, "-s", "--", operation, "policyops_restore_test"], input=source,
+        text=True, capture_output=True, timeout=30, env=dict(os.environ,
+            PATH=str(tmp_path) + os.pathsep + os.environ["PATH"], POLICYOPS_DB_SSLMODE="verify-full",
+            POLICYOPS_DB_SSLROOTCERT="/run/secrets/postgres_tls_cert", PGSSLMODE="disable",
+            PGSSLROOTCERT="/wrong/root", PGPASSWORD="ambient-canary"))
+    assert done.returncode == 0, done.stderr
+    lines = done.stdout.splitlines()
+    assert lines[:3] == ["synthetic-password", "unset", "unset"]
+    assert "synthetic-password" not in "\n".join(lines[3:])  # password is in the environment only
+    assert "sslmode=verify-full sslrootcert=/run/secrets/postgres_tls_cert" in lines[4]
+
+
+@pytest.mark.parametrize("mode,root,database", [
+    ("", "/run/secrets/postgres_tls_cert", "policyops"), ("require", "/run/secrets/postgres_tls_cert", "policyops"),
+    ("verify-full", "", "policyops"), ("verify-full", "/wrong/root", "policyops"),
+    ("verify-full", "/run/secrets/postgres_tls_cert", "host=attacker"),
+    ("verify-full", "/run/secrets/postgres_tls_cert", "policyops;SELECT"),
+])
+def test_postgres_drill_cli_fails_closed(postgres_cli_shell: str, mode: str, root: str, database: str) -> None:
+    done = postgres_cli_probe(postgres_cli_shell, "dump", database, {
+        "POLICYOPS_DB_SSLMODE": mode, "POLICYOPS_DB_SSLROOTCERT": root,
+    })
+    assert done.returncode != 0 and done.stdout == ""
 
 
 def collection(count: int = 1, tag: str = drills.CONSENT_TAG.removeprefix("@")) -> str:

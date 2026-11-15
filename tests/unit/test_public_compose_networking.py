@@ -43,18 +43,94 @@ def compose_cli() -> str:
     return binary
 
 
-def merged_profile(binary: str, overlay: Path = PUBLIC) -> dict[str, Any]:
+def merged_profile(binary: str, overlay: Path | None = PUBLIC) -> dict[str, Any]:
     env = dict(os.environ, POLICYOPS_HOSTNAME=HOST, POLICYOPS_RUN_ID="public-networking-check",
                POLICYOPS_HTTP_PORT="8080", POLICYOPS_IMAGE_TAG="local",
                POLICYOPS_SECRETS_DIR=str(Path(os.environ["POLICYOPS_TEMP_DIR"]) / "unused-secrets"))
     result = subprocess.run(
         [binary, "compose", "--project-directory", str(ROOT), "--project-name", "policyops-networking-check",
-         "-f", str(ROOT / "compose.yaml"), "-f", str(overlay), "config", "--format", "json"],
+         "-f", str(ROOT / "compose.yaml"), *(["-f", str(overlay)] if overlay else []),
+         "config", "--format", "json"],
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr
     stack: dict[str, Any] = json.loads(result.stdout)
     return stack
+
+
+DB_CLIENTS = {"postgres", "bootstrap-app", "bootstrap-retail", "migrate-app", "migrate-retail",
+              "seed-demo", "api", "worker", "retail"}
+DB_ROLES = {"postgres", "policyops_app_migrator", "policyops_app_runtime", "policyops_auth_runtime",
+            "policyops_eval_runtime", "policyops_worker_discovery", "retail_migrator", "retail_runtime"}
+ROOT_CERT = "/run/secrets/postgres_tls_cert"
+
+
+def check_database_tls(stack: dict[str, Any]) -> None:
+    clients = set()
+    for name, service in stack["services"].items():
+        mounts = service.get("secrets", [])
+        if not DB_ROLES.intersection(mount["source"] for mount in mounts):
+            continue
+        clients.add(name)
+        assert any(mount["source"] == "postgres_tls_cert"
+                   and mount.get("target") in ("postgres_tls_cert", ROOT_CERT) for mount in mounts), name
+        assert service["environment"]["POLICYOPS_DB_SSLMODE"] == "verify-full", name
+        assert service["environment"]["POLICYOPS_DB_SSLROOTCERT"] == ROOT_CERT, name
+    assert clients == DB_CLIENTS
+    # Server readiness is a TCP client too; all other checks/helpers use runtime.connect().
+    probe = stack["services"]["postgres"]["healthcheck"]["test"]
+    assert probe[0] == "CMD-SHELL" and "host=postgres " in probe[1]
+    assert "sslmode=$${POLICYOPS_DB_SSLMODE}" in probe[1]
+    assert "sslrootcert=$${POLICYOPS_DB_SSLROOTCERT}" in probe[1]
+    assert any(mount["target"] == "/etc/policyops/postgres_client.sh" and mount.get("read_only") is True
+               for mount in stack["services"]["postgres"]["volumes"])
+
+
+@pytest.fixture(scope="module", params=[None, PUBLIC], ids=["local", "public"])
+def tls_profile(compose_cli: str, request: pytest.FixtureRequest) -> dict[str, Any]:
+    return merged_profile(compose_cli, request.param)
+
+
+def test_all_role_holders_use_verified_database_tls(tls_profile: dict[str, Any]) -> None:
+    check_database_tls(tls_profile)
+
+
+@pytest.mark.parametrize("client", sorted(DB_CLIENTS))
+@pytest.mark.parametrize("mutation", ["mount", "target", "mode", "missing-mode", "root", "missing-root"])
+def test_database_tls_policy_rejects_each_client_regression(tls_profile: dict[str, Any],
+                                                           client: str, mutation: str) -> None:
+    stack = deepcopy(tls_profile)
+    service = stack["services"][client]
+    if mutation == "mount":
+        service["secrets"] = [mount for mount in service["secrets"] if mount["source"] != "postgres_tls_cert"]
+    elif mutation == "target":
+        next(mount for mount in service["secrets"] if mount["source"] == "postgres_tls_cert")["target"] = "wrong"
+    elif mutation == "mode":
+        service["environment"]["POLICYOPS_DB_SSLMODE"] = "require"
+    elif mutation == "root":
+        service["environment"]["POLICYOPS_DB_SSLROOTCERT"] = "/wrong/root.crt"
+    else:
+        del service["environment"]["POLICYOPS_DB_" + ("SSLMODE" if mutation == "missing-mode" else "SSLROOTCERT")]
+    with pytest.raises((AssertionError, KeyError)):
+        check_database_tls(stack)
+
+
+@pytest.mark.parametrize("option", ["sslmode", "sslrootcert"])
+def test_readiness_probe_requires_explicit_tls(tls_profile: dict[str, Any], option: str) -> None:
+    stack = deepcopy(tls_profile)
+    probe = stack["services"]["postgres"]["healthcheck"]["test"]
+    probe[1] = probe[1].replace(option + "=", "discarded=")
+    with pytest.raises(AssertionError):
+        check_database_tls(stack)
+
+
+def test_drill_cli_wrapper_must_be_mounted(tls_profile: dict[str, Any]) -> None:
+    stack = deepcopy(tls_profile)
+    stack["services"]["postgres"]["volumes"] = [
+        mount for mount in stack["services"]["postgres"]["volumes"]
+        if mount["target"] != "/etc/policyops/postgres_client.sh"]
+    with pytest.raises(AssertionError):
+        check_database_tls(stack)
 
 
 def check_namespace_options(stack: dict[str, Any]) -> None:

@@ -26,6 +26,8 @@ import httpx
 import psycopg
 from sqlalchemy import Engine, create_engine, text
 
+from policyops.settings import REFUSED_LIBPQ_ENV, validate_sslrootcert
+
 
 if TYPE_CHECKING:
     from policyops_contracts.seeds import CaseCustomerBinding
@@ -44,9 +46,15 @@ def secret(name: str) -> str:
 
 
 def connect(role: str, database: str | None = None, *, autocommit: bool = False) -> psycopg.Connection[Any]:
+    # All Compose roles, including maintenance helpers, use the same explicit pinned trust root.
+    sslmode = os.environ.get("POLICYOPS_DB_SSLMODE")
+    sslrootcert = validate_sslrootcert(os.environ.get("POLICYOPS_DB_SSLROOTCERT"))
+    if sslmode != "verify-full" or sslrootcert is None or any(os.environ.get(name) for name in REFUSED_LIBPQ_ENV):
+        raise ValueError("Compose database requires explicit verify-full and sslrootcert; ambient libpq refused")
     return psycopg.connect(host=os.environ["POLICYOPS_DB_HOST"],
         port=int(os.environ["POLICYOPS_DB_PORT"]), dbname=database or os.environ["POLICYOPS_DB_NAME"],
-        user=role, password=secret(role), sslmode="require", gssencmode="disable", require_auth="scram-sha-256",
+        user=role, password=secret(role), sslmode=sslmode, sslrootcert=sslrootcert,
+        gssencmode="disable", require_auth="scram-sha-256",
         connect_timeout=3, options="-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=1000 "
         "-c idle_in_transaction_session_timeout=5000", application_name="policyops-compose", autocommit=autocommit)
 

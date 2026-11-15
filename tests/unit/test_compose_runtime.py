@@ -22,6 +22,7 @@ import httpx
 import psycopg
 import pytest
 
+from policyops.settings import REFUSED_LIBPQ_ENV
 from policyops_contracts.scalars import CaseScope
 from policyops_contracts.seeds import CaseCustomerBinding
 
@@ -37,6 +38,56 @@ ROOT = Path(__file__).resolve().parents[2]
 def runtime() -> Any:
     # Keep the separate evals environment out of application import discovery/type checking.
     return SimpleNamespace(**runpy.run_path(str(ROOT / "infra/compose/runtime.py")))
+
+
+@pytest.fixture
+def tls_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in REFUSED_LIBPQ_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in {"HOST": "postgres", "PORT": "5432", "NAME": "policyops", "SSLMODE": "verify-full",
+                        "SSLROOTCERT": "/run/secrets/postgres_tls_cert"}.items():
+        monkeypatch.setenv("POLICYOPS_DB_" + name, value)
+
+
+@pytest.mark.parametrize("role,database,autocommit", [
+    ("postgres", "postgres", True), ("policyops_app_migrator", None, False),
+    ("policyops_auth_runtime", None, False), ("policyops_app_runtime", None, False),
+    ("policyops_worker_discovery", None, False), ("retail_migrator", None, False), ("retail_runtime", None, False),
+])
+def test_connect_passes_explicit_verified_tls(runtime: Any, tls_environment: None, monkeypatch: pytest.MonkeyPatch,
+                                            role: str, database: str | None, autocommit: bool) -> None:
+    calls = []
+    monkeypatch.setitem(runtime.connect.__globals__, "secret", lambda role: "synthetic-password")
+    monkeypatch.setattr(psycopg, "connect", lambda **kwargs: calls.append(kwargs))
+    runtime.connect(role, database, autocommit=autocommit)
+    assert calls == [{"host": "postgres", "port": 5432, "dbname": database or "policyops", "user": role,
+                     "password": "synthetic-password", "sslmode": "verify-full",
+                     "sslrootcert": "/run/secrets/postgres_tls_cert", "gssencmode": "disable",
+                     "require_auth": "scram-sha-256", "connect_timeout": 3,
+                     "options": "-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=1000 "
+                                "-c idle_in_transaction_session_timeout=5000",
+                     "application_name": "policyops-compose", "autocommit": autocommit}]
+
+
+@pytest.mark.parametrize("variable,value", [
+    ("POLICYOPS_DB_SSLMODE", None), ("POLICYOPS_DB_SSLMODE", "require"), ("POLICYOPS_DB_SSLMODE", "disable"),
+    ("POLICYOPS_DB_SSLMODE", "verify-ca"), ("POLICYOPS_DB_SSLROOTCERT", None),
+    ("POLICYOPS_DB_SSLROOTCERT", ""), ("POLICYOPS_DB_SSLROOTCERT", "relative-canary"),
+    *[(name, "ambient-canary") for name in REFUSED_LIBPQ_ENV],
+])
+def test_connect_fails_closed_before_secret_or_socket(runtime: Any, tls_environment: None,
+                                                     monkeypatch: pytest.MonkeyPatch,
+                                                     variable: str, value: str | None) -> None:
+    if value is None:
+        monkeypatch.delenv(variable)
+    else:
+        monkeypatch.setenv(variable, value)
+    calls = []
+    monkeypatch.setitem(runtime.connect.__globals__, "secret", lambda role: calls.append("secret"))
+    monkeypatch.setattr(psycopg, "connect", lambda **kwargs: calls.append("socket"))
+    with pytest.raises(ValueError) as caught:
+        runtime.connect("postgres")
+    assert calls == [] and "canary" not in str(caught.value)
 
 
 def test_demo_fixture_matches_server_owned_binding_contract(runtime: Any) -> None:

@@ -83,11 +83,13 @@ def enforce(stack: dict[str, Any]) -> None:
             parent, condition = CHAIN[name]
             assert service["depends_on"] == {parent: {"condition": condition}}
             assert service["restart"] == "no"
-    assert secret_names(services["api"]) == {"policyops_auth_runtime", "policyops_app_runtime", "client_secret"}
-    assert secret_names(services["worker"]) == {"policyops_app_runtime", "policyops_worker_discovery", "retail_key"}
-    assert secret_names(services["retail"]) == {"retail_runtime", "retail_key"}
-    assert secret_names(services["migrate-app"]) == {"policyops_app_migrator"}
-    assert secret_names(services["migrate-retail"]) == {"retail_migrator"}
+    assert secret_names(services["api"]) == {
+        "policyops_auth_runtime", "policyops_app_runtime", "client_secret", "postgres_tls_cert"}
+    assert secret_names(services["worker"]) == {
+        "policyops_app_runtime", "policyops_worker_discovery", "retail_key", "postgres_tls_cert"}
+    assert secret_names(services["retail"]) == {"retail_runtime", "retail_key", "postgres_tls_cert"}
+    assert secret_names(services["migrate-app"]) == {"policyops_app_migrator", "postgres_tls_cert"}
+    assert secret_names(services["migrate-retail"]) == {"retail_migrator", "postgres_tls_cert"}
     assert services["retail"]["depends_on"]["migrate-retail"]["condition"] == "service_completed_successfully"
     assert services["api"]["depends_on"]["retail"]["condition"] == "service_healthy"
     assert services["api"]["depends_on"]["seed-demo"]["condition"] == "service_completed_successfully"

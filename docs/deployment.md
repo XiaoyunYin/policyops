@@ -1,13 +1,19 @@
 # AWS public fictional demo
 
-Status: **public issuer networking repair awaiting live verification**. The first
+Status: **verified PostgreSQL TLS repair awaiting live verification**. The first
 2026-11-15 Lightsail attempt exposed launch-script handling of user-data and a shared
 resource-name namespace; that host was destroyed. The replacement host bootstrapped
 successfully. At 19:10Z, deploy A built images but failed after 183 seconds creating API:
 Docker rejected the overlay's `extra_hosts` combined with inherited
 `network_mode: service:caddy`. Structural overlay tests had missed the merged conflict.
 The mapping now belongs to Caddy; a real Compose merge regression covers the failure.
-Daemon creation, public login/certificate, host sizing and rollback remain live gates.
+The next deploy, at `a4681dd`, reached API creation but restarted with `ServeConfigError`:
+the base profile selected `require` while deployment correctly required `verify-full`.
+No client had a mounted trust root. The coordinator's temporary explicit-root override
+made API healthy with zero restarts and all dependency checks true; public `/`, `/healthz`
+and Dex discovery returned 200 over the ACME certificate. That was diagnostic evidence.
+The source repair below still needs the PostgreSQL integration suite and local/public
+Compose smoke, including renewal. Public login, host sizing and rollback remain live gates.
 
 ## Architecture and cost
 
@@ -98,9 +104,48 @@ sharing or TLS/login. Verify those against the pinned Engine before live accepta
 
 PostgreSQL, retail, worker and Dex remain on the internal Docker network. API/Caddy retain
 outbound internet reachability (ACME and issuer TLS); this is not destination-allowlisted
-egress. Application provider adapters remain unconfigured. Database transport retains
-T38's SCRAM plus TLS `require` on the isolated network; it is not CA-verified `verify-full`.
+egress. Application provider adapters remain unconfigured. Database transport uses
+SCRAM-SHA-256 plus TLS `verify-full` and an explicit pinned trust root as described below.
 Migration/superuser secrets are mounted only in one-shots, and no admin demo membership exists.
+
+### Database TLS
+
+Both local and public Compose profiles set `POLICYOPS_DB_SSLMODE=verify-full` and
+`POLICYOPS_DB_SSLROOTCERT=/run/secrets/postgres_tls_cert`. The base file mounts that
+certificate on API, worker, retail, seed, bootstrap and migration services. The public
+overlay adds no secrets. The PostgreSQL TCP readiness probe also uses that root and the
+hostname `postgres`; verifier, scenario, drill and recovery helpers inherit their owning
+service's mounts/environment and use `runtime.connect()`. The smoke driver runs those
+helpers inside containers; it does not open a host-side database connection.
+The drill's `pg_dump`, `psql` and `pg_restore` commands run through the mounted
+`postgres_client.sh` helper in the PostgreSQL container. It requires the same explicit
+mode/root, connects over TCP to `postgres`, clears ambient libpq inputs with `env -i`,
+and reads the role password only inside the clean child shell (never in argv).
+
+`scripts/compose_secrets.py` creates a self-signed certificate with SAN `DNS:postgres`.
+The trust anchor is the server leaf itself (certificate pinning), not a public or private
+CA hierarchy. Connect to `postgres`, matching that SAN, and protect the host secret files:
+replacing this certificate changes the trusted identity. The coordinator verified that
+libpq accepts this certificate as a `verify-full` root. See the
+[libpq verification rules](https://www.postgresql.org/docs/17/libpq-ssl.html).
+
+`infra/deploy/renew_db_cert.py` remains compatible: it retains the key and subject,
+sets SAN `postgres`, and rewrites the same inode so all file-secret bind mounts see the
+renewed leaf. libpq loads `sslrootcert` for each new connection (see its
+[connection-specific TLS initialization](https://github.com/postgres/postgres/blob/REL_17_STABLE/src/interfaces/libpq/fe-secure-openssl.c)).
+Existing pooled connections retain their established TLS sessions. Renewal runs while
+writers are stopped during reset, followed by PostgreSQL recreation and client startup;
+the script alone does not reload the server certificate, and an in-flight connection
+attempt during a partial rewrite can fail closed. Key/subject/name changes require a
+coordinated trust update, not an ambient `PGSSLROOTCERT` override.
+
+Settings require an absolute root path without control characters; file existence and
+certificate validity are checked by libpq on connection, keeping startup validation free
+of file reads and configured values in errors. Both verification modes fail closed
+without the explicit path even outside deployment. Deployment additionally requires
+`verify-full`; every Compose role refuses missing/other modes or roots before reading a
+password. Ambient TLS variables are refused by API and helpers; the
+[database configuration policy](database.md#transport-and-explicit-trust) lists them.
 
 Runtime memory limits are **estimates**, not measured T38 baselines: Caddy 160 MiB, API
 320 MiB, worker 320 MiB, retail 256 MiB, PostgreSQL 384 MiB, Dex 128 MiB (1,568 MiB total).

@@ -195,6 +195,90 @@ def test_entry_log_config_keeps_the_access_redaction() -> None:
 
 # -- runtime connections -----------------------------------------------------------------------------------------
 
+def test_ambient_tls_refusal_inventory() -> None:
+    assert set(serve.REFUSED_LIBPQ_ENV) == {
+        "PGSERVICE", "PGHOSTADDR", "PGSSLMODE", "PGREQUIRESSL", "PGSSLROOTCERT", "PGSSLCRL", "PGSSLCRLDIR",
+        "PGSSLCERT", "PGSSLKEY", "PGSSLCERTMODE", "PGSSLNEGOTIATION", "PGSSLCOMPRESSION", "PGSSLSNI",
+        "PGSSLMINPROTOCOLVERSION", "PGSSLMAXPROTOCOLVERSION",
+    }
+
+
+def test_default_verification_requires_explicit_root(configured: dict[str, str],
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POLICYOPS_DB_SSLMODE")
+    with pytest.raises(serve.ServeConfigError, match="sslrootcert is required for verify-ca or verify-full"):
+        serve.load_config()
+
+
+@pytest.mark.parametrize("mode", ["verify-ca", "verify-full"])
+@pytest.mark.parametrize("environment", ["local", "deployment"])
+def test_verification_requires_explicit_root(configured: dict[str, str], monkeypatch: pytest.MonkeyPatch,
+                                             mode: str, environment: str) -> None:
+    monkeypatch.setenv("POLICYOPS_ENV", environment)
+    monkeypatch.setenv("POLICYOPS_PUBLIC_ORIGIN", "https://policyops.example.test")
+    monkeypatch.setenv("POLICYOPS_OIDC_ISSUER", "https://id.example.test/dex")
+    monkeypatch.setenv("POLICYOPS_DB_SSLMODE", mode)
+    with pytest.raises(serve.ServeConfigError, match="sslrootcert is required for verify-ca or verify-full"):
+        serve.load_config()
+    monkeypatch.setenv("POLICYOPS_DB_SSLROOTCERT", "/run/secrets/postgres_tls_cert")
+    if environment == "deployment" and mode != "verify-full":
+        with pytest.raises(serve.ServeConfigError) as caught:
+            serve.load_config()
+        assert caught.value.problems == ("POLICYOPS_DB_SSLMODE: deployment requires verify-full",)
+    else:
+        assert serve.load_config().database.sslrootcert == "/run/secrets/postgres_tls_cert"
+
+
+def test_deployment_require_mode_still_requires_root(configured: dict[str, str],
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POLICYOPS_ENV", "deployment")
+    monkeypatch.setenv("POLICYOPS_PUBLIC_ORIGIN", "https://policyops.example.test")
+    monkeypatch.setenv("POLICYOPS_OIDC_ISSUER", "https://id.example.test/dex")
+    monkeypatch.setenv("POLICYOPS_DB_SSLMODE", "require")
+    with pytest.raises(serve.ServeConfigError) as caught:
+        serve.load_config()
+    assert caught.value.problems == (
+        "POLICYOPS_DB_SSLMODE: deployment requires verify-full",
+        "POLICYOPS_DB_SSLROOTCERT: deployment requires an explicit sslrootcert",
+    )
+
+
+@pytest.mark.parametrize("path", ["", "relative/root.crt", "system", "C:relative.crt", "\\root.crt",
+                                 "/root\ncanary", "/root\x00canary"])
+def test_root_path_rejected_without_values(configured: dict[str, str], monkeypatch: pytest.MonkeyPatch,
+                                          path: str) -> None:
+    # NUL cannot be stored in an OS environment; exercise the same settings validator directly.
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as caught:
+        DatabaseSettings(host="postgres", name="policyops", sslrootcert=path + CANARY,
+                         auth_password=SecretStr("a" * 16), app_password=SecretStr("b" * 16))
+    assert "sslrootcert must be an absolute path without control characters" in str(caught.value)
+    assert_no_canary(str(caught.value))
+
+
+@pytest.mark.parametrize("path", ["/run/secrets/postgres_tls_cert", "C:\\cert dir\\root.crt",
+                                 "\\\\server\\share\\root.crt"])
+def test_root_path_validation_does_not_open_files(configured: dict[str, str], monkeypatch: pytest.MonkeyPatch,
+                                                 path: str) -> None:
+    monkeypatch.setenv("POLICYOPS_DB_SSLROOTCERT", path)
+    monkeypatch.setenv("POLICYOPS_DB_SSLMODE", "verify-full")
+    assert serve.load_config().database.sslrootcert == path  # deliberately nonexistent, lexical validation only
+
+
+@pytest.mark.parametrize("variable", serve.REFUSED_LIBPQ_ENV)
+def test_ambient_tls_is_refused_even_with_explicit_root(configured: dict[str, str],
+                                                      monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+    monkeypatch.setenv("POLICYOPS_DB_SSLMODE", "verify-full")
+    monkeypatch.setenv("POLICYOPS_DB_SSLROOTCERT", "/run/secrets/postgres_tls_cert")
+    monkeypatch.setenv(variable, CANARY)
+    with pytest.raises(serve.ServeConfigError) as caught:
+        serve.load_config()
+    assert caught.value.problems == (
+        f"{variable}: must not be set for the API server (libpq would take connection parameters from it)",
+    )
+    assert_no_canary(rendered(caught.value))
+
 def test_connector_pins_endpoint_identity_and_session(configured: dict[str, str],
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, Any]] = []
@@ -207,7 +291,8 @@ def test_connector_pins_endpoint_identity_and_session(configured: dict[str, str]
     opened: list[Any] = [auth(), app()]
     assert opened == ["connection", "connection"]
     common = {"host": "127.0.0.1", "hostaddr": "127.0.0.1", "port": 5432, "dbname": "policyops",
-              "sslmode": "disable", "gssencmode": "disable", "require_auth": "scram-sha-256", "connect_timeout": 5,
+              "sslmode": "disable", "sslrootcert": None, "gssencmode": "disable", "require_auth": "scram-sha-256",
+              "connect_timeout": 5,
               "options": "-c timezone=UTC -c statement_timeout=5000 -c lock_timeout=1000 "
                          "-c idle_in_transaction_session_timeout=5000", "client_encoding": "UTF8"}
     assert calls[0] == {**common, "user": AUTH_RUNTIME, "password": SECRETS["POLICYOPS_DB_AUTH_PASSWORD"],
@@ -227,11 +312,13 @@ def test_connector_leaves_hostaddr_unset_for_a_dns_name(configured: dict[str, st
                                                         monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLICYOPS_DB_HOST", "db.example.test")
     monkeypatch.setenv("POLICYOPS_DB_SSLMODE", "verify-full")
+    monkeypatch.setenv("POLICYOPS_DB_SSLROOTCERT", "/run/secrets/postgres_tls_cert")
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(psycopg, "connect", lambda **kwargs: calls.append(kwargs))
     serve.RuntimeConnector(serve.load_config().database, APP_RUNTIME)()
     assert calls[0]["host"] == "db.example.test" and calls[0]["hostaddr"] is None
     assert calls[0]["sslmode"] == "verify-full"
+    assert calls[0]["sslrootcert"] == "/run/secrets/postgres_tls_cert"
 
 
 def test_database_settings_accept_ipv6_loopback_without_tls(monkeypatch: pytest.MonkeyPatch) -> None:

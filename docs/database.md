@@ -5,6 +5,47 @@ This page describes the PostgreSQL schema and roles in `packages/policyops/src/p
 The database stores records and enforces relational invariants. The [authentication service](authentication.md) validates identity, sessions and current workspace membership using these records. Business workflow authorization and execution are implemented in the gateway and services;
 see [architecture](architecture.md#approval-continuation-and-outcomes). Row-level security and constraints support those services.
 
+## Transport and explicit trust
+
+The API's `DatabaseSettings` reads `POLICYOPS_DB_SSLMODE` (default `verify-full`) and
+`POLICYOPS_DB_SSLROOTCERT` (optional absolute POSIX or Windows path, with no control
+characters). Path checks are lexical and never open the file or report its contents or
+configured value. `verify-ca` and `verify-full` require that path in every environment;
+deployment requires `verify-full` plus the explicit root. There is no fallback to libpq's
+home-directory root or `sslrootcert=system`. Missing/unreadable/invalid roots fail on
+connection. Local `require` remains available to standalone configurations; `disable`
+requires a loopback IP. Compose always requires explicit `verify-full` plus a root.
+
+All Compose clients use `postgres` and `/run/secrets/postgres_tls_cert`, mounted by the
+base file. This self-signed server leaf is itself the pinned trust anchor, with SAN
+`DNS:postgres`; it is not a general certificate authority. See the
+[deployment TLS and renewal model](deployment.md#database-tls). SCRAM-SHA-256 remains
+required independently of TLS. The PostgreSQL integration harness's disposable loopback
+connections may use `disable`; those tests do not prove deployed TLS verification.
+
+API and Compose helpers share `REFUSED_LIBPQ_ENV`. Refusal diagnostics name variables
+and fixed reasons only. The [libpq environment reference](https://www.postgresql.org/docs/17/libpq-envars.html)
+documents the following inputs; they are refused even if an explicit argument would win:
+
+| Refused variables | Reason |
+|---|---|
+| `PGSERVICE`, `PGHOSTADDR` | Service entries or an independent address can redirect the endpoint or supply trust settings |
+| `PGSSLROOTCERT` | Trust must come from the explicit application path |
+| `PGSSLMODE`, `PGREQUIRESSL` | TLS verification policy, including the deprecated encryption switch, has one source |
+| `PGSSLCRL`, `PGSSLCRLDIR` | Ambient revocation files/directories change which peer certificates are accepted |
+| `PGSSLCERT`, `PGSSLKEY`, `PGSSLCERTMODE` | Ambient client certificates/keys or certificate mode change TLS identity/authentication |
+| `PGSSLNEGOTIATION`, `PGSSLCOMPRESSION`, `PGSSLSNI` | Prevent ambient changes to negotiation, compression or the presented server name |
+| `PGSSLMINPROTOCOLVERSION`, `PGSSLMAXPROTOCOLVERSION` | Prevent ambient protocol bounds changing the TLS policy |
+
+No documented libpq TLS environment option is intentionally skipped. `PGGSSENCMODE`
+is not refused because `gssencmode=disable` is explicit, preventing GSS from superseding
+TLS; `PGCHANNELBINDING` controls SCRAM channel binding, not trust-root selection, and
+retains libpq's policy. Ordinary `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`,
+`PGOPTIONS` and timeouts cannot replace arguments passed explicitly. `PGSERVICEFILE`
+and `PGSYSCONFDIR` do not select a service when `PGSERVICE` is refused. This is an
+operator configuration boundary; it does not isolate libpq from a compromised host or
+OpenSSL installation, nor forbid libpq's default client-certificate/CRL file discovery.
+
 ## Roles
 
 Bootstrap creates five cluster roles. All of them are `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, the runtime roles are also `NOINHERIT`, and none may be a member of another role.

@@ -16,11 +16,12 @@ from __future__ import annotations
 
 from datetime import timedelta
 import ipaddress
+from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, StringConstraints, model_validator
+from pydantic import Field, SecretStr, StringConstraints, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -124,6 +125,13 @@ class AuthSettings(BaseSettings):
 
 DatabaseName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")]
 SslMode = Literal["disable", "require", "verify-ca", "verify-full"]
+# Refuse ambient endpoint overrides and every libpq TLS environment option. Even options passed explicitly
+# are refused so configuration has one auditable source. See docs/database.md for the per-option rationale.
+REFUSED_LIBPQ_ENV = (
+    "PGSERVICE", "PGHOSTADDR", "PGSSLMODE", "PGREQUIRESSL", "PGSSLROOTCERT", "PGSSLCRL", "PGSSLCRLDIR",
+    "PGSSLCERT", "PGSSLKEY", "PGSSLCERTMODE", "PGSSLNEGOTIATION", "PGSSLCOMPRESSION", "PGSSLSNI",
+    "PGSSLMINPROTOCOLVERSION", "PGSSLMAXPROTOCOLVERSION",
+)
 _HOSTNAME = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
                        r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
 
@@ -134,6 +142,18 @@ def _is_ip(host: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def validate_sslrootcert(value: str | None) -> str | None:
+    """Validate a path lexically, without file I/O or exposing its value in diagnostics.
+
+    Accept absolute POSIX and Windows paths so container configuration can be checked on either host OS.
+    libpq's special `system` trust-store selector is deliberately not a path.
+    """
+    if value is not None and (not value or any(ord(char) < 32 or ord(char) == 127 for char in value)
+                              or not (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute())):
+        raise SettingsError("sslrootcert must be an absolute path without control characters")
+    return value
 
 
 class DatabaseSettings(BaseSettings):
@@ -152,10 +172,13 @@ class DatabaseSettings(BaseSettings):
     port: Annotated[int, Field(ge=1, le=65535)] = 5432
     name: DatabaseName
     sslmode: SslMode = "verify-full"
+    sslrootcert: str | None = Field(default=None, repr=False)
     connect_timeout_seconds: Annotated[int, Field(ge=2, le=30)] = 5
     pool_size: Annotated[int, Field(ge=1, le=50)] = 5
     auth_password: SecretStr
     app_password: SecretStr
+
+    _root_path = field_validator("sslrootcert")(validate_sslrootcert)
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
@@ -163,6 +186,8 @@ class DatabaseSettings(BaseSettings):
             raise SettingsError("host must be one IP address or DNS name")
         if self.sslmode == "disable" and not _is_loopback_ip(self.host):
             raise SettingsError("sslmode=disable is allowed only for a loopback IP host (127.0.0.1 or ::1)")
+        if self.sslmode in {"verify-ca", "verify-full"} and self.sslrootcert is None:
+            raise SettingsError("sslrootcert is required for verify-ca or verify-full")
         for name in ("auth_password", "app_password"):
             secret: SecretStr = getattr(self, name)
             value = secret.get_secret_value()

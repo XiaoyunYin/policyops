@@ -29,7 +29,7 @@ from policyops.budget.config import Caps, Configuration, EmbeddingActor
 from policyops.budget.ledger import Ledger
 from policyops.persistence.budget import AppLedgerStore
 from policyops.persistence.database import RUNTIME_CONNECT_OPTIONS, make_engine
-from policyops.persistence.retrieval import RetrievalStore, Snapshot
+from policyops.persistence.retrieval import RetrievalStore, Snapshot, StepRefused
 from policyops.providers.calls import Providers
 from policyops.providers.embedding_calls import pack, prepare_job, run_job_sync
 from policyops.providers.tokenizer import load as load_tokenizer
@@ -135,6 +135,19 @@ def lexical_snapshot(store: RetrievalStore, corpus: str, query: str, vector: str
     return store.snapshot(**arguments)
 
 
+def mining_snapshot(store: RetrievalStore, corpus: str, query: str, vector: str,
+                    mode: LexicalMode) -> tuple[Snapshot, bool]:
+    """Hybrid candidates; a query refused by the bounded any_terms lexeme cap falls back to dense-only candidates
+    (recorded per query and counted), instead of aborting the whole mining run. Any other refusal still fails."""
+    try:
+        return lexical_snapshot(store, corpus, query, vector, mode), False
+    except StepRefused as refused:
+        if refused.code != "lexical_query_too_many_lexemes":
+            raise
+    return store.snapshot(corpus_key=corpus, mode="dense", query=query, query_vector=vector, document_ids=(),
+                          branch_documents=20, chunks_per_document=1, full_policy_max_chunks=1), True
+
+
 def file_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -205,14 +218,16 @@ def mine(dataset: md.Dataset, plan: dict[str, Any], job: EmbeddingJob, configura
     if report.status != "complete" or len(report.vectors) != len(training) + len(validation):
         raise ValueError("mining_embedding_incomplete_ledger_retained")
     vectors = {v.position: v.vector for v in report.vectors}
-    counts = {"train": 0, "internal_validation": 0, "no_safe_negative": 0, "negatives": 0}
+    counts = {"train": 0, "internal_validation": 0, "no_safe_negative": 0, "negatives": 0, "lexical_cap_dense_only": 0}
     triples_path = output / "triples.jsonl"
     with triples_path.open("xb") as handle:
         for index, query in enumerate(training + validation):
             if time.monotonic() >= deadline:
                 raise ValueError("mining_deadline_partial_retained")
             vector = "[" + ",".join(str(v) for v in vectors[index]) + "]"
-            snapshot = lexical_snapshot(executor.retrieval, corpus, query.retrieval, vector, plan["lexical_mode"])
+            snapshot, dense_only = mining_snapshot(executor.retrieval, corpus, query.retrieval, vector,
+                                                   plan["lexical_mode"])
+            counts["lexical_cap_dense_only"] += int(dense_only)
             if (snapshot.generation_id != executor.generation or snapshot.text_oversized or snapshot.dense_nan_distance
                     or snapshot.embedding_model != "text-embedding-3-small" or snapshot.dimension != 1536):
                 raise ValueError("mining_corpus_snapshot_integrity")

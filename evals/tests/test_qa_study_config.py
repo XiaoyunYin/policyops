@@ -40,6 +40,7 @@ def answer_body(*, compound: bool = False) -> dict[str, Any]:
     for arm in value["arms"]:
         arm["kind"] = "answer_generation"
         arm["generator"] = model_binding()
+        arm["max_claims"] = 1
         arm["context"] = {"max_passages": 5, "evidence_tokens": 512,
                           "policy": "whole-passages-skip-overflow-v1"}
         for role in ("answer", "judge"):

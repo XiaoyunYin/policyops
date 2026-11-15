@@ -1,4 +1,4 @@
-"""Retrieval-only QA composition. Claims fence slots; the existing ledgers fence physical calls.
+"""QA retrieval and answer composition. Claims fence slots; ledgers fence physical calls.
 
 The app embedding ledger/cache remains authoritative for its workspace. A second,
 claim-bound evaluator ledger reserves first and settles last, so a process loss
@@ -7,9 +7,10 @@ between databases keeps liability rather than permitting a replacement dispatch.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 import json
 import os
@@ -22,7 +23,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 import psycopg
 from sqlalchemy import Engine, text
 
-from policyops.budget.config import Actor, Configuration, EmbeddingActor
+from policyops.budget.config import Actor, ChatActor, Configuration, EmbeddingActor
 from policyops.budget.config import Caps as LedgerCaps
 from policyops.budget.ledger import (
     Attempt,
@@ -42,16 +43,44 @@ from policyops.persistence.database import RUNTIME_CONNECT_OPTIONS, make_engine,
 from policyops.persistence.embeddings import EmbeddingStore
 from policyops.persistence.evaluation import EvaluationClaimToken, EvaluationRepository, EvaluationTrial, Slot
 from policyops.persistence.retrieval import RetrievalStore, StepRefused
-from policyops.providers.calls import Providers
+from policyops.providers.calls import CallLimits, Providers, call_sync
 from policyops.providers.embedding_calls import prepare_job, run_job_sync
 from policyops.providers.tokenizer import Tokenizer
 from policyops.providers.tokenizer import load as load_tokenizer
-from policyops.retrieval.rank import fuse
+from policyops.retrieval.rank import ChunkRow, Fused, fuse
+import policyops.retrieval.rerank as t14
 from policyops_contracts.embedding import EmbeddingJob
+from policyops_contracts.model import ModelRequest
+from policyops_contracts.retrieval import RerankConfig
 from policyops_evals.canonical import canonical_bytes, sha256_bytes
-from policyops_evals.qa_studies import registration
-from policyops_evals.qa_studies.config import ROOT, Arm, Caps, QAStudy, RetrievalOnly, Stage, preflight
-from policyops_evals.qa_studies.metrics import Measurement, cost_per_question, latency_percentile, retrieval_metrics
+from policyops_evals.qa_studies import answers, judges, registration
+from policyops_evals.qa_studies.calibration import G6_REGISTRY, billing_record, verdict_record
+from policyops_evals.qa_studies.config import (
+    ROOT,
+    AnswerGeneration,
+    Arm,
+    Caps,
+    ClosedBook,
+    CrossEncoder,
+    LunaReranker,
+    ModelBinding,
+    QAStudy,
+    Rerank,
+    RetrievalOnly,
+    Stage,
+    preflight,
+)
+from policyops_evals.qa_studies.cross_encoder import POLICY, CrossEncoderClient, Passage, WorkerError
+from policyops_evals.qa_studies.metrics import (
+    Measurement,
+    answerable_false_abstention_rate,
+    citation_metrics,
+    cost_per_question,
+    latency_percentile,
+    lexical_metrics,
+    quality_q,
+    retrieval_metrics,
+)
 from policyops_evals.qa_studies.statistics import QuestionObservation, comparison_result, paired_difference
 from policyops_evals.studies import bundles
 from policyops_evals.studies.runner_v2 import raw_inventory
@@ -61,12 +90,16 @@ class Refused(ValueError):
     pass
 
 
+QA_BUNDLE_BYTES = 64_000_000  # bounded QA schedules/exports exceed the retail snapshot's 4 MB per-file envelope
+
+
 @dataclass(frozen=True)
 class QueryInput:
     question_id: str
     dialogue_id: str
     history: str
     last_turn: str
+    generation: str = ""
 
 
 @dataclass(frozen=True)
@@ -81,6 +114,8 @@ class Inputs:
     gold: dict[str, Gold]
     cohorts: dict[str, tuple[str, ...]]
     passages: dict[str, str] = field(default_factory=dict)
+    passage_text: dict[str, answers.Passage] = field(default_factory=dict)
+    references: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -140,7 +175,7 @@ def load_inputs(study: QAStudy, directory: Path, *, root: Path = ROOT) -> Inputs
             value = json.loads((root / cohort.manifest.path).read_bytes())
             cohorts[cohort.name] = tuple(value["cohorts"][cohort.manifest_cohort]["query_ids"])
     wanted = {q for ids in cohorts.values() for q in ids}
-    queries, gold = {}, {}
+    queries, gold, reference_text = {}, {}, {}
     for row in query_rows:
         if {"answer", "reference_answer", "target_act", "passage_ids"} & row.keys():
             raise Refused("gold_in_query_materialization")
@@ -151,7 +186,10 @@ def load_inputs(study: QAStudy, directory: Path, *, root: Path = ROOT) -> Inputs
             history, last = row["retrieval"], row["last_turn"]
             if any(not isinstance(v, str) or not v or len(v) > 100_000 for v in (history, last)):
                 raise Refused("query_bounds")
-            queries[q] = QueryInput(q, row["domain"] + "/" + row["dialogue_id"], history, last)
+            generation = row.get("generation_history", "")
+            if not isinstance(generation, str) or len(generation) > 100_000:
+                raise Refused("generation_history_bounds")
+            queries[q] = QueryInput(q, row["domain"] + "/" + row["dialogue_id"], history, last, generation)
     for row in gold_rows:
         q = row["query_id"]
         if q in wanted:
@@ -160,6 +198,10 @@ def load_inputs(study: QAStudy, directory: Path, *, root: Path = ROOT) -> Inputs
                     or any(not isinstance(p, str) or not p.startswith("md2d.p/") or len(p) > 100 for p in ids)):
                 raise Refused("qrel_identity")
             gold[q] = Gold(tuple(ids), "clarification" if row["target_act"] == "query_condition" else "responding")
+            reference = row.get("answer", "")
+            if not isinstance(reference, str) or len(reference) > 100_000:
+                raise Refused("reference_bounds")
+            reference_text[q] = reference
     if queries.keys() != wanted or gold.keys() != wanted:
         raise Refused("materialization_schedule_bijection")
     passage_manifest = json.loads((root / study.data.passages.path).read_bytes())
@@ -168,7 +210,8 @@ def load_inputs(study: QAStudy, directory: Path, *, root: Path = ROOT) -> Inputs
     passages = {p["passage_id"]: sha256_bytes(canonical_bytes([p["heading"], p["body"]])) for p in passage_rows}
     if len(passages) != len(passage_rows) or not 1 <= len(passages) <= 5000:
         raise Refused("passage_bijection")
-    return Inputs(queries, gold, cohorts, passages)
+    text_by_id = {p["passage_id"]: answers.Passage(p["passage_id"], p["heading"], p["body"]) for p in passage_rows}
+    return Inputs(queries, gold, cohorts, passages, text_by_id, reference_text)
 
 
 def schedule(study: QAStudy, inputs: Inputs) -> tuple[Scheduled, ...]:
@@ -204,10 +247,70 @@ class ArmExecutor(Protocol):
 
 
 def retrieval_arm(arm: Arm) -> RetrievalOnly:
+    if isinstance(arm, (AnswerGeneration, Rerank)):
+        return RetrievalOnly(kind="retrieval_only", name=arm.name, retrieval=arm.retrieval)
+    if isinstance(arm, ClosedBook):
+        raise Refused("closed_book_has_no_retriever")
     if not isinstance(arm, RetrievalOnly):
         name = arm.policy.kind if arm.kind == "policy" else arm.kind
         raise Refused(f"{name}: not implemented in this slice")
     return arm
+
+
+def supported(study: QAStudy) -> None:
+    ce_contracts = set()
+    for arm in study.arms:
+        if not isinstance(arm, (RetrievalOnly, AnswerGeneration, Rerank, ClosedBook)):
+            name = arm.policy.kind if arm.kind == "policy" else arm.kind
+            raise Refused(f"{name}: not implemented in this slice")
+        if isinstance(arm, RetrievalOnly):
+            continue
+        generator = arm.generator
+        if generator is not None and (generator.effort not in (
+                {"none", "low"} if generator.model == "gpt-6-luna" else {"low"})
+                or generator.max_output_tokens > 1024
+                or generator.prompt_sha256 != sha256_bytes(answers.prompt(arm.max_claims).encode())
+                or generator.schema_sha256 != answers.SCHEMA_SHA256):
+            raise Refused("generator_contract_binding")
+        if isinstance(arm, (AnswerGeneration, Rerank)) and (
+                arm.context.max_passages > 5 or arm.context.evidence_tokens > 4096
+                or arm.context.policy != "whole-passages-skip-overflow-v1"):
+            raise Refused("evidence_contract")
+        if isinstance(arm, Rerank):
+            if arm.generator is None:
+                raise Refused("rerank_generator_required_in_this_slice")
+            if arm.retrieval.candidate_count != 20:
+                raise Refused("rerank_requires_top20_pool")
+            if isinstance(arm.reranker, LunaReranker):
+                model = arm.reranker.model
+                if (model.prompt_sha256 != t14.PROMPT_SHA256 or model.effort not in {"none", "low"}
+                        or model.schema_sha256 != sha256_bytes(t14.output_schema([t14.label(i)
+                            for i in range(1, 21)]).encode())
+                        or arm.reranker.excerpt_policy_sha256 != answers.EXCERPT_SHA256):
+                    raise Refused("rerank_contract_binding")
+            else:
+                ce = arm.reranker
+                pool = sha256_bytes(canonical_bytes(arm.retrieval.model_dump(mode="json")))
+                if (ce.candidate_pool_sha256 != pool or ce.truncation_policy_sha256 != sha256_bytes(POLICY.encode())
+                        or ce.max_length != 384 or ce.query_token_cap != 128 or ce.threads > 32
+                        or ce.runtime_sha256 != ce_runtime_digest()):
+                    raise Refused("cross_encoder_contract_binding")
+                ce_contracts.add((pool, ce.truncation_policy_sha256, ce.max_length, ce.query_token_cap,
+                                  ce.tokenizer_sha256))
+    if len(ce_contracts) > 1:
+        raise Refused("cross_encoder_pools_or_truncation_differ")
+    by_name = {a.name: a for a in study.arms}
+    if any(c.uses_judge and any(isinstance(by_name[n], ClosedBook) for n in (c.candidate, c.reference))
+           for c in study.analysis.comparisons):
+        raise Refused("closed_book_judged_metrics_not_measured")
+    if any(c.estimand == "gold_support" for c in study.analysis.comparisons):
+        raise Refused("gold_support_not_measured_in_this_slice")
+
+
+def ce_runtime_digest() -> str:
+    paths = ["evals/src/policyops_evals/qa_studies/cross_encoder.py", "reranker/src/policyops_reranker/model.py",
+             "reranker/src/policyops_reranker/score.py", "reranker/src/policyops_reranker/serve.py", "reranker/uv.lock"]
+    return sha256_bytes(canonical_bytes({p: sha256_bytes((ROOT / p).read_bytes()) for p in paths}))
 
 
 def stage_for(study: QAStudy, item: Scheduled, arm: RetrievalOnly) -> Stage:
@@ -426,15 +529,317 @@ def metrics_for(ranking: Sequence[str], gold: Gold, *, failed: bool) -> dict[str
         retrieval_metrics(ranking, gold.passage_ids, error=failed)).items()}
 
 
-def sanitized_metrics(value: Any) -> dict[str, str]:
+ANSWER_METRICS = ("citation_precision", "citation_recall", "quality_q", "false_abstention", "token_f1", "rouge_l",
+                  "delivered_coverage", "delivered_support")
+COMPOSITION_METRICS = (*ANSWER_METRICS, "citation_integrity")
+
+
+def role_stage(study: QAStudy, item: Scheduled, role: str) -> Stage:
+    stages = [s for s in study.execution.stages if s.role == role and s.cohort == item.cohort
+              and s.arm in (None, item.arm)]
+    if len(stages) != 1:
+        raise Refused("one_matching_execution_stage_required")
+    return stages[0]
+
+
+def composition_configuration(study: QAStudy, model: ModelBinding | None = None,
+                              actor: Actor = "agent") -> Configuration:
+    cap = study.execution.cumulative_caps
+    floor = Decimal("0.000001")
+    caps = LedgerCaps(study_usd=max(cap.usd, floor), study_calls=max(cap.calls, 1),
+        invocation_usd=max(cap.usd, floor), invocation_calls=max(cap.calls, 1),
+        scenario_usd=max(cap.usd, floor), scenario_calls=max(cap.calls, 1),
+        operation_usd=max(cap.usd, floor), operation_calls=1,
+        active_seconds=study.execution.request_deadline_seconds,
+        request_max_input=max(16000, model.max_input_tokens if model else 1024),
+        request_max_output=max(2048, model.max_output_tokens if model else 1))
+    base = Configuration(caps=caps)
+    actors = dict(base.actors) | {"embedding": EmbeddingActor("text-embedding-3-small", 1536, 1024, 1)}
+    if model is not None:
+        actors[actor] = ChatActor(actor, model.model, model.effort, model.cache_policy,
+                                  model.max_input_tokens, model.max_output_tokens)
+    return Configuration(caps=caps, actors=actors, registry=G6_REGISTRY)
+
+
+def admit_role(study: QAStudy, stage: Stage, repository: EvaluationRepository, scope: UUID,
+               shared: SharedUsage, reservation: Decimal) -> bool:
+    """Study advisory lease serializes admission. SQL ledger still authorizes each reservation.
+
+    Stage IDs are persisted in operation IDs, because an existing trial claim binds
+    one invocation for its whole lifetime. No claim rebinding or schema change.
+    Reservations (including releases) conservatively consume token/count envelopes.
+    """
+    with transaction(repository.engine) as connection:
+        rows = connection.execute(text("SELECT operation_id, actual_usd, reserved_usd, max_input, max_output, "
+            "extract(epoch FROM updated_at - created_at) AS seconds FROM evaluation.usage_attempts "
+            "WHERE study_scope_id = :study"), {"study": scope}).mappings().all()
+        program_usd = connection.execute(text("SELECT coalesce(sum(spent_usd + held_usd), 0) "
+            "FROM evaluation.budget_scopes WHERE kind = 'study'")).scalar_one()
+    if program_usd + shared.usd + shared.held + reservation > study.execution.program_cap_usd:
+        return False
+    prefix = "qa/" + stage.name + "/"
+    for cap, chosen, overhead in ((study.execution.cumulative_caps, rows, shared),
+            (stage.caps, [r for r in rows if r["operation_id"].startswith(prefix)], SharedUsage())):
+        if not envelope_fits(cap,
+                usd=sum((r["actual_usd"] if r["actual_usd"] is not None else r["reserved_usd"] for r in chosen),
+                        overhead.usd + overhead.held), calls=len(chosen) + overhead.calls,
+                counts=len(chosen) + overhead.calls, inputs=sum(r["max_input"] for r in chosen) + overhead.inputs,
+                outputs=sum(r["max_output"] for r in chosen) + stage.max_output_tokens,
+                seconds=sum((r["seconds"] for r in chosen), overhead.seconds), next_usd=reservation,
+                next_inputs=stage.max_input_tokens, next_seconds=min(60, study.execution.request_deadline_seconds),
+                paid=True):
+            return False
+    selected = [r for r in rows if r["operation_id"].startswith(prefix)]
+    return len(selected) < min(stage.planned_calls, stage.planned_counts)
+
+
+def admit_slot_time(study: QAStudy, repository: EvaluationRepository, scope: UUID, shared: SharedUsage) -> bool:
+    with transaction(repository.engine) as connection:
+        elapsed = connection.execute(text("SELECT coalesce(sum(coalesce(t.latency_ms / 1000.0, :deadline)), 0) "
+            "FROM evaluation.trial_claims c LEFT JOIN evaluation.evaluation_trials t ON t.id = c.id "
+            "WHERE c.study_scope = :study AND c.started_at IS NOT NULL"),
+            {"study": scope, "deadline": study.execution.request_deadline_seconds}).scalar_one()
+    return bool(elapsed + shared.seconds + study.execution.request_deadline_seconds
+                <= study.execution.cumulative_caps.seconds)
+
+
+class RoleLedger(Ledger):
+    def __init__(self, base: Ledger, stage: Stage, admission: Callable[[Decimal], bool],
+                 boundary: Callable[[str], None]) -> None:
+        super().__init__(base.store, base.configuration)
+        self.stage, self.admission, self.boundary = stage, admission, boundary
+
+    def reserve(self, binding: Binding, attempt_id: UUID, actor: Actor, operation_id: str,
+                request_sha256: str) -> Reserved:
+        if not self.admission(self.configuration.reservation(actor).worst_usd):
+            raise Refused("stage_or_cumulative_cap")
+        return super().reserve(binding, attempt_id, actor,
+            "qa/" + self.stage.name + "/" + sha256_bytes(operation_id.encode()), request_sha256)
+
+    def begin_dispatch(self, attempt_id: UUID, request_sha256: str) -> DispatchGranted | DispatchRefused:
+        result = super().begin_dispatch(attempt_id, request_sha256)
+        if isinstance(result, DispatchGranted):
+            self.boundary(self.stage.role + "_dispatched")
+        return result
+
+
+@dataclass
+class AnswerState:
+    ranking: tuple[str, ...] = ()
+    ranking_complete: bool = False
+    outcome_code: str | None = None
+    first_stage: tuple[str, ...] = ()
+    delivery: answers.Delivery = field(default_factory=lambda: answers.Delivery((), (), (), 0))
+    answer: answers.Answer | None = None
+    claims: tuple[str, ...] = ()
+    verdicts: list[bool | None] = field(default_factory=list)
+    audit: list[dict[str, Any]] = field(default_factory=list)
+    stage_latency_ms: dict[str, int] = field(default_factory=dict)
+    stage_cost_usd: dict[str, str | None] = field(default_factory=dict)
+    rerank_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class AnswerExecutor:
+    """Composes retrieval, paid calls and local CE. This object never receives Gold/references."""
+    def __init__(self, study: QAStudy, repository: EvaluationRepository, scope: UUID,
+                 token: EvaluationClaimToken, item: Scheduled, shared: SharedUsage,
+                 providers: Callable[[], Providers], boundary: Callable[[str], None]) -> None:
+        self.study, self.repository, self.scope, self.token, self.item = study, repository, scope, token, item
+        self.shared, self.providers, self.boundary = shared, providers, boundary
+
+    def cost(self, actor: Actor) -> str | None:
+        with transaction(self.repository.engine) as connection:
+            costs = connection.execute(text("SELECT actual_usd, state FROM evaluation.usage_attempts "
+                "WHERE scenario_scope_id = :scenario AND actor = :actor"),
+                {"scenario": self.token.binding.scenario_id, "actor": actor}).mappings().all()
+        return (str(sum((c["actual_usd"] or Decimal(0) for c in costs), Decimal(0)))
+                if all(c["state"] in {"settled", "released"} for c in costs) else None)
+
+    def ledger(self, role: str, model: ModelBinding | None = None, actor: Actor = "agent") -> RoleLedger:
+        stage = role_stage(self.study, self.item, role)
+        if model is not None and (stage.model != model.model or stage.max_input_tokens != model.max_input_tokens
+                or stage.max_output_tokens != model.max_output_tokens or stage.cache_policy != model.cache_policy):
+            raise Refused("stage_model_envelope_mismatch")
+        config = composition_configuration(self.study, model, actor)
+        base = Ledger(EvalLedgerStore(self.repository.engine, env="evaluation", claim_token=self.token), config)
+        return RoleLedger(base, stage, lambda reserve: admit_role(self.study, stage, self.repository, self.scope,
+                                                                self.shared, reserve), self.boundary)
+
+    def paid(self, role: str, model: ModelBinding, request: ModelRequest, state: AnswerState, deadline: float,
+             index: int = 0) -> str | None:
+        actor: Actor = "agent" if role == "answer" else "judge" if role == "judge" else "reranker"
+        ledger = self.ledger(role, model, actor)
+        self.boundary("before_" + role)
+        started = time.monotonic()
+        from policyops.providers.accounting import AccountingUnconfirmed
+
+        try:
+            report = call_sync(ledger, self.providers(), self.token.binding, self.item.id, role + "/" + str(index),
+                request, actor, deadline=min(deadline, started + 60),
+                limits=CallLimits(retries_per_request=0, repairs=0, backoff_seconds=0,
+                                  attempt_seconds=min(60, self.study.execution.request_deadline_seconds)))
+        except AccountingUnconfirmed as failure:
+            state.audit.append({"role": role, "index": index, "billing": billing_record(failure.report)})
+            raise Refused("unresolved_billing") from None
+        finally:
+            state.stage_latency_ms[role] = (state.stage_latency_ms.get(role, 0)
+                                            + int((time.monotonic() - started) * 1000))
+        state.audit.append({"role": role, "index": index, "billing": billing_record(report)})
+        state.audit[-1]["output"] = None if report.result is None else report.result.structured_json
+        # Usage is read from this claim's attempts; no content is retained in public metadata.
+        state.stage_cost_usd[role] = self.cost(actor)
+        self.boundary("after_" + role)
+        if (role in {"answer", "rerank"} and report.result is not None
+                and report.result.outcome == "truncated" and report.result.stop_reason == "max_output_tokens"):
+            raise Refused(role + "_output_limit")
+        if role == "judge":
+            verdict, settled = verdict_record(report)
+            if verdict is None or not settled:
+                raise Refused("invalid_judge_verdict")
+            state.verdicts.append(verdict)
+        if (report.status != "result" or report.result is None or report.result.outcome != "structured"
+                or report.result.tool_calls or report.cleanup_unconfirmed
+                or not report.attempts or any(a.fate != "settled" for a in report.attempts)):
+            raise Refused(role + "_call_failed")
+        return report.result.structured_json
+
+    def execute(self, arm: AnswerGeneration | Rerank | ClosedBook, query: QueryInput, retriever: ArmExecutor,
+                passage_text: dict[str, answers.Passage], tokenizer: Tokenizer, state: AnswerState,
+                judge: judges.JudgeArm | None, ce: Callable[[CrossEncoder, float], CrossEncoderClient],
+                deadline: float) -> None:
+        if not query.generation:
+            raise Refused("chronological_generation_history_required")
+        if not isinstance(arm, ClosedBook):
+            ledger = self.ledger("embedding") if arm.retrieval.method != "fts" else self.ledger_local()
+            started = time.monotonic()
+            try:
+                state.ranking = retriever.execute(retrieval_arm(arm), query, self.item, ledger,
+                                                  min(deadline, started + 60))
+            finally:
+                state.stage_latency_ms["embedding"] = int((time.monotonic() - started) * 1000)
+                state.stage_cost_usd["embedding"] = self.cost("embedding")
+            state.first_stage = state.ranking
+            if isinstance(arm, Rerank) and state.ranking:
+                self.rerank(arm, query, passage_text, state, ce, deadline)
+            state.ranking_complete = True
+            state.delivery = answers.deliver(state.ranking, passage_text, arm.context, tokenizer)
+        if arm.generator is None:
+            return
+        payload = self.paid("answer", arm.generator, answers.request(query.generation, state.delivery.passages,
+            max_claims=arm.max_claims, max_output=arm.generator.max_output_tokens), state, deadline)
+        state.answer = answers.parse_answer(payload)
+        state.claims = answers.sentences(state.answer.answer, maximum=arm.max_claims)
+        if isinstance(arm, ClosedBook):
+            if state.answer.citations:
+                raise Refused("closed_book_citations")
+            return
+        checks = answers.citations(state.answer, state.delivery)
+        if any(not c.valid for c in checks):
+            state.outcome_code = "undelivered_citation"
+            return
+        document = answers.cited_document(state.answer, state.delivery)
+        if not state.answer.abstain and not document:
+            state.outcome_code = "uncited_answer"
+            return
+        if document and state.claims:
+            if judge is None or self.study.judge is None:
+                raise Refused("judge_binding_required")
+            for index, claim in enumerate(state.claims):
+                self.paid("judge", self.study.judge, judges.request(judge, document, claim), state, deadline, index)
+
+    def ledger_local(self) -> Ledger:
+        return Ledger(EvalLedgerStore(self.repository.engine, env="evaluation", claim_token=self.token),
+                      composition_configuration(self.study))
+
+    def rerank(self, arm: Rerank, query: QueryInput, passages: dict[str, answers.Passage], state: AnswerState,
+               ce: Callable[[CrossEncoder, float], CrossEncoderClient], deadline: float) -> None:
+        started = time.monotonic()
+        self.boundary("before_rerank")
+        value = query.history if arm.retrieval.query_profile == "history-four-v1" else query.last_turn
+        try:
+            if isinstance(arm.reranker, CrossEncoder):
+                state.stage_cost_usd["rerank"] = "0"
+                result = ce(arm.reranker, deadline).rerank(value,
+                    [Passage(id=p, text=passages[p].heading + "\n\n" + passages[p].body) for p in state.ranking],
+                    top_k=len(state.ranking))
+                state.ranking = tuple(result.ranking)
+                state.rerank_metadata = {"truncation": [s.truncation.model_dump() for s in result.scores]}
+                self.boundary("after_rerank")
+            else:
+                fused, rows = [], {}
+                for i, p in enumerate(state.ranking):
+                    identity = uuid5(self.item.id, p)
+                    fused.append(Fused(identity, p, i + 1, Fraction(1, i + 1), i + 1, None, (identity,)))
+                    text = passages[p]
+                    rows[identity] = ChunkRow(identity, identity, identity, p, 1, text.heading, 0, len(text.body),
+                                              text.body)
+                built = t14.build_input(workspace_id=UUID(int=0), run_id=self.item.id, step=0,
+                    request_sha256=sha256_bytes(value.encode()), query=value,
+                    config=RerankConfig(documents=20, excerpt_bytes=1000,
+                        max_output_tokens=arm.reranker.model.max_output_tokens),
+                    fused=fused, rows=rows, chunks_per_document=1)
+                state.rerank_metadata = {"excerpts_truncated": built.excerpts_truncated, "skipped": built.skipped}
+                if built.skipped == "skipped_few_candidates":
+                    return
+                if built.skipped:
+                    raise Refused("rerank_input_bound")
+                payload = self.paid("rerank", arm.reranker.model, t14.model_request(built), state, deadline)
+                ranking = t14.parse_ranking(payload, built.labels)
+                if ranking is None:
+                    raise Refused("invalid_rerank")
+                state.ranking = tuple(f.source_uri for f in t14.reorder(fused, built.window_document_ids, ranking))
+        except WorkerError:
+            raise Refused("cross_encoder_failure") from None
+        finally:
+            state.stage_latency_ms["rerank"] = int((time.monotonic() - started) * 1000)
+
+
+def answer_metrics(state: AnswerState, arm: Arm, gold: Gold, reference: str, *, failed: bool
+                   ) -> dict[str, str | None]:
+    closed = isinstance(arm, ClosedBook)
+    result: dict[str, str | None] = dict(metrics_for(state.ranking, gold, failed=not state.ranking_complete))
+    if closed:
+        result = dict.fromkeys(result)
+    response = state.answer
+    cited = citation_metrics(answers.citations(response, state.delivery) if response else (), gold.passage_ids)
+    result.update({"citation_precision": None if closed else str(cited.precision),
+        "citation_recall": None if closed else str(cited.recall),
+        "citation_integrity": None if closed else str(int(cited.integrity_failures == 0 and response is not None)),
+        "quality_q": None if closed else str(int(quality_q(response.answer if response else "",
+            abstained=response.abstain if response else False, citations=cited,
+            claim_supported=state.verdicts if len(state.verdicts) == len(state.claims) else [None], error=failed))),
+        "false_abstention": str(answerable_false_abstention_rate([bool(gold.passage_ids)],
+            [response.abstain if response else None]) or Fraction(0)),
+        "delivered_coverage": None if closed or not gold.passage_ids else str(Fraction(
+            len({p.id for p in state.delivery.passages} & set(gold.passage_ids)), len(set(gold.passage_ids)))),
+        "delivered_support": None if closed else str(int(bool(state.claims) and not failed
+            and len(state.verdicts) == len(state.claims) and all(v is True for v in state.verdicts)))})
+    try:
+        lexical = lexical_metrics(response.answer if response else "", reference, error=failed)
+    except ValueError:
+        raise Refused("lexical_metric_bound") from None
+    result.update({k: str(v) for k, v in asdict(lexical).items()})
+    if failed:
+        # Strict non-success for composition metrics, even if the answer was
+        # parsed before a later judge failed. Completed ranking stays valid.
+        for key in COMPOSITION_METRICS:
+            if result[key] is not None:
+                result[key] = "0"
+    return result
+
+
+def sanitized_metrics(value: Any) -> dict[str, str | None]:
     if not isinstance(value, dict):
         raise Refused("stored_metric_shape")
-    names = asdict(retrieval_metrics((), ())).keys()
-    selected = {}
+    names = (*asdict(retrieval_metrics((), ())), *COMPOSITION_METRICS)
+    selected: dict[str, str | None] = {}
     for name in names:
         if name not in value:
             continue
         raw = value[name]
+        if raw is None:
+            selected[name] = None
+            continue
         if not isinstance(raw, str) or len(raw) > 64 or not re.fullmatch(r"[0-9]+(?:/[1-9][0-9]*)?", raw):
             raise Refused("stored_metric_value")
         score = Fraction(raw)
@@ -442,6 +847,67 @@ def sanitized_metrics(value: Any) -> dict[str, str]:
             raise Refused("stored_metric_value")
         selected[name] = str(score)
     return selected
+
+
+def private_answer(state: AnswerState) -> dict[str, Any]:
+    return {"ranked_passage_ids": state.ranking if state.ranking_complete else (),
+        "ranking_complete": state.ranking_complete, "outcome_code": state.outcome_code,
+        "first_stage_passage_ids": state.first_stage,
+        "delivered_passage_ids": [p.id for p in state.delivery.passages],
+        "skipped_overflow": state.delivery.skipped_overflow, "skipped_limit": state.delivery.skipped_limit,
+        "evidence_tokens": state.delivery.tokens, "answer": None if state.answer is None else state.answer.model_dump(),
+        "claims": state.claims, "verdicts": state.verdicts, "audit": state.audit,
+        "rerank_metadata": state.rerank_metadata, "stage_latency_ms": state.stage_latency_ms,
+        "stage_cost_usd": state.stage_cost_usd}
+
+
+PUBLIC_FAILURES = frozenset({"abandoned_claim", "unresolved_billing", "slot_execution_error", "slot_deadline",
+    "query_embedding_incomplete", "query_token_bound", "lexical_query_too_many_lexemes", "corpus_snapshot_integrity",
+    "structural_passage_identity", "claim_bound_embedding_required", "chronological_generation_history_required",
+    "answer_providers_required", "unsupported_arm", "evidence_contract", "unknown_ranked_passage", "invalid_answer",
+    "generation_input_bound", "too_many_claims", "claim_limit", "undelivered_citation", "closed_book_citations",
+    "judge_binding_required", "missing_cited_evidence", "invalid_judge_verdict", "answer_call_failed",
+    "judge_call_failed", "rerank_call_failed", "answer_output_limit", "rerank_output_limit",
+    "invalid_rerank", "rerank_input_bound", "cross_encoder_failure", "stage_or_cumulative_cap",
+    "stage_model_envelope_mismatch", "one_matching_execution_stage_required", "lexical_metric_bound"})
+
+
+def public_failure(value: Any) -> str | None:
+    return value if value is None or (isinstance(value, str) and value in PUBLIC_FAILURES) else "unclassified_failure"
+
+
+def public_stages(value: Any) -> dict[str, Any]:
+    """Allowlist metadata independently of the stored private components."""
+    if not isinstance(value, dict):
+        raise Refused("stored_stage_shape")
+    result: dict[str, Any] = {}
+    for role in ("embedding", "answer", "judge", "rerank"):
+        if role not in value:
+            continue
+        entry = value[role]
+        if not isinstance(entry, dict):
+            raise Refused("stored_stage_shape")
+        latency, cost = entry.get("latency_ms"), entry.get("cost_usd")
+        if isinstance(cost, str) and len(cost) <= 32:
+            # The ledger stores exact Decimals, which can serialize in exponent form (e.g. "0E-8" for zero).
+            try:
+                parsed = Decimal(cost)
+            except InvalidOperation:
+                raise Refused("stored_stage_cost") from None
+            if parsed.is_finite() and parsed >= 0:
+                cost = format(parsed, "f")
+        if latency is not None and (type(latency) is not int or not 0 <= latency <= 604800000):
+            raise Refused("stored_stage_latency")
+        if cost is not None and (not isinstance(cost, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]{1,12})?", cost)
+                                 or len(cost) > 32):
+            raise Refused("stored_stage_cost")
+        result[role] = {"latency_ms": latency, "cost_usd": cost}
+    return result
+
+
+def metric_failed(slot: dict[str, Any], metric: str) -> bool:
+    """Legacy rows retain strict slot missingness; new rows bind each metric."""
+    return bool(slot.get("metric_failures", {}).get(metric, slot["outcome"] != "success"))
 
 
 def export(study: QAStudy, order: Sequence[Scheduled], repository: EvaluationRepository,
@@ -456,38 +922,81 @@ def export(study: QAStudy, order: Sequence[Scheduled], repository: EvaluationRep
         if claim is not None and ((row is not None and row["cost_status"] != "known")
                                   or claim.state == "running"):
             held = repository.usage(claim.scenario_id)["held_usd"]
-        slots.append({"slot_id": str(item.id), "cohort": item.cohort, "question_id": item.question,
+        slot_value: dict[str, Any] = {"slot_id": str(item.id), "cohort": item.cohort, "question_id": item.question,
             "arm": item.arm, "repetition": item.repetition, "outcome": "missing" if row is None else row["outcome"],
             "metrics": {} if row is None else sanitized_metrics(row["components"].get("metrics", {})),
             "cost_usd": None if row is None or row["cost_usd"] is None else str(row["cost_usd"]),
             "cost_status": "unknown" if row is None else row["cost_status"],
             "held_liability_usd": str(held),
             "latency_ms": None if row is None else row["latency_ms"],
-            "failure_code": "missing" if row is None else row["error_class"]})
+            "failure_code": "missing" if row is None else public_failure(row["error_class"])}
+        if row is not None:
+            failures = row["components"].get("metric_failures", {})
+            if not isinstance(failures, dict) or any(type(v) is not bool for v in failures.values()):
+                raise Refused("stored_metric_failures")
+            slot_value["metric_failures"] = {k: failures[k] for k in slot_value["metrics"] if k in failures}
+            code = row["components"].get("outcome_code")
+            slot_value["outcome_code"] = (code if isinstance(code, str) and code in {
+                "uncited_answer", "undelivered_citation"} else None)
+        if row is not None and "stages" in row["components"]:
+            stages = public_stages(row["components"]["stages"])
+            slot_value["stages"] = stages
+            judge = stages.get("judge", {})
+            policy_cost = (row["cost_usd"] - Decimal(judge.get("cost_usd") or "0")
+                           if row["cost_usd"] is not None else None)
+            if policy_cost is not None and policy_cost < 0:
+                raise Refused("stored_stage_cost_contradiction")
+            slot_value["policy_cost_usd"] = (str(policy_cost)
+                if row["cost_status"] == "known" and row["cost_usd"] is not None else None)
+            slot_value["policy_latency_ms"] = (max(0, row["latency_ms"] - (judge.get("latency_ms") or 0))
+                                               if row["latency_ms"] is not None else None)
+        slots.append(slot_value)
     return {"schema_version": "policyops.qa-export/v1", "study_id": str(study.study_id),
             "specification_sha256": study.digest(), "slots": slots}
 
 
 def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: EvaluationRepository,
-           scope: UUID, source: dict[str, Any]) -> dict[str, Any]:
+           scope: UUID, source: dict[str, Any], judge_result: registration.JudgeResult | None = None) -> dict[str, Any]:
+    if study.judge is None or study.judge.test_report_sha256 is None:
+        judge_result = None
     by_key = {(s["cohort"], s["question_id"], s["arm"], s["repetition"]): s for s in public["slots"]}
     aggregates = []
     for assignment in study.schedule.assignments:
         rows = [s for s in public["slots"] if (s["cohort"], s["arm"]) == (assignment.cohort, assignment.arm)]
-        names = asdict(retrieval_metrics((), ())).keys()
-        measurements = [Measurement(None if s["cost_usd"] is None else Decimal(s["cost_usd"]),
-            None if s["latency_ms"] is None else Decimal(s["latency_ms"]) / 1000,
+        arm = next(a for a in study.arms if a.name == assignment.arm)
+        names = (*asdict(retrieval_metrics((), ())), *COMPOSITION_METRICS) if not isinstance(arm, RetrievalOnly) else (
+            tuple(asdict(retrieval_metrics((), ()))))
+        measurements = [Measurement(None if s.get("policy_cost_usd", s["cost_usd"]) is None else Decimal(
+            s.get("policy_cost_usd", s["cost_usd"])), None if s.get("policy_latency_ms", s["latency_ms"]) is None
+            else Decimal(s.get("policy_latency_ms", s["latency_ms"])) / 1000,
             "missing" if s["outcome"] == "missing" else "success" if s["outcome"] == "success" else "error",
             Decimal(s["held_liability_usd"])) for s in rows]
         aggregates.append({"cohort": assignment.cohort, "arm": assignment.arm, "scheduled": len(rows),
             "failed_or_missing": sum(s["outcome"] != "success" for s in rows),
+            "outcome_counts": {code: sum(s.get("outcome_code") == code for s in rows)
+                               for code in ("uncited_answer", "undelivered_citation")},
+            "failure_counts": {code: sum(s["failure_code"] == code for s in rows)
+                               for code in sorted({s["failure_code"] for s in rows if s["failure_code"] is not None})},
+            "metric_failed_counts": {key: sum(metric_failed(s, key) for s in rows
+                if not isinstance(arm, ClosedBook) or key in {"token_f1", "rouge_l", "false_abstention"})
+                for key in names},
+            "experimental_spend_usd": str(sum((Decimal(s["cost_usd"]) for s in rows
+                                                 if s["cost_usd"] is not None), Decimal(0))),
             "cost": {k: str(v) if isinstance(v, Decimal) else v
                      for k, v in asdict(cost_per_question(measurements)).items()},
             "latency": {label: {k: str(v) if isinstance(v, Decimal) else v
                                 for k, v in asdict(latency_percentile(measurements, probability)).items()}
                         for label, probability in (("p50", Fraction(1, 2)), ("p95", Fraction(19, 20)))},
-            "metrics": {key: str(sum((Fraction(s["metrics"].get(key, "0")) if s["outcome"] == "success"
-                                      else Fraction(0) for s in rows), Fraction(0)) / len(rows)) for key in names}})
+            "metrics": {key: None if isinstance(arm, ClosedBook) and key not in {
+                "token_f1", "rouge_l", "false_abstention"} else str(sum((
+                    Fraction(s["metrics"].get(key) or "0") if not metric_failed(s, key) else Fraction(0)
+                    for s in rows), Fraction(0)) / len(rows)) for key in names},
+            "stages": {role: {"known_cost_usd": str(sum((
+                Decimal(s.get("stages", {}).get(role, {}).get("cost_usd") or "0") for s in rows), Decimal(0))),
+                "latency_ms": sum(s.get("stages", {}).get(role, {}).get("latency_ms")
+                or 0 for s in rows), "unconfirmed": sum(s["outcome"] != "success" or (
+                    role in s.get("stages", {}) and s["stages"][role].get("cost_usd") is None) for s in rows)}
+                for role in ("embedding", "rerank", "answer", "judge")}})
     comparisons = []
     for comparison in study.analysis.comparisons:
         ids, clusters = [], []
@@ -498,18 +1007,25 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
             for repetition in range(study.schedule.repetitions):
                 ids.append(q + ":" + str(repetition))
                 clusters.append(inputs.queries[q].dialogue_id)
-                for arm, values in observations.items():
-                    row = by_key[comparison.cohort, q, arm, repetition]
+                for arm_name, values in observations.items():
+                    row = by_key[comparison.cohort, q, arm_name, repetition]
                     missing = row["outcome"] == "missing"
-                    success = row["outcome"] == "success"
+                    success = not metric_failed(row, comparison.estimand)
+                    ranking_metric = comparison.estimand in asdict(retrieval_metrics((), ()))
+                    # Ranking comparisons use completion/latency of that stage;
+                    # end-to-end policy latency remains censored in aggregates.
+                    latency_ms = (sum(row.get("stages", {}).get(role, {}).get("latency_ms") or 0
+                                      for role in ("embedding", "rerank")) if ranking_metric and "stages" in row
+                                  else row.get("policy_latency_ms", row["latency_ms"]))
                     values.append(None if missing else QuestionObservation(
-                        Fraction(row["metrics"].get(comparison.estimand, "0")) if success else None,
-                        Measurement(None if row["cost_usd"] is None else Decimal(row["cost_usd"]),
-                            None if row["latency_ms"] is None else Decimal(row["latency_ms"]) / 1000,
+                        Fraction(row["metrics"].get(comparison.estimand) or "0") if success else None,
+                        Measurement(None if row.get("policy_cost_usd", row["cost_usd"]) is None else Decimal(
+                            row.get("policy_cost_usd", row["cost_usd"])),
+                            None if latency_ms is None else Decimal(latency_ms) / 1000,
                             "success" if success else "error", Decimal(row["held_liability_usd"]))))
         candidate, reference = observations[comparison.candidate], observations[comparison.reference]
         result = comparison_result(study, comparison.name, ids, clusters, candidate, reference,
-                                   registration_sha256=study.registration_sha256)
+                                   registration_sha256=study.registration_sha256, judge=judge_result)
         estimate = paired_difference([o.value if o else None for o in candidate],
             [o.value if o else None for o in reference], clusters, seed=study.analysis.bootstrap_seed,
             alpha=Fraction(comparison.alpha))
@@ -519,7 +1035,15 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
                 DescriptiveView(repository.engine) if study.purpose == "dev" and study.registration_sha256 is None
                 else repository, scope, source)})
     return {"schema_version": "policyops.qa-report/v1", "purpose": study.purpose,
-            "aggregates": aggregates, "comparisons": comparisons}
+            "aggregates": aggregates, "comparisons": comparisons,
+            "judge_gate": None if judge_result is None else judge_result.model_dump(mode="json"),
+            "limitations": ["Q is a citation/support surrogate, not human answer correctness.",
+                "Closed-book citations, faithfulness and Q are N/A; gold-evidence support is not measured.",
+                "Natural-unanswerable accuracy is N/A; lexical agreement is exploratory.",
+                "Luna reranking uses bounded excerpts; CE uses query128/pair384 prefix truncation.",
+                "Ranking metrics survive downstream failures; per-metric failure counts retain all scheduled slots.",
+                "Lexical lexeme-cap refusals are strict retrieval failures, with no fallback.",
+                "Judged comparisons are descriptive without a bound passing G6 test report."]}
 
 
 class DescriptiveView(EvaluationRepository):
@@ -533,12 +1057,19 @@ class DescriptiveView(EvaluationRepository):
 
 def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store: EvalLedgerStore,
         executor: ArmExecutor, *, allow_paid: bool, resume: bool,
-        source: dict[str, Any] | None = None, boundary: Callable[[str], None] = lambda _: None) -> dict[str, Any]:
+        source: dict[str, Any] | None = None, boundary: Callable[[str], None] = lambda _: None,
+        providers: Callable[[], Providers] | None = None, tokenizer: Tokenizer | None = None,
+        selection_receipt: Path | None = None,
+        cross_encoder: Callable[[CrossEncoder, float], CrossEncoderClient] | None = None) -> dict[str, Any]:
     study.validate_data()
-    arms = {arm.name: retrieval_arm(arm) for arm in study.arms}
+    supported(study)
+    arms = {arm.name: arm for arm in study.arms}
+    judged = any(isinstance(a, AnswerGeneration) or (isinstance(a, Rerank) and a.generator is not None)
+                 for a in arms.values())
+    judge = answers.selected_judge(study.judge, selection_receipt) if judged else None
     if study.example or not preflight(study)["within_caps"]:
         raise Refused("real_study_within_caps_required")
-    if any(a.retrieval.method != "fts" for a in arms.values()) and not allow_paid:
+    if any(not isinstance(a, RetrievalOnly) or a.retrieval.method != "fts" for a in arms.values()) and not allow_paid:
         raise Refused("paid_opt_in_required_before_credentials")
     source = registration.source_provenance() if source is None else source
     registration.validate_source(study, source)
@@ -571,13 +1102,15 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                   "execution_binding": executor.binding(),
                   "shared_preprocessing": {k: str(v) for k, v in asdict(shared).items()},
                   "schedule": [asdict(s) | {"id": str(s.id)} for s in order]}
-        bundles.write(directory / "study.json", canonical_bytes(frozen))
+        bundles.write(directory / "study.json", canonical_bytes(frozen), byte_limit=QA_BUNDLE_BYTES)
         boundary("frozen")
         lookup = {}
         for item in order:
-            stage = stage_for(study, item, arms[item.arm])
-            config = configuration(study, stage)
-            stage_id = uuid5(scope, "stage/" + stage.name)
+            arm = arms[item.arm]
+            stage = stage_for(study, item, arm) if isinstance(arm, RetrievalOnly) else role_stage(study, item, "answer"
+                if not isinstance(arm, Rerank) or arm.generator is not None else "rerank")
+            config = configuration(study, stage) if isinstance(arm, RetrievalOnly) else composition_configuration(study)
+            stage_id = uuid5(scope, "stage/" + stage.name if isinstance(arm, RetrievalOnly) else "qa-composition/v1")
             store.ensure_invocation(scope, stage_id, config.caps)
             scenario = store.ensure_scenario(scope, item.task, item.repetition,
                                              study.arm_digest(arms[item.arm]), config.caps)
@@ -600,8 +1133,13 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                 if existing[item.id].state != "scheduled":
                     continue
                 slot, stage, stage_id, config = lookup[item.id]
-                paid = executor.needs_embedding(arms[item.arm], inputs.queries[item.question])
-                if not admit(study, item, stage, repository, scope, stage_id, paid=paid, shared=shared):
+                arm = arms[item.arm]
+                paid = (not isinstance(arm, ClosedBook)
+                        and executor.needs_embedding(retrieval_arm(arm), inputs.queries[item.question]))
+                if isinstance(arm, RetrievalOnly) and not admit(study, item, stage, repository, scope, stage_id,
+                                                               paid=paid, shared=shared):
+                    break
+                if not isinstance(arm, RetrievalOnly) and not admit_slot_time(study, repository, scope, shared):
                     break
                 # The global evaluator total is a conservative parent cap, including other study families.
                 with transaction(repository.engine) as connection:
@@ -617,30 +1155,70 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                 started = time.monotonic()
                 error: str | None = None
                 ranking: tuple[str, ...] = ()
+                state = AnswerState()
                 try:
-                    ledger = Ledger(EvalLedgerStore(repository.engine, env="evaluation", claim_token=token), config)
                     boundary("before_execute")
-                    ranking = executor.execute(arms[item.arm], inputs.queries[item.question], item, ledger,
-                                               started + study.execution.request_deadline_seconds)
+                    if isinstance(arm, RetrievalOnly):
+                        ledger = Ledger(EvalLedgerStore(repository.engine, env="evaluation", claim_token=token), config)
+                        ranking = executor.execute(arm, inputs.queries[item.question], item, ledger,
+                                                   started + study.execution.request_deadline_seconds)
+                    else:
+                        if not isinstance(arm, (AnswerGeneration, Rerank, ClosedBook)):
+                            raise Refused("unsupported_arm")
+                        if providers is None:
+                            raise Refused("answer_providers_required")
+                        if cross_encoder is None:
+                            def absent_ce(binding: CrossEncoder, deadline: float) -> CrossEncoderClient:
+                                raise WorkerError("worker_not_configured")
+                            ce: Callable[[CrossEncoder, float], CrossEncoderClient] = absent_ce
+                        else:
+                            ce = cross_encoder
+                        composed = AnswerExecutor(study, repository, scope, token, item, shared, providers, boundary)
+                        composed.execute(arm, inputs.queries[item.question], executor, inputs.passage_text,
+                            tokenizer or load_tokenizer(), state, judge, ce,
+                            started + study.execution.request_deadline_seconds)
+                        ranking = state.ranking
                     boundary("executed")
                     if time.monotonic() - started >= study.execution.request_deadline_seconds:
                         raise Refused("slot_deadline")
                 except Exception as failure:
-                    error = str(failure) if isinstance(failure, Refused) else "slot_execution_error"
+                    error = (str(failure) if isinstance(failure, (Refused, answers.AnswerError))
+                             else "slot_execution_error")
+                finally:
+                    if not isinstance(arm, RetrievalOnly):
+                        ranking = state.ranking if state.ranking_complete else ()
+                        # Includes process-loss injection after any stage boundary. The outer
+                        # inventory seals this private checkpoint even when finalization never ran.
+                        bundles.write(invocation / (str(item.id) + "-answer.json"),
+                                      canonical_bytes(private_answer(state)))
                 usage = repository.usage(slot.scenario_id)
                 known = not usage["held_usd"] and not usage["calls_held"]
                 if not known:
                     error = "unresolved_billing"
-                metrics = metrics_for(ranking, inputs.gold[item.question], failed=error is not None)
+                try:
+                    metrics: dict[str, str | None] = (dict(metrics_for(ranking, inputs.gold[item.question],
+                        failed=error is not None)) if isinstance(arm, RetrievalOnly) else answer_metrics(state, arm,
+                        inputs.gold[item.question], inputs.references.get(item.question, ""), failed=error is not None))
+                except Refused:
+                    error = "lexical_metric_bound"
+                    metrics = answer_metrics(state, arm, inputs.gold[item.question], "", failed=True)
                 private = canonical_bytes({"slot_id": str(item.id), "ranked_passage_ids": ranking,
                                            "metrics": metrics, "failure_code": error})
                 digest = sha256_bytes(private)
                 bundles.write(invocation / (str(item.id) + ".json"), private)
                 boundary("artifact")
+                metric_failures = {key: (error is not None if isinstance(arm, RetrievalOnly)
+                    or key in COMPOSITION_METRICS else not state.ranking_complete)
+                    for key, value in metrics.items() if value is not None}
+                components: dict[str, Any] = {"metrics": metrics, "metric_failures": metric_failures}
+                if not isinstance(arm, RetrievalOnly):
+                    components["outcome_code"] = state.outcome_code if error is None else None
+                    components["stages"] = {role: {"latency_ms": state.stage_latency_ms.get(role),
+                        "cost_usd": state.stage_cost_usd.get(role)} for role in state.stage_latency_ms}
                 repository.finalize(EvaluationTrial(id=slot.id, evaluation_run_id=slot.run_id,
                     task_id=slot.task_id, trial_index=slot.trial_index, seed=slot.seed,
                     outcome="success" if error is None else "error", reward=None,
-                    components_json=json.dumps({"metrics": metrics}), error_class=error,
+                    components_json=json.dumps(components), error_class=error,
                     cost_status="known" if known else "unknown", cost_usd=usage["spent_usd"] if known else None,
                     latency_ms=int((time.monotonic() - started) * 1000), artifact_sha256=digest,
                     created_at=datetime.now(UTC)), token, lease)
@@ -655,7 +1233,7 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                 raw_inventory(directory, invocation)
                 public = export(study, order, repository, runs)
                 bundles.write(directory / ("export-" + sha256_bytes(canonical_bytes(public)) + ".json"),
-                              canonical_bytes(public))
+                              canonical_bytes(public), byte_limit=QA_BUNDLE_BYTES)
             except BaseException:
                 if primary is None:
                     raise
@@ -664,17 +1242,22 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
         for run_id in runs.values():
             repository.finish_run(run_id, lease)
         return {"scheduled": len(order), "recorded": sum(s["outcome"] != "missing" for s in public["slots"]),
+                "failed": sum(s["outcome"] not in {"success", "missing"} for s in public["slots"]),
                 "output": str(directory), "execution_complete": all(s["outcome"] != "missing" for s in public["slots"])}
 
 
 def command(study: QAStudy, action: str, *, materialization: Path, app_dsn_file: Path,
             eval_dsn_file: Path, workspace: UUID, corpus: str, allow_paid: bool = False,
-            resume: bool = False) -> dict[str, Any]:
-    for arm in study.arms:
-        retrieval_arm(arm)
+            resume: bool = False, selection_receipt: Path | None = None, judge_report: Path | None = None,
+            ce_artifacts: Sequence[Path] = ()) -> dict[str, Any]:
+    supported(study)
     if (action == "run" and not allow_paid
-            and any(a.retrieval.method != "fts" for a in study.arms if isinstance(a, RetrievalOnly))):
+            and any(not isinstance(a, RetrievalOnly) or a.retrieval.method != "fts" for a in study.arms)):
         raise Refused("paid_opt_in_required_before_credentials")
+    if action == "run" and any(isinstance(a, AnswerGeneration) or (isinstance(a, Rerank) and a.generator is not None)
+                               for a in study.arms):
+        answers.selected_judge(study.judge, selection_receipt)
+    gate = answers.judge_gate(study.judge, judge_report) if action == "report" else None
     inputs = load_inputs(study, materialization)
     source = registration.source_provenance()
     app = make_engine(lambda: psycopg.connect(app_dsn_file.read_text(encoding="utf-8"), connect_timeout=5,
@@ -689,12 +1272,45 @@ def command(study: QAStudy, action: str, *, materialization: Path, app_dsn_file:
                 import httpx2
                 from pydantic import SecretStr
 
-                key = os.environ.get("OPENAI_API_KEY")
-                return Providers(credentials={"openai": SecretStr(key)} if key else {},
-                                 transport=lambda _: httpx2.AsyncHTTPTransport())
-            return run(study, inputs, repository, store,
-                RetrieverExecutor(app, workspace, corpus, providers=providers, expected_passages=inputs.passages),
-                allow_paid=allow_paid, resume=resume, source=source)
+                credentials = {}
+                for provider, variable in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
+                    if key := os.environ.get(variable):
+                        credentials[provider] = SecretStr(key)
+                return Providers(credentials=credentials,
+                                 transport=lambda _: httpx2.AsyncHTTPTransport(trust_env=False))
+            with ExitStack() as workers:
+                clients: dict[str, CrossEncoderClient] = {}
+                def ce(binding: CrossEncoder, deadline: float) -> CrossEncoderClient:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise WorkerError("worker_deadline")
+                    if binding.artifact_sha256 not in clients:
+                        matches = []
+                        for path in ce_artifacts:
+                            for name in ("artifact-manifest.json", "download-manifest.json"):
+                                manifest = path / name
+                                if manifest.is_file() and manifest.stat().st_size <= 1_000_000:
+                                    raw = manifest.read_bytes()
+                                    if sha256_bytes(raw) == binding.artifact_sha256:
+                                        value = json.loads(raw)
+                                        if value["files"]["tokenizer.json"]["sha256"] != binding.tokenizer_sha256:
+                                            raise WorkerError("worker_tokenizer_binding")
+                                        if (binding.training_receipt_sha256 is not None and value["files"].get(
+                                                "training-manifest.json", {}).get("sha256")
+                                                != binding.training_receipt_sha256):
+                                            raise WorkerError("worker_training_binding")
+                                        matches.append(path)
+                        if len(matches) != 1:
+                            raise WorkerError("worker_artifact_binding")
+                        clients[binding.artifact_sha256] = workers.enter_context(CrossEncoderClient(
+                            matches[0], binding.artifact_sha256, threads=binding.threads, timeout=min(remaining, 600)))
+                    client = clients[binding.artifact_sha256]
+                    client.timeout = min(remaining, 600)
+                    return client
+                return run(study, inputs, repository, store,
+                    RetrieverExecutor(app, workspace, corpus, providers=providers, expected_passages=inputs.passages),
+                    allow_paid=allow_paid, resume=resume, source=source, providers=providers,
+                    selection_receipt=selection_receipt, cross_encoder=ce)
         scope = store.study_by_key(str(study.study_id))
         if scope is None:
             raise Refused("study_not_started")
@@ -705,7 +1321,7 @@ def command(study: QAStudy, action: str, *, materialization: Path, app_dsn_file:
                             {a.name: registration.run_id(study, scope.id, a.name) for a in study.arms})
             if action == "status":
                 return public
-            result = report(study, inputs, public, repository, scope.id, source)
+            result = report(study, inputs, public, repository, scope.id, source, gate)
             raw = canonical_bytes(result)
             bundles.write(directory_for(study) / ("report-" + sha256_bytes(raw) + ".json"), raw)
             return result

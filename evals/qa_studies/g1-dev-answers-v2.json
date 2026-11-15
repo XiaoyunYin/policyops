@@ -1,0 +1,625 @@
+{
+  "analysis": {
+    "bootstrap_algorithm": "sha256-whole-dialogue-question-weighted-ratio-v1",
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 20261114,
+    "comparisons": [
+      {
+        "alpha": "0.0125",
+        "candidate": "rrf-bm25-history-luna",
+        "cohort": "dev",
+        "compound": null,
+        "decision": "superiority",
+        "denominator": "scheduled-questions-strict-non-success",
+        "direction": "candidate-minus-reference",
+        "estimand": "recall_at_5",
+        "margin": "0",
+        "name": "rrf-v-dense-recall",
+        "reference": "dense-history-luna",
+        "required_questions": 500,
+        "stratum": "all"
+      },
+      {
+        "alpha": "0.0125",
+        "candidate": "rrf-bm25-base-ce",
+        "cohort": "dev",
+        "compound": null,
+        "decision": "superiority",
+        "denominator": "scheduled-questions-strict-non-success",
+        "direction": "candidate-minus-reference",
+        "estimand": "ndcg_at_10",
+        "margin": "0",
+        "name": "ce-v-rrf-ndcg",
+        "reference": "rrf-bm25-history-luna",
+        "required_questions": 500,
+        "stratum": "all"
+      },
+      {
+        "alpha": "0.0125",
+        "candidate": "rrf-bm25-luna-rerank",
+        "cohort": "dev",
+        "compound": null,
+        "decision": "superiority",
+        "denominator": "scheduled-questions-strict-non-success",
+        "direction": "candidate-minus-reference",
+        "estimand": "quality_q",
+        "margin": "0",
+        "name": "luna-rerank-v-rrf-q",
+        "reference": "rrf-bm25-history-luna",
+        "required_questions": 500,
+        "stratum": "all"
+      },
+      {
+        "alpha": "0.0125",
+        "candidate": "rrf-bm25-base-ce",
+        "cohort": "dev",
+        "compound": null,
+        "decision": "superiority",
+        "denominator": "scheduled-questions-strict-non-success",
+        "direction": "candidate-minus-reference",
+        "estimand": "quality_q",
+        "margin": "0",
+        "name": "ce-v-rrf-q",
+        "reference": "rrf-bm25-history-luna",
+        "required_questions": 500,
+        "stratum": "all"
+      }
+    ],
+    "estimand_version": "g0.qa-estimands-v1",
+    "familywise_alpha": "0.05",
+    "judge_gate": {
+      "lower_kappa_exclusive": "0.4",
+      "max_false_pass": "0.10",
+      "min_kappa": "0.6",
+      "require_complete": true,
+      "transfer_limitation": "benchmark-agreement-not-domain-calibration"
+    },
+    "missingness": "strict-non-success",
+    "multiplicity": "bonferroni-directional-intersection-union-v1",
+    "ordinary_interval": "two-sided-95-percent"
+  },
+  "arms": [
+    {
+      "context": {
+        "evidence_tokens": 4096,
+        "max_passages": 5,
+        "policy": "whole-passages-skip-overflow-v1"
+      },
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "answer_generation",
+      "max_claims": 4,
+      "name": "dense-history-luna",
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "cc2d03aaed23d8b38354b44ef7f5a3a7ba9781bec101ab62fda6f5d1fc644b0d",
+        "lexical_mode": "any_terms",
+        "method": "dense",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      }
+    },
+    {
+      "context": {
+        "evidence_tokens": 4096,
+        "max_passages": 5,
+        "policy": "whole-passages-skip-overflow-v1"
+      },
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "answer_generation",
+      "max_claims": 4,
+      "name": "rrf-bm25-history-luna",
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "0f10be401e2f0d599dd2b7e9a2535178bdc667af3f8bdca755a1a7ee9a9813bb",
+        "lexical_mode": "bm25",
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      }
+    },
+    {
+      "context": {
+        "evidence_tokens": 4096,
+        "max_passages": 5,
+        "policy": "whole-passages-skip-overflow-v1"
+      },
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "rerank",
+      "max_claims": 4,
+      "name": "rrf-bm25-luna-rerank",
+      "reranker": {
+        "excerpt_policy_sha256": "1312c1e74c1ba66ca1787a0a90947d6e761a13308fa68975f38090b6fcbe8f7a",
+        "kind": "luna",
+        "model": {
+          "cache_policy": "none",
+          "effort": "none",
+          "max_input_tokens": 8000,
+          "max_output_tokens": 1024,
+          "model": "gpt-6-luna",
+          "prompt_sha256": "e89a09496c24503e98d3b12dffeaf2baad9faef0b177510ec5539b3804302aff",
+          "schema_sha256": "12fe81963474a53b7bb7c9d1cd1b10ca88442e9da55902f054704c43de35cbb1"
+        }
+      },
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "0f10be401e2f0d599dd2b7e9a2535178bdc667af3f8bdca755a1a7ee9a9813bb",
+        "lexical_mode": "bm25",
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      }
+    },
+    {
+      "context": {
+        "evidence_tokens": 4096,
+        "max_passages": 5,
+        "policy": "whole-passages-skip-overflow-v1"
+      },
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "rerank",
+      "max_claims": 4,
+      "name": "rrf-bm25-base-ce",
+      "reranker": {
+        "artifact_sha256": "e7d8edecf92c7263757bedaa89ffd84c4f002a2b67d31c2df4fdd4cd78b7a4a5",
+        "candidate_pool_sha256": "645fb3a46d6fd9e56608bc35a22197df649bcf463c77503891016f6a3422cf24",
+        "kind": "cross_encoder",
+        "max_length": 384,
+        "query_token_cap": 128,
+        "runtime_sha256": "0ee3ffcee231e5da79a83dba8a97ea9fd0aed897a9618631be686ab1ddbbb1c1",
+        "threads": 4,
+        "tokenizer_sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        "training_receipt_sha256": null,
+        "truncation_policy_sha256": "3f71671ed540ebb3441a1aca9c0796ffa3bc80ba40be2bf2b345b7c97e6b1e9c"
+      },
+      "retrieval": {
+        "branch_limit": 20,
+        "candidate_count": 20,
+        "configuration_sha256": "0f10be401e2f0d599dd2b7e9a2535178bdc667af3f8bdca755a1a7ee9a9813bb",
+        "lexical_mode": "bm25",
+        "method": "rrf",
+        "query_profile": "history-four-v1",
+        "rrf_k": 60
+      }
+    },
+    {
+      "generator": {
+        "cache_policy": "none",
+        "effort": "none",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "prompt_sha256": "85b945b5e3a384a690a0c00db4bd1f80da8e9e039bf5e8d20ef4686faff4a377",
+        "schema_sha256": "48220af4540f160d3390a9b044af099067046e7c2e569cc82618cef80bb82480"
+      },
+      "kind": "closed_book",
+      "max_claims": 4,
+      "name": "closed-book-luna"
+    }
+  ],
+  "data": {
+    "archive_sha256": "f0c034c249663d7b3cb08b19cf2cc2c3d101372485be982621d4711931a1ce00",
+    "corpus": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "dataset": "multidoc2dial-v1",
+    "eligibility_version": "md2d.adjacent-agent-exclude-no-solution-v1",
+    "members": [
+      {
+        "name": "multidoc2dial/multidoc2dial_doc.json",
+        "sha256": "7205be05b7c260fd3c0eda4d98a4abddf7af66c364238f1be509aa139414012d"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_train.json",
+        "sha256": "c9a6ef2e0be22306429e0affa51c2ca164b2808a89a999e7756700170ed15d96"
+      },
+      {
+        "name": "multidoc2dial/multidoc2dial_dial_validation.json",
+        "sha256": "ce063938b53d96f6128275d76c0ba967a435e3d865d011aaeb6461c2538b2ce4"
+      }
+    ],
+    "passages": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "qrels": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "queries": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "references": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "revision": "v1.0-archive-20261114",
+    "sampling": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    },
+    "splits": {
+      "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+      "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+    }
+  },
+  "example": false,
+  "execution": {
+    "artifact_max_observations": 23600,
+    "cumulative_caps": {
+      "calls": 11800,
+      "counts": 11800,
+      "input_tokens": 75219600,
+      "output_tokens": 7168000,
+      "seconds": 604800,
+      "usd": "10.86839200"
+    },
+    "price_snapshot_id": "pricing.2026-11-05.v1",
+    "program_cap_usd": "46",
+    "program_ledger_key": "gap-program-v1",
+    "repairs": 0,
+    "request_deadline_seconds": 300,
+    "retries": 0,
+    "stages": [
+      {
+        "arm": null,
+        "cache_policy": "none",
+        "caps": {
+          "calls": 300,
+          "counts": 300,
+          "input_tokens": 2457600,
+          "output_tokens": 0,
+          "seconds": 18000,
+          "usd": "0.04915200"
+        },
+        "cohort": null,
+        "max_input_tokens": 8192,
+        "max_output_tokens": 0,
+        "model": "text-embedding-3-small",
+        "name": "shared-preprocessing",
+        "planned_calls": 300,
+        "planned_counts": 300,
+        "role": "embedding"
+      },
+      {
+        "arm": null,
+        "cache_policy": "none",
+        "caps": {
+          "calls": 500,
+          "counts": 500,
+          "input_tokens": 512000,
+          "output_tokens": 0,
+          "seconds": 30000,
+          "usd": "0.01024000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 1024,
+        "max_output_tokens": 0,
+        "model": "text-embedding-3-small",
+        "name": "shared-query-embedding",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "role": "embedding"
+      },
+      {
+        "arm": "dense-history-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 500,
+          "counts": 500,
+          "input_tokens": 3250000,
+          "output_tokens": 512000,
+          "seconds": 30000,
+          "usd": "0.58100000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "dense-history-luna.answer",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "role": "answer"
+      },
+      {
+        "arm": "dense-history-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 2000,
+          "counts": 2000,
+          "input_tokens": 13000000,
+          "output_tokens": 1024000,
+          "seconds": 120000,
+          "usd": "1.81200000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 512,
+        "model": "claude-haiku-5-5",
+        "name": "dense-history-luna.judge",
+        "planned_calls": 2000,
+        "planned_counts": 2000,
+        "role": "judge"
+      },
+      {
+        "arm": "rrf-bm25-history-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 500,
+          "counts": 500,
+          "input_tokens": 3250000,
+          "output_tokens": 512000,
+          "seconds": 30000,
+          "usd": "0.58100000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-history-luna.answer",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "role": "answer"
+      },
+      {
+        "arm": "rrf-bm25-history-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 2000,
+          "counts": 2000,
+          "input_tokens": 13000000,
+          "output_tokens": 1024000,
+          "seconds": 120000,
+          "usd": "1.81200000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 512,
+        "model": "claude-haiku-5-5",
+        "name": "rrf-bm25-history-luna.judge",
+        "planned_calls": 2000,
+        "planned_counts": 2000,
+        "role": "judge"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 500,
+          "counts": 500,
+          "input_tokens": 3250000,
+          "output_tokens": 512000,
+          "seconds": 30000,
+          "usd": "0.58100000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-luna-rerank.answer",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "role": "answer"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 2000,
+          "counts": 2000,
+          "input_tokens": 13000000,
+          "output_tokens": 1024000,
+          "seconds": 120000,
+          "usd": "1.81200000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 512,
+        "model": "claude-haiku-5-5",
+        "name": "rrf-bm25-luna-rerank.judge",
+        "planned_calls": 2000,
+        "planned_counts": 2000,
+        "role": "judge"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 500,
+          "counts": 500,
+          "input_tokens": 4000000,
+          "output_tokens": 512000,
+          "seconds": 30000,
+          "usd": "0.65600000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 8000,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-luna-rerank.rerank",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "role": "rerank"
+      },
+      {
+        "arm": "rrf-bm25-base-ce",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 500,
+          "counts": 500,
+          "input_tokens": 3250000,
+          "output_tokens": 512000,
+          "seconds": 30000,
+          "usd": "0.58100000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "rrf-bm25-base-ce.answer",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "role": "answer"
+      },
+      {
+        "arm": "rrf-bm25-base-ce",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 2000,
+          "counts": 2000,
+          "input_tokens": 13000000,
+          "output_tokens": 1024000,
+          "seconds": 120000,
+          "usd": "1.81200000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 512,
+        "model": "claude-haiku-5-5",
+        "name": "rrf-bm25-base-ce.judge",
+        "planned_calls": 2000,
+        "planned_counts": 2000,
+        "role": "judge"
+      },
+      {
+        "arm": "closed-book-luna",
+        "cache_policy": "none",
+        "caps": {
+          "calls": 500,
+          "counts": 500,
+          "input_tokens": 3250000,
+          "output_tokens": 512000,
+          "seconds": 30000,
+          "usd": "0.58100000"
+        },
+        "cohort": "dev",
+        "max_input_tokens": 6500,
+        "max_output_tokens": 1024,
+        "model": "gpt-6-luna",
+        "name": "closed-book-luna.answer",
+        "planned_calls": 500,
+        "planned_counts": 500,
+        "role": "answer"
+      }
+    ],
+    "unresolved_liability_policy": "hold-worst-case-block-decisions-and-resume-no-reissue"
+  },
+  "judge": {
+    "cache_policy": "none",
+    "effort": "low",
+    "max_input_tokens": 6500,
+    "max_output_tokens": 512,
+    "model": "claude-haiku-5-5",
+    "prompt_sha256": "4192bf039d46e1e7b50f6e846c7f1ea61a1f1b36baf582ffa4d7ef35b54ebaee",
+    "schema_sha256": "60a0103256204f90ff1f28457e7383694ac2020483a7a7436ecfb6eee2beb9d6",
+    "selection_receipt_sha256": "c8e81b239733d05779a1b359f6014f4da742a0282379fc35549a2e548440c384",
+    "test_report_sha256": "57404482d99a93ed2524ecec513621f5a249f38695c4e1900737456420dc4fc9"
+  },
+  "name": "g1-dev-answers-v2",
+  "protocol_version": "g0.qa-protocol-v1",
+  "provenance": {
+    "database": "qa_env: policyops-qa, pinned pgvector 0.8.7 / PostgreSQL 17.11",
+    "development_selection_receipts": [],
+    "dirty_sha256": null,
+    "locks": [
+      {
+        "path": "uv.lock",
+        "sha256": "ac32a8a452e9e601a994f239e8f306766d45f79e9dedac19049b2cb3e382b4db"
+      },
+      {
+        "path": "evals/uv.lock",
+        "sha256": "d1ffbcf480536a0ee6c0dcf65c176cc2af300050a8d0993a579836a8b89075bb"
+      },
+      {
+        "path": "reranker/uv.lock",
+        "sha256": "290d42ab3bfb05c2b1729fabb44935c09f2aeaefcc77f470a59c59fad028b56f"
+      }
+    ],
+    "machine": "Windows-11-10.0.26200-SP0; AMD64; Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "runtime": "Python 3.12; QA <=4 claims; Luna none/1024; judge input6500; cl100k4096 evidence; G8 CPU stdio",
+    "source_revision": null
+  },
+  "purpose": "dev",
+  "registration_sha256": null,
+  "schedule": {
+    "assignments": [
+      {
+        "arm": "dense-history-luna",
+        "cohort": "dev"
+      },
+      {
+        "arm": "rrf-bm25-history-luna",
+        "cohort": "dev"
+      },
+      {
+        "arm": "rrf-bm25-luna-rerank",
+        "cohort": "dev"
+      },
+      {
+        "arm": "rrf-bm25-base-ce",
+        "cohort": "dev"
+      },
+      {
+        "arm": "closed-book-luna",
+        "cohort": "dev"
+      }
+    ],
+    "balanced_order_seed": 20261114,
+    "cohorts": [
+      {
+        "dialogue_count": 80,
+        "included": true,
+        "manifest": {
+          "path": "evals/manifests/multidoc2dial-v1/manifest.json",
+          "sha256": "44be576d5ba734ef9e6599b1921eb4f989631778577c482da687f73e3beda354"
+        },
+        "manifest_cohort": "dev",
+        "name": "dev",
+        "optional": false,
+        "question_count": 500,
+        "split": "train"
+      }
+    ],
+    "order_algorithm": "sha256-rotation-v1",
+    "repetitions": 1,
+    "slot_algorithm": "uuid5-study-cohort-question-arm-repetition-v1"
+  },
+  "schema_version": "policyops.qa-study/v1",
+  "study_id": "32e31366-495f-5d70-be31-ed5c7855bba9"
+}

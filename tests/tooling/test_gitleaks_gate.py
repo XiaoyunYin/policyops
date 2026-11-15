@@ -1,8 +1,8 @@
 """Pinned gitleaks gate and hook ordering, exercised in isolated repositories.
 
 Synthetic secrets are generated at run time, so the scanner configuration needs
-no allowlist for test fixtures; its only allowlist is the reviewed exact corpus-key
-exception, tested here in both directions. Hook tests require the verified scanner
+no allowlist for test fixtures; its only allowlists are the reviewed exact corpus-key
+and tokenizer-digest exceptions, each tested here in both directions. Hook tests require the verified scanner
 (`python -B scripts/gitleaks_gate.py install`); they fail rather than skip.
 """
 
@@ -40,6 +40,11 @@ ALNUM = string.ascii_letters + string.digits
 # source file's own assignments cannot match generic-api-key when the repository is scanned.
 CORPUS_KEYS = tuple("tau2-" + name for name in ("banking-knowledge", "retail-policy"))
 CORPUS_KEY_PATHS = ("evals/src/policyops_evals/ingest_manifest.py", "evals/manifests/tau2-19f13ea3/ingest-corpora.json")
+# The second reviewed exception: the public MiniLM cross-encoder tokenizer digest pinned by the
+# committed G1 QA study configs, read from the config rather than repeated as a literal here.
+TOKENIZER_DIGEST = json.loads((Path(__file__).resolve().parents[2] / "evals" / "qa_studies"
+                               / "g1-dev-answers-v2.json").read_text(encoding="utf-8"))["arms"][3]["reranker"][
+    "tokenizer_sha256"]
 # Empirically measured with pinned 8.30.1 and git log -p -U0 <commit>^!.
 # Merge resolution lines are absent from its default log diff, too.
 COMMIT_COVERAGE = {
@@ -265,6 +270,26 @@ class GitleaksHookTests(unittest.TestCase):
         secret = stripe_like_key()
         repo.stage(CORPUS_KEY_PATHS[0], legit + f'payment_key = "{secret}"\n')  # other rules are not allowlisted
         self.assert_blocked_by_scanner(repo.commit(), secret)
+
+    def test_tokenizer_digest_exception_admits_only_the_exact_digest_in_g1_study_configs(self) -> None:
+        legit = f'{{"tokenizer_sha256": "{TOKENIZER_DIGEST}"}}\n'
+        path = "evals/qa_studies/g1-sealed-example.json"
+        repo = TempRepo(self)
+        repo.stage(path, legit)
+        clean = repo.run(sys.executable, "-B", str(GATE), "staged")
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        other = hashlib.sha256(b"tokenizer-lookalike").hexdigest()
+        blocked = [("apps/other_config.json", legit, None),  # same digest outside the G1 study configs
+                   (path, f'{{"tokenizer_sha256": "{other}"}}\n', other)]  # any other digest in a G1 config
+        for case, (target, content, generated) in enumerate(blocked):
+            with self.subTest(case=case, path=target):
+                repo = TempRepo(self)
+                repo.stage(target, content)
+                found = repo.run(sys.executable, "-B", str(GATE), "staged")
+                self.assertEqual(found.returncode, 1, found.stdout + found.stderr)
+                self.assertIn("rule=generic-api-key", found.stderr)
+                if generated is not None:
+                    self.assertNotIn(generated, found.stdout + found.stderr)
 
     def test_non_ascii_history_metadata_is_reported_not_crashed(self) -> None:
         # Regression: scanner JSON (UTF-8, including commit author names) was
@@ -695,14 +720,18 @@ class GitleaksInstallTests(unittest.TestCase):
         for rule in config.get("rules", []):
             self.assertNotIn("allowlist", rule)
             self.assertNotIn("allowlists", rule)
-        (exception,) = config["allowlists"]
-        self.assertEqual(exception["targetRules"], ["generic-api-key"])
-        self.assertEqual(exception["condition"], "AND")
-        self.assertEqual(exception["regexes"], [rf"\A{key}\z" for key in CORPUS_KEYS])
-        self.assertEqual(exception["paths"], [r"\Aevals/src/policyops_evals/ingest_manifest\.py\z",
-                                              r"\Aevals/manifests/tau2-19f13ea3/ingest-corpora\.json\z"])
-        self.assertEqual(set(exception) - {"description"},
-                         {"targetRules", "condition", "regexes", "paths"})  # no stopwords, commits or regexTarget
+        corpus, tokenizer = config["allowlists"]
+        self.assertEqual(corpus["regexes"], [rf"\A{key}\z" for key in CORPUS_KEYS])
+        self.assertEqual(corpus["paths"], [r"\Aevals/src/policyops_evals/ingest_manifest\.py\z",
+                                           r"\Aevals/manifests/tau2-19f13ea3/ingest-corpora\.json\z"])
+        self.assertRegex(TOKENIZER_DIGEST, r"\A[0-9a-f]{64}\Z")
+        self.assertEqual(tokenizer["regexes"], [rf"\A{TOKENIZER_DIGEST}\z"])
+        self.assertEqual(tokenizer["paths"], [r"\Aevals/qa_studies/g1-[a-z0-9-]+\.json\z"])
+        for exception in (corpus, tokenizer):
+            self.assertEqual(exception["targetRules"], ["generic-api-key"])
+            self.assertEqual(exception["condition"], "AND")
+            self.assertEqual(set(exception) - {"description"},
+                             {"targetRules", "condition", "regexes", "paths"})  # no stopwords, commits or regexTarget
         self.assertFalse((REPO / ".gitleaksignore").exists())
 
 

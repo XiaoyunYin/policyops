@@ -234,6 +234,9 @@ def parser() -> argparse.ArgumentParser:
             qa_command.add_argument("--corpus", default="multidoc2dial-v1-struct")
             qa_command.add_argument("--allow-paid", action="store_true")
             qa_command.add_argument("--resume", action="store_true")
+            qa_command.add_argument("--selection-receipt", type=Path)
+            qa_command.add_argument("--judge-report", type=Path)
+            qa_command.add_argument("--ce-artifact", type=Path, action="append", default=[])
     for name in ("preflight", "run"):
         study = groups.add_parser(name, help="plan or execute a durable dev study")
         study.add_argument("--study", type=Path, required=True)
@@ -363,16 +366,18 @@ def command_qa_study(args: argparse.Namespace) -> int:
 
             result = runner_command(study, args.qa_command, materialization=args.materialization,
                 app_dsn_file=args.app_dsn_file, eval_dsn_file=args.eval_dsn_file, workspace=args.workspace,
-                corpus=args.corpus, allow_paid=args.allow_paid, resume=args.resume)
+                corpus=args.corpus, allow_paid=args.allow_paid, resume=args.resume,
+                selection_receipt=args.selection_receipt, judge_report=args.judge_report, ce_artifacts=args.ce_artifact)
     except Exception as error:
         # Never print DB exceptions, credentials, or a Pydantic input payload.
+        from policyops_evals.qa_studies.answers import AnswerError
         from policyops_evals.qa_studies.runner import Refused
 
-        reason = str(error) if isinstance(error, Refused) else type(error).__name__
+        reason = str(error) if isinstance(error, (Refused, AnswerError)) else type(error).__name__
         print(f"policyops-evals: QA study refused: {reason}", file=sys.stderr)
         return 1
     report(result)
-    return 0 if result.get("within_caps", True) else 1
+    return 0 if result.get("within_caps", True) and result.get("execution_complete", True) else 1
 
 
 def command_study(args: argparse.Namespace) -> int:

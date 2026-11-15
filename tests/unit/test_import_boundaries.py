@@ -89,6 +89,7 @@ EVAL_COMPOSITION_IMPORTS = {
     "policyops.runtime.clock",
     "policyops.persistence.database", "policyops.persistence.embeddings", "policyops.persistence.retrieval",
     "policyops.retrieval.rank",  # G0.4 composes runtime-role snapshots and the existing embedding/cache path.
+    "policyops.retrieval.rerank",  # G0.4b reuses T14's bounded input/schema and deterministic ordering.
 }
 EVAL_COMPOSITION_FILES = {
     "harness/inprocess.py", "harness/actors.py", "studies/config.py", "studies/runner.py",
@@ -101,6 +102,7 @@ EVAL_COMPOSITION_FILES = {
     # G6 composes the bounded provider, tokenizer, budget and evaluation registration APIs.
     "qa_studies/judges.py", "qa_studies/calibration.py",
     "qa_studies/runner.py",
+    "qa_studies/answers.py",
     "qa_studies/g8_mining.py",
 }
 EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persistence.roles",

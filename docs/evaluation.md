@@ -507,8 +507,82 @@ metrics, costs/censored latency, and declared paired whole-dialogue comparisons
 through the G0.5 statistics and status functions. The runner retains immutable
 source/schedule bindings, exports, reports and bounded raw inventories privately
 under `POLICYOPS_TEMP_DIR/benchmarks`. Sealed execution requires prior registration
-bound to the current source/locks. Answer generation, reranking, closed book,
-cascade/selective reranking and full context explicitly await later slices.
+bound to the current source/locks. Cascade/selective reranking, full context
+and caching execution await later slices.
+
+### Answer and rerank arms
+
+QA answer runner (G0.4b): `qa-study run|status|report` also supports
+`answer_generation`, top-20 `rerank` (T14 Luna or G8 stdio cross-encoder), and
+`closed_book`. Generation receives only the private materialization's chronological
+history and delivered passages. Gold/reference fields enter metrics afterward.
+Evidence uses whole passages, at most five and 4,096 cl100k tokens including JSON
+headers; overflow/limit skips and delivered coverage are recorded independently of
+the ranked IDs. Citations must identify delivered passages. Luna excerpts use the
+existing 12,000-byte content bound and at most 1,000 bytes per passage; CE arms
+must share the same first-stage configuration and query128/pair384 prefix policy.
+
+Answer schema: `{answer, citations: [passage_id], abstain: bool}`; the dev v2
+Luna generator and reranker use effort `none` and 1,024 output tokens, as supported
+by the provider registry and T14 envelope. Closed provider output limits have
+distinct `answer_output_limit` / `rerank_output_limit` failure codes.
+Splitter `qa.sentences/v1` splits on LF or whitespace
+following `.`, `!`, or `?`, trims pieces, and retains those containing any Unicode
+alphanumeric character. Abbreviations have no special treatment. Exceeding the
+frozen 1–4 claim limit fails the answer; no suffix is silently omitted. Every claim
+is judged against delivered **cited** passages with the byte-bound G6 selection
+(`--selection-receipt`). Invalid verdicts are errors. A bound G6 test report
+(`judge.test_report_sha256`, `--judge-report`) supplies the comparison gate;
+otherwise judged comparisons remain descriptive. Q is a citation/support surrogate,
+not human correctness. Closed-book citation, faithfulness and Q are N/A;
+gold-evidence support is not measured in this slice. Lexical F1/ROUGE-L are exploratory.
+
+`g1-dev-answers-v1.json` schedules five arms over all 500 dev questions. It freezes
+one-sentence answers so the conservative envelope fits $5: answers
+`2500 × (6500×.10 + 256×.50)/1M = $1.945`; judges
+`2000 × (10000×.10 + 512×.50)/1M = $2.512`; Luna rerank
+`500 × (8000×.10 + 256×.50)/1M = $0.464`; query embeddings $0.01024;
+shared preprocessing allowance `300 × 8192 × .02/1M = $0.049152` (includes
+ingest and G8 mining); total **$4.980392** (5,800 calls/counts).
+V1 is retained unchanged as the failed one-claim/256-token configuration.
+`g1-dev-answers-v2.json` uses a new study ID and the same cohort, arms and bound G6
+receipt/report, with up to four claims (more remains an error). Answers reserve
+`2500 × (6500×.10 + 1024×.50)/1M = $2.905`; judges reserve
+`8000 × (6500×.10 + 512×.50)/1M = $7.248`; Luna rerank reserves
+`500 × (8000×.10 + 1024×.50)/1M = $0.656`. With unchanged embedding allowances,
+the total and enforced cap are **$10.868392**, 11,800 calls/counts. The smaller
+judge input ceiling changes only the reservation, preserving the calibrated
+model, effort, prompt and schema. Offline full provider-count projections measured
+2,163 eligible v1 claims (maximum 2,931 cl100k tokens); a 4,096-token evidence plus
+1,024-token claim stress case measured 5,352 (5,888 with G6's 10% headroom).
+The 6,500 provider-token ceiling is enforced using official counts before dispatch;
+cl100k estimates do not establish an exact cross-tokenizer bound. Preflight alone
+never authorizes spending.
+
+Ranking completion fixes ranked IDs and retrieval metrics even when answering or
+judging later fails. Retrieval/rerank failures zero ranking and downstream metrics;
+composition metrics retain strict non-success. Aggregates and paired comparisons
+use per-metric failure flags, with `metric_failed_counts` in each aggregate.
+Ranking comparisons use ranking-stage latency; aggregate policy latency remains
+end-to-end and censors operational failures. Uncited answers and undelivered
+citations complete with separate `outcome_code` / `outcome_counts`, Q=0 and the
+existing citation precision/recall rules (uncited=0; undelivered integrity=0).
+Their sentences are not judged. Invalid judge verdicts and provider errors remain
+failures. `lexical_query_too_many_lexemes` remains a disclosed strict retrieval
+failure, with no fallback; reports include failure-code counts.
+
+All paid stages use the existing claim and usage ledger, stable slot/stage keys,
+zero retries/repairs, per-stage and cumulative admission. Stage names are persisted
+in operation IDs while the claim retains one invocation binding. Claimed slots
+are aborted on recovery; their dispatched calls are never reissued and uncertain
+bills remain held. Resume executes remaining scheduled slots. `--ce-artifact DIR`
+(repeatable) supplies local SHA-256-pinned artifacts. CE failures are recorded,
+without fallback. Private checkpoints retain answers and billing evidence;
+exports allowlist IDs, numeric metrics, costs, latency and failure codes only.
+Policy cost/latency exclude judging; experimental spend includes judging and
+shared preprocessing is disclosed separately. Cascade, selective rerank,
+full-context and caching execution remain deferred.
+
 ## G8 local cross-encoder tooling
 
 The isolated `reranker/` project supplies offline, safetensors-only BERT loading,

@@ -79,5 +79,9 @@ def test_structural_dev_run_resume_cache_and_export(qa_runner_db: AppDatabase, t
     assert all(s["outcome"] == "success" for s in public["slots"])
     assert all(s["metrics"]["recall_at_1"] == "1" for s in public["slots"] if s["arm"].startswith("dense"))
     assert all(set(s) <= {"slot_id", "cohort", "question_id", "arm", "repetition", "outcome", "metrics",
-                          "cost_usd", "cost_status", "held_liability_usd", "latency_ms", "failure_code"}
+                          "cost_usd", "cost_status", "held_liability_usd", "latency_ms", "failure_code",
+                          "metric_failures", "outcome_code"}
+               for s in public["slots"])
+    # The per-metric flags and outcome codes added for stage-scoped missingness stay text-free.
+    assert all(s["outcome_code"] is None and all(type(v) is bool for v in s["metric_failures"].values())
                for s in public["slots"])

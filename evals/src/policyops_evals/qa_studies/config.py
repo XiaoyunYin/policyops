@@ -103,6 +103,7 @@ class ModelBinding(Frozen):
 
 class JudgeBinding(ModelBinding):
     selection_receipt_sha256: Digest
+    test_report_sha256: Digest | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 def _all_terms(value: object) -> bool:
@@ -138,6 +139,7 @@ class AnswerGeneration(Frozen):
     retrieval: Retrieval
     generator: ModelBinding
     context: Context
+    max_claims: Annotated[int, Field(ge=1, le=4)] = Field(default=4, exclude_if=lambda value: value == 4)
 
 
 class LunaReranker(Frozen):
@@ -172,6 +174,7 @@ class Rerank(Frozen):
     reranker: Annotated[LunaReranker | CrossEncoder, Field(discriminator="kind")]
     generator: ModelBinding | None
     context: Context
+    max_claims: Annotated[int, Field(ge=1, le=4)] = Field(default=4, exclude_if=lambda value: value == 4)
 
 
 class CascadePolicy(Frozen):
@@ -219,6 +222,7 @@ class ClosedBook(Frozen):
     kind: Literal["closed_book"]
     name: Name
     generator: ModelBinding
+    max_claims: Annotated[int, Field(ge=1, le=4)] = Field(default=4, exclude_if=lambda value: value == 4)
 
 
 Arm = Annotated[RetrievalOnly | AnswerGeneration | Rerank | PolicyArm | FullContext | ClosedBook,
@@ -553,7 +557,10 @@ class QAStudy(Frozen):
                     models.extend((("rerank", arm.policy.reranker.model), ("answer", arm.policy.generator)))
             if any(role in {"answer", "policy"} for role, _ in models) and self.judge is not None:
                 models.append(("judge", self.judge))
-            demands.extend((name, cohort, role, model, n) for role, model in models)
+            demands.extend((name, cohort, role, model,
+                            n * (arm.max_claims if isinstance(arm, (AnswerGeneration, Rerank, ClosedBook)) else 1)
+                            if role == "judge" else n)
+                           for role, model in models if not (role == "judge" and isinstance(arm, ClosedBook)))
         # Demand is aggregated for identical stages (e.g. two cascade calls to
         # the same model); shared query embedding is separately declared.
         grouped: dict[tuple[str, str, str, str, str], tuple[int, int, int]] = {}

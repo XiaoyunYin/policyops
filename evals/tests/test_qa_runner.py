@@ -284,6 +284,7 @@ def test_export_report_arithmetic_and_no_text(memory: Memory) -> None:
         key for slot in public["slots"] for key in slot}
     first = public["slots"][0]
     first.update(outcome="error", failure_code="fictional_failure")
+    first.pop("metric_failures")  # legacy rows without stage flags retain strict slot missingness
     result = r.report(study, inputs, public, memory.repository(), memory.scope, SOURCE)
     affected = next(row for row in result["aggregates"] if row["arm"] == first["arm"])
     assert affected["metrics"]["recall_at_5"] == "1/2"

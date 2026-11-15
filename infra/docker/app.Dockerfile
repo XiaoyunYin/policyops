@@ -15,6 +15,9 @@ COPY --from=build /opt/venv /opt/venv
 COPY infra/compose/ infra/compose/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 COPY pyproject.toml uv.lock /usr/share/policyops/
+# Immutable source: hash caches avoid mtime dependence; -B still reads these at runtime.
+# Include the base stdlib and installed application/dependencies, not just compose helpers.
+RUN python -m compileall -q -f --invalidation-mode unchecked-hash /usr/local/lib/python3.12 /opt/venv /opt/policyops
 USER 10001:10001
 ENTRYPOINT ["python", "-B", "infra/compose/runtime.py"]
 CMD ["api"]

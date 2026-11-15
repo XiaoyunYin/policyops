@@ -1,6 +1,6 @@
 # AWS public fictional demo
 
-Status: **verified PostgreSQL TLS repair awaiting live verification**. The first
+Status: **idle CPU repair awaiting live verification**. The first
 2026-11-15 Lightsail attempt exposed launch-script handling of user-data and a shared
 resource-name namespace; that host was destroyed. The replacement host bootstrapped
 successfully. At 19:10Z, deploy A built images but failed after 183 seconds creating API:
@@ -12,8 +12,9 @@ the base profile selected `require` while deployment correctly required `verify-
 No client had a mounted trust root. The coordinator's temporary explicit-root override
 made API healthy with zero restarts and all dependency checks true; public `/`, `/healthz`
 and Dex discovery returned 200 over the ACME certificate. That was diagnostic evidence.
-The source repair below still needs the PostgreSQL integration suite and local/public
-Compose smoke, including renewal. Public login, host sizing and rollback remain live gates.
+The coordinator subsequently passed local Compose smoke and backup/restore drills at
+`ae776c7`, including the runtime roles under verified TLS. Its next public deploy ran with
+exhausted CPU burst capacity, as described below. Public login, host sizing and rollback remain live gates.
 
 ## Architecture and cost
 
@@ -50,6 +51,99 @@ with at most 4,096 tracked IPs and fail-closed admission for new IPs at capacity
 only Caddy's overwritten `X-PolicyOps-Client-IP` from a loopback socket. It is per API
 process, resets on restart, permits a boundary burst, and does not limit Dex/static files
 or establish distributed denial-of-service protection. No extra service is needed.
+
+### Burstable CPU budget and deployment builds
+
+The selected 2-vCPU `small_3_0` host has a baseline of about **20% aggregate CPU**,
+equivalent to 0.4 continuously available CPU cores. Budget for credits starting empty;
+do not assume a new or depleted host can sustain a build burst. Below-baseline use banks
+burst capacity; builds can consume it much faster than it accrues. RAM capacity and two
+advertised vCPUs do not establish sustained CPU headroom.
+
+Coordinator evidence from 2026-11-15, host at `ae776c7`: `BurstCapacityPercentage` was
+0.0 from 19:40Z, aggregate `CPUUtilization` stayed near 20%, and `vmstat` steal was
+39–54%. Deploy exited 1 after 1,129 seconds, roughly seven times the earlier 155-second
+attempt. Worker, then retail, failed with `Health check exceeded timeout (8s)` without
+app errors or restarts. A single `runtime.py health-worker`, merely checking a file mtime,
+used **14.62 CPU-seconds / 19.21 seconds wall**. Worker main-process CPU ticks stayed at
+zero over 20 seconds while its container used about 41% CPU: probes dominated that sample.
+
+Each old Python probe imported the full runtime every 10 seconds. On the unthrottled
+desktop image, that import cost 1.56–1.66 CPU-seconds from source, or 0.69–0.76 with
+precompiled bytecode. At the nominal cadence, three source imports alone would demand
+`3 × (1.56–1.66) / 10 = 0.468–0.498 cores`, or **23.4–24.9% of a 2-vCPU host** before
+application, database or OS work. Probes longer than their interval cannot actually
+maintain that cadence; this is offered demand, not a measured host utilization model.
+Precompiling the heavy imports alone would still budget 10.35–11.4% on that desktop
+basis, so removing those imports from recurring checks matters as well.
+
+The images now run `compileall -f --invalidation-mode unchecked-hash` after the final
+source copies, covering `/opt/venv`, copied application/retail/Compose sources, and the
+base Python standard library. The temporary Python stage in the web build compiles its
+stdlib and scanner scripts too; the final web image is Caddy. This explicit compile
+step replaces the need for `uv sync --compile-bytecode` and also covers editable retail
+sources after packaging. Forced unchecked hashes replace any wheel-provided timestamp
+caches and avoid source-mtime dependence. This is appropriate because the deployed trees
+are immutable, read-only image contents built together with their caches; any source
+change requires a rebuild. A writable/source-mounted image would need checked hashes or
+a different cache policy. Runtime `-B` and `PYTHONDONTWRITEBYTECODE=1` remain: Python reads
+existing caches but creates none. Directly executed script files are still parsed;
+their imported modules benefit from the caches.
+
+Policy reconciliation: `.dockerignore` still excludes `__pycache__` from host build
+inputs, and `check_build_context.py` still rejects private/generated context paths via
+`check_publication.py`. `check_repo_artifacts.py` still rejects newly generated checkout
+paths against its baseline. These govern inputs and checkouts, not files generated
+inside Docker layers. No existing image audit bans `.pyc`; the Compose image policy
+now explicitly requires build-generated caches. No guard exemption or scratch-bytecode
+permission was added. Keep development `-B`/bytecode suppression and inspect actual
+image layers/packages during the coordinator smoke.
+
+`infra/compose/health.py` imports only the standard library. HTTP probes retain the
+2-second socket timeout, no proxies or redirects, exact URLs, HTTP 200 and JSON object
+with `status == "ok"`; the worker retains the regular-file `/tmp/worker-heartbeat`
+mtime age strictly below 25 seconds. API readiness still performs the same database
+role and retail dependency checks. The unused heavy CLI health commands were removed
+from `runtime.py`; its internal HTTP helper remains for API readiness itself.
+
+Local checks remain every 10 seconds for prompt development readiness. Their process
+timeout is now 5 seconds: a 2-second HTTP socket timeout plus interpreter/scheduling
+headroom, with Docker bounding the whole process (including a stalled response body).
+The public overlay polls all six services every **30 seconds**, reducing recurring probe
+work threefold. The 15-second startup grace, 12 consecutive failures and all startup
+dependency gates remain. A successful probe is still necessary for readiness; grace
+does not confer success. Public initial readiness can take an extra polling interval,
+and persistent failure detection takes roughly six minutes plus probe durations rather
+than two. Every worker sample still rejects a heartbeat aged 25 seconds or more, even
+though samples are farther apart. Probe failures never trigger automatic restarts by
+themselves. Reassess cadence after live CPU and outage-detection measurements.
+
+**Estimated steady-state idle budget, pending coordinator measurement:** assume no
+build, visitors or runnable jobs, with at most 0.25 CPU-seconds for each of the three
+light Python probes and 0.10 CPU-seconds for each of PostgreSQL/Dex/Caddy's probes.
+At 30-second intervals, `(3 × 0.25 + 3 × 0.10) / 30 = 0.035 cores`, or **1.75% aggregate
+host CPU**. Reserve another 0.20 cores (10 aggregate percentage points) for worker polls,
+API/retail, database maintenance, Dex/Caddy, Docker and OS idle work. Total estimated
+idle demand is **0.235 cores / 2 = 11.75%**, leaving about 8.25 percentage points below
+the 20% baseline. These are planning assumptions, not measured probe costs or a guarantee;
+CPU-seconds vary with the host. The equivalent local 10-second probe budget is 5.25%
+aggregate before background work. Public traffic, queued work and builds are outside
+this idle estimate.
+
+Before deploying, inspect burst capacity, CPU utilization, steal and memory; after
+depletion, stop the stack while retaining its volume and let credits accrue before a
+build. Wait for observed credit recovery, not a fixed promised delay. Keep **one build
+at a time**, as the deploy lock and serial image builds already enforce; do not overlap
+manual builds or maintenance. Preserve failed-deploy evidence before retrying. After
+deployment, measure per-probe CPU/wall time and whole-host idle CPU over several probe
+cycles, including the worker/database background workload, with no build in progress.
+Verify credit balance is stable or increasing below baseline, services stay healthy
+without restarts, and dependency outages still fail readiness. If idle use exceeds the
+baseline, reduce actual work or select a larger sustained budget before acceptance;
+longer timeouts alone do not fix CPU demand. Builds still need burst credit even when
+the corrected idle stack fits the baseline.
+
+### Public Compose profile
 
 `infra/compose/public.yaml` layers on the root Compose file to keep local behavior and
 image definitions authoritative. The host pins Compose **5.3.1**, matching T38's verified

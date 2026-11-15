@@ -4,8 +4,12 @@ x-origin: &origin
   POLICYOPS_PUBLIC_ORIGIN: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}
   POLICYOPS_OIDC_ISSUER: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}/dex
 
+x-health: &public-health
+  interval: 30s
+
 services:
   caddy:
+    healthcheck: *public-health
     # API joins this namespace and uses its /etc/hosts; Docker rejects extra_hosts on API.
     extra_hosts:
       - "${POLICYOPS_HOSTNAME:?Set public DNS hostname}:127.0.0.1"
@@ -27,6 +31,7 @@ services:
       driver: json-file
       options: {max-size: "5m", max-file: "2"}
   api:
+    healthcheck: *public-health
     environment:
       <<: *origin
       POLICYOPS_ENV: deployment
@@ -36,19 +41,23 @@ services:
     logging: *logs
   worker:
     environment: *origin
+    healthcheck: *public-health
     mem_limit: 320m
     restart: unless-stopped
     logging: *logs
   postgres:
+    healthcheck: *public-health
     mem_limit: 384m
     shm_size: 64m
     restart: unless-stopped
     logging: *logs
   retail:
+    healthcheck: *public-health
     mem_limit: 256m
     restart: unless-stopped
     logging: *logs
   dex:
+    healthcheck: *public-health
     environment:
       DEX_ISSUER: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}/dex
       POLICYOPS_REDIRECT_URI: https://${POLICYOPS_HOSTNAME:?Set public DNS hostname}/api/v1/auth/callback

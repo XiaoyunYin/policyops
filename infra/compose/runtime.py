@@ -18,7 +18,6 @@ from pathlib import Path
 import signal
 import sys
 import threading
-import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid5
 
@@ -337,9 +336,6 @@ def main() -> int:
         "bootstrap-app": bootstrap_app, "bootstrap-retail": bootstrap_retail,
         "migrate-app": lambda: migration(False), "migrate-retail": lambda: migration(True),
         "seed-demo": seed_demo, "api": api, "retail": retail, "worker": worker,
-        "health-api": lambda: get_health("http://127.0.0.1:8000", "/api/v1/health/ready"),
-        "health-retail": lambda: get_health("http://127.0.0.1:8001", "/healthz"),
-        "health-worker": lambda: HEARTBEAT.is_file() and time.time() - HEARTBEAT.stat().st_mtime < 25,
     }
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=commands)

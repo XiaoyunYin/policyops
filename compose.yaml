@@ -36,7 +36,7 @@ x-retail: &retail
 
 x-health: &health
   interval: 10s
-  timeout: 8s
+  timeout: 5s
   retries: 12
   start_period: 15s
 
@@ -120,7 +120,7 @@ services:
       migrate-retail: {condition: service_completed_successfully}
     healthcheck:
       <<: *health
-      test: [CMD, python, -B, infra/compose/runtime.py, health-retail]
+      test: [CMD, python, -B, infra/compose/health.py, health-retail]
 
   dex:
     # Dex v2.46.1; infra/images.json. gomplate is supplied by this pinned image.
@@ -191,7 +191,7 @@ services:
       caddy: {condition: service_healthy}
     healthcheck:
       <<: *health
-      test: [CMD, python, -B, infra/compose/runtime.py, health-api]
+      test: [CMD, python, -B, infra/compose/health.py, health-api]
 
   worker:
     <<: *app
@@ -201,7 +201,7 @@ services:
       api: {condition: service_healthy}
     healthcheck:
       <<: *health
-      test: [CMD, python, -B, infra/compose/runtime.py, health-worker]
+      test: [CMD, python, -B, infra/compose/health.py, health-worker]
 
 networks:
   default:

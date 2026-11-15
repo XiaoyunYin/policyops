@@ -27,6 +27,9 @@ COPY --from=build /opt/fixture /opt/fixture
 COPY infra/compose/ infra/compose/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 COPY evals/pyproject.toml evals/uv.lock /usr/share/policyops/
+# Compile after all copies, including editable sources and the packaged retail fixture.
+# Immutable source permits unchecked hashes; runtime -B reads caches without writing.
+RUN python -m compileall -q -f --invalidation-mode unchecked-hash /usr/local/lib/python3.12 /opt/venv /opt/policyops /opt/fixture
 USER 10001:10001
 ENTRYPOINT ["python", "-B", "infra/compose/runtime.py"]
 CMD ["retail"]

@@ -50,6 +50,8 @@ from policyops.retrieval.rank import ChunkRow, Hit
 CANDIDATES_LIMIT = 65_536  # retrieval_traces_candidates_size
 SCOPE_LIMIT = 8_192  # retrieval_traces_scope_size
 MAX_TEXT_CODE_POINTS = 20_000  # chunks_text_length (a CHECK since 0002, on every row)
+LexicalMode = Literal["all_terms", "any_terms"]
+MAX_ANY_TERM_LEXEMES = 64  # refuse above this distinct normalized-lexeme count; never truncate
 
 
 class StepRefused(Exception):
@@ -181,6 +183,20 @@ ORDER BY d.rank"""  # noqa: S608
 
 LEXICAL_SQL = _branch_sql("ts_rank_cd(k.tsv, websearch_to_tsquery('english', :q), 32)",
                           "k.tsv @@ websearch_to_tsquery('english', :q)", "DESC")
+# Only PostgreSQL-normalized lexemes enter the OR expression. Its own tsvector serializer quotes/escapes each
+# single lexeme; casting to tsquery avoids a second dictionary/stemming pass. Raw query text is always a bind.
+ANY_TERMS_QUERY_SQL = """
+WITH parsed AS MATERIALIZED (
+    SELECT tsvector_to_array(to_tsvector('english', :q)) AS lexemes
+)
+SELECT cardinality(lexemes) AS lexeme_count,
+       CASE WHEN cardinality(lexemes) <= :lexeme_cap THEN
+           COALESCE((SELECT string_agg(array_to_tsvector(ARRAY[lexeme])::text, ' | ' ORDER BY lexeme COLLATE "C")
+                     FROM unnest(lexemes) AS terms(lexeme)), '')
+       END AS query
+FROM parsed"""
+LEXICAL_ANY_SQL = _branch_sql("ts_rank_cd(k.tsv, CAST(:lexical_query AS tsquery), 32)",
+                             "k.tsv @@ CAST(:lexical_query AS tsquery)", "DESC")
 DENSE_SQL = _branch_sql("(k.embedding <=> CAST(:qv AS public.vector))",
                         "k.embedding IS NOT NULL AND NOT ((k.embedding <=> CAST(:qv AS public.vector)) = 'NaN')",
                         "ASC")
@@ -410,18 +426,20 @@ class RetrievalStore:
 
     def snapshot(self, *, corpus_key: str, mode: str, query: str, query_vector: str | None,
                  document_ids: Sequence[UUID], branch_documents: int, chunks_per_document: int,
-                 full_policy_max_chunks: int) -> Snapshot:
+                 full_policy_max_chunks: int, lexical_mode: LexicalMode = "all_terms") -> Snapshot:
         """One `REPEATABLE READ READ ONLY` transaction: pointer, generation, branches and candidate texts.
 
         The connection is owned from acquisition: option setup, the transaction and every read run inside the
         protected region, and it is always closed. A close failure after a primary failure is attached to the primary
         as a note (never replacing it); after success it propagates."""
+        if lexical_mode not in ("all_terms", "any_terms"):
+            raise StepRefused("lexical_mode_invalid")
         connection = connect_runtime(self.engine)
         try:
             result = self._snapshot_in(connection, corpus_key=corpus_key, mode=mode, query=query,
                                        query_vector=query_vector, document_ids=document_ids,
                                        branch_documents=branch_documents, chunks_per_document=chunks_per_document,
-                                       full_policy_max_chunks=full_policy_max_chunks)
+                                       full_policy_max_chunks=full_policy_max_chunks, lexical_mode=lexical_mode)
         except BaseException as primary:
             try:
                 connection.close()
@@ -433,7 +451,8 @@ class RetrievalStore:
 
     def _snapshot_in(self, connection: Connection, *, corpus_key: str, mode: str, query: str,
                      query_vector: str | None, document_ids: Sequence[UUID], branch_documents: int,
-                     chunks_per_document: int, full_policy_max_chunks: int) -> Snapshot:
+                     chunks_per_document: int, full_policy_max_chunks: int,
+                     lexical_mode: LexicalMode = "all_terms") -> Snapshot:
         docs = list(document_ids) or None
         connection.execution_options(isolation_level="REPEATABLE READ", postgresql_readonly=True)
         with connection_transaction(connection, self.workspace_id, profile=SqlProfile.RETRIEVAL):
@@ -462,13 +481,24 @@ class RetrievalStore:
                 return result
             limits = base | {"n": branch_documents, "per": chunks_per_document}
             if mode in ("lexical", "hybrid"):
-                empty = connection.execute(text("SELECT numnode(websearch_to_tsquery('english', :q)) = 0"),
-                                           {"q": query}).scalar_one()
+                lexical_sql = LEXICAL_SQL
+                params = {"q": query}
+                empty_sql = "SELECT numnode(websearch_to_tsquery('english', :q)) = 0"
+                if lexical_mode == "any_terms":
+                    parsed = connection.execute(text(ANY_TERMS_QUERY_SQL),
+                        {"q": query, "lexeme_cap": MAX_ANY_TERM_LEXEMES}).mappings().one()
+                    if parsed["lexeme_count"] > MAX_ANY_TERM_LEXEMES:
+                        raise StepRefused("lexical_query_too_many_lexemes",
+                                          "any_terms permits at most 64 distinct lexemes")
+                    params = {"lexical_query": parsed["query"]}
+                    empty_sql = "SELECT numnode(CAST(:lexical_query AS tsquery)) = 0"
+                    lexical_sql = LEXICAL_ANY_SQL
+                empty = connection.execute(text(empty_sql), params).scalar_one()
                 if empty:
                     result.lexical_status = "empty_query"
                 else:
                     result.lexical_status = "ok"
-                    result.lexical = _hits(connection.execute(text(LEXICAL_SQL), limits | {"q": query})
+                    result.lexical = _hits(connection.execute(text(lexical_sql), limits | params)
                                            .mappings().all())
             if query_vector is not None:
                 result.dense_nan_distance = connection.execute(text(

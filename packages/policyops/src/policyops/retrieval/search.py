@@ -78,7 +78,15 @@ from sqlalchemy import Engine
 from policyops.budget.ledger import Ledger
 from policyops.orchestration.stops import InvestigationStop, stop_reason
 from policyops.persistence.embeddings import EmbeddingStore, JobConflict, vector_text
-from policyops.persistence.retrieval import RetrievalStore, Snapshot, Span, StepJob, StepRefused, StoredTrace
+from policyops.persistence.retrieval import (
+    LexicalMode,
+    RetrievalStore,
+    Snapshot,
+    Span,
+    StepJob,
+    StepRefused,
+    StoredTrace,
+)
 from policyops.providers.calls import Providers
 from policyops.providers.embedding_calls import (
     QUERY_PURPOSE,
@@ -280,13 +288,18 @@ class Retriever:
 
     Reranking is off unless `rerank=True` (the production adapter, constructed here from this Retriever's own ledger
     and providers factory, never injected) or a `rerank_port` that declares `test_only` with `env="test"`. Enabling
-    it runs a pure preflight (actor, output limit, a maximal template through T11 `prepare`) before anything else."""
+    it runs a pure preflight (actor, output limit, a maximal template through T11 `prepare`) before anything else.
+    `lexical_mode` selects both lexical-only and hybrid lexical branches. Non-default modes extend the effective
+    config/request fingerprint, preventing replay across modes without changing the legacy wire contract/digests."""
 
     def __init__(self, engine: Engine, workspace_id: UUID, *, embeddings: EmbeddingStore, ledger: Ledger,
                  providers: Callable[[], Providers], tokenizer: Tokenizer,
                  limits: RetrieverLimits | None = None, clock: Callable[[], float] = time.monotonic,
                  stop_on_budget: bool = False, rerank: bool = False, rerank_port: RerankPort | None = None,
-                 env: str | None = None) -> None:
+                 env: str | None = None, lexical_mode: LexicalMode = "all_terms") -> None:
+        if lexical_mode not in ("all_terms", "any_terms"):
+            raise ValueError("invalid lexical mode")
+        self.lexical_mode = lexical_mode
         # Rerank wiring first: before any read, reservation, credential or factory use.
         if rerank_port is not None:
             if getattr(rerank_port, "test_only", False) is not True or env != "test":
@@ -313,6 +326,17 @@ class Retriever:
 
     # -- entry point -----------------------------------------------------------------------------------------------
 
+    def _config_sha256(self, query: RetrievalQuery) -> str:
+        if self.lexical_mode == "all_terms":
+            return query.config.sha256()
+        return canonical_sha256({"config_sha256": query.config.sha256(), "lexical_mode": self.lexical_mode})
+
+    def _request_sha256(self, query: RetrievalQuery) -> str:
+        if self.lexical_mode == "all_terms":
+            return query.request_sha256()
+        return canonical_sha256({"v": "policyops.retrieval-request/v1", "query_sha256": query.query_sha256(),
+                                 "scope_sha256": query.scope.sha256(), "config_sha256": self._config_sha256(query)})
+
     @observed("retrieval.step")
     async def retrieve(self, query: RetrievalQuery, *, deadline: float) -> RetrievalResult | RetrievalRefused:
         annotate(run_id=query.run_id, mode=query.config.mode)
@@ -335,6 +359,8 @@ class Retriever:
         try:
             return await self._retrieve(query, float(deadline), work)
         except StepRefused as refused:
+            if refused.code == "lexical_query_too_many_lexemes":
+                return _refused("query_too_long", refused.code)
             return _refused(refused.code, refused.detail)
         except (DeadlinePassed, EvidenceDeadline):
             return _refused("deadline_passed")
@@ -367,7 +393,7 @@ class Retriever:
             return _refused("query_invalid_text")
         config = query.config
         trace_id = trace_id_for(self.workspace_id, query.run_id, query.step)
-        request = query.request_sha256()
+        request = self._request_sha256(query)
         stored = self.store.find_trace(trace_id)
         if stored is not None:
             return self._replay(query, stored, request, deadline, work)  # nothing done yet: zero invocation work
@@ -377,7 +403,8 @@ class Retriever:
         self._check_deadline(deadline)
         intent = self.store.create_intent(
             run_id=query.run_id, step=query.step, trace_id=trace_id, request_sha256=request,
-            query_sha256=query.query_sha256(), scope_sha256=query.scope.sha256(), config_sha256=config.sha256(),
+            query_sha256=query.query_sha256(), scope_sha256=query.scope.sha256(),
+            config_sha256=self._config_sha256(query),
             corpus_key=query.scope.corpus_key, allowlist=query.scope.document_allowlist,
             full_policy=config.mode == "full_policy", worst_case=worst_case_trace(query))
         self._check_deadline(deadline)
@@ -400,7 +427,7 @@ class Retriever:
             query=query.text if config.mode in ("lexical", "hybrid") else "",
             query_vector=vector_text(vector) if vector is not None else None, document_ids=intent.document_ids,
             branch_documents=config.branch_documents, chunks_per_document=config.chunks_per_document,
-            full_policy_max_chunks=config.full_policy_max_chunks)
+            full_policy_max_chunks=config.full_policy_max_chunks, lexical_mode=self.lexical_mode)
         if vector is not None and (snapshot.embedding_model, snapshot.dimension, snapshot.request_config_sha256) != (
                 config.embedding_model, config.embedding_dimensions,
                 request_config_sha256(config.embedding_model, config.embedding_dimensions)):
@@ -424,7 +451,7 @@ class Retriever:
                                       rerank)
         scope = TraceScope(corpus_key=query.scope.corpus_key, step=query.step,
                            allowlist_sha256=canonical_sha256(list(query.scope.document_allowlist)),
-                           document_ids=intent.document_ids, config_sha256=config.sha256(),
+                           document_ids=intent.document_ids, config_sha256=self._config_sha256(query),
                            query_sha256=query.query_sha256(), embedding_job_id=job_id)
         self._check_deadline(deadline)
         written = self.store.insert_trace(
@@ -653,7 +680,7 @@ class Retriever:
             lexical_status=candidates.lexical_status, dense_status=candidates.dense_status,
             dense_unavailable=candidates.dense_unavailable, lexical=candidates.lexical, dense=candidates.dense,
             fused=candidates.fused, evidence=evidence, evidence_text=evidence_text,
-            evidence_tokens=candidates.evidence_tokens, config_sha256=query.config.sha256(),
+            evidence_tokens=candidates.evidence_tokens, config_sha256=self._config_sha256(query),
             request_sha256=candidates.request_sha256, payload_sha256=candidates.payload_sha256,
             provider_requests=work.embedding_requests, rerank=_summary(candidates.rerank),
             invocation=work.invocation() if query.config.rerank is not None else None)

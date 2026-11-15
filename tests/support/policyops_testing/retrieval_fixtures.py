@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 import threading
 import time
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
 import httpx2
@@ -249,13 +249,15 @@ class World:
 
     def retriever(self, embeddings: Embeddings, *, configuration: Configuration | None = None,
                   limits: RetrieverLimits | None = None, clock: Callable[[], float] = time.monotonic,
-                  rerank: bool = False, rerank_port: RerankPort | None = None) -> Retriever:
+                  rerank: bool = False, rerank_port: RerankPort | None = None,
+                  lexical_mode: Literal["all_terms", "any_terms"] = "all_terms") -> Retriever:
         configuration = configuration or Configuration()
         return Retriever(self.engine, self.ws, embeddings=EmbeddingStore(self.engine, self.ws, env="test"),
                          ledger=build_app_ledger(env="test", engine=self.engine, workspace_id=self.ws,
                                                  configuration=configuration),
                          providers=embeddings.providers(), tokenizer=TOKENIZER, limits=limits, clock=clock,
-                         rerank=rerank, rerank_port=rerank_port, env="test" if rerank_port is not None else None)
+                         rerank=rerank, rerank_port=rerank_port, env="test" if rerank_port is not None else None,
+                         lexical_mode=lexical_mode)
 
     def count(self, table: str) -> int:
         with self.db.superuser() as conn:

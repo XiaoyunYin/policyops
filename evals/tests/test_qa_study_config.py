@@ -12,7 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 import pytest
 
 from policyops_evals.cli import main
-from policyops_evals.qa_studies.config import Arm, QAStudy, load_study, preflight
+from policyops_evals.qa_studies.config import Arm, QAStudy, RetrievalOnly, load_study, preflight
 
 
 EXAMPLE = Path(__file__).parents[1] / "qa_studies/g1-dev-example-v1.json"
@@ -64,6 +64,42 @@ def test_example_and_cli_validate(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["qa-study", "validate", "--study", str(EXAMPLE)]) == 0
     assert json.loads(capsys.readouterr().out)["registered"] is False
     assert preflight(study)["within_caps"]
+
+
+def test_lexical_mode_default_preserves_digest_and_any_terms_is_explicit() -> None:
+    value = body()
+    default = parse(value)
+    for arm in default.arms:
+        assert isinstance(arm, RetrievalOnly) and arm.retrieval.lexical_mode == "all_terms"
+        assert "lexical_mode" not in arm.model_dump(mode="json")["retrieval"]
+    for arm in value["arms"]:
+        arm["retrieval"]["lexical_mode"] = "all_terms"
+    explicit = parse(value)
+    assert explicit.digest() == default.digest()
+    assert explicit.arm_digest(explicit.arms[0]) == default.arm_digest(default.arms[0])
+    value["arms"][0]["retrieval"]["lexical_mode"] = "any_terms"
+    any_terms = parse(value)
+    assert any_terms.digest() != default.digest()
+    assert any_terms.arm_digest(any_terms.arms[0]) != default.arm_digest(default.arms[0])
+    assert any_terms.arms[0].model_dump(mode="json")["retrieval"]["lexical_mode"] == "any_terms"
+    value["arms"][0]["retrieval"]["lexical_mode"] = "raw_tsquery"
+    with pytest.raises(ValidationError):
+        parse(value)
+
+
+def test_v2_dev_modes_baselines_and_conservative_preflight() -> None:
+    path = EXAMPLE.with_name("g1-dev-retrieval-v2.json")
+    study = load_study(path)
+    assert study.purpose == "dev" and len(study.arms) == 8
+    arms = {a.name: a.model_dump(mode="json")["retrieval"] for a in study.arms}
+    assert all(arms[name]["lexical_mode"] == "any_terms" for name in arms if not name.endswith("-all"))
+    assert {name for name in arms if name.endswith("-all")} == {"fts-history-all", "rrf-history-all"}
+    assert all("lexical_mode" not in arms[name] for name in arms if name.endswith("-all"))
+    pairs = {(c.candidate, c.reference) for c in study.analysis.comparisons}
+    assert {("rrf-history-any", "dense-history"), ("rrf-last-any", "dense-last"),
+            ("fts-history-any", "fts-history-all")} <= pairs
+    admission = preflight(study)
+    assert admission["within_caps"] and Decimal(admission["ceiling_usd"]) > 0
 
 
 def test_offline_cli_preflight_digest_and_example_registration_refusal(capsys: pytest.CaptureFixture[str],

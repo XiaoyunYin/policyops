@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 import json
 from pathlib import Path
+import time
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -24,15 +25,50 @@ from policyops.persistence.evaluation import (
     Slot,
     StudyLock,
 )
+from policyops.persistence.retrieval import RetrievalStore, Snapshot, StepRefused
 from policyops_evals.qa_studies import runner as r
 from policyops_evals.qa_studies.config import QAStudy, RetrievalOnly, load_study
 from policyops_evals.qa_studies.registration import run_id
+from policyops_testing.retrieval_fixtures import TOKENIZER
 
 from .test_qa_study_config import parse
 from .test_qa_study_registration import SOURCE
 
 
 ADMIT = r.admit
+
+
+@pytest.mark.parametrize("lexical_mode", ["all_terms", "any_terms"])
+def test_executor_passes_lexical_mode_and_records_cap_refusal(monkeypatch: pytest.MonkeyPatch,
+                                                           lexical_mode: str) -> None:
+    study, inputs = fixture_study()
+    value = study.arms[0].model_dump(mode="json")
+    value["retrieval"]["lexical_mode"] = lexical_mode
+    arm = RetrievalOnly.model_validate_json(json.dumps(value))
+    executor = object.__new__(r.RetrieverExecutor)
+    monkeypatch.setattr(executor, "retrieval", object.__new__(RetrievalStore), raising=False)
+    monkeypatch.setattr(executor, "tokenizer", TOKENIZER, raising=False)
+    monkeypatch.setattr(executor, "corpus", "fictional-corpus", raising=False)
+    generation = uuid4()
+    monkeypatch.setattr(executor, "generation", generation, raising=False)
+    calls: list[dict[str, Any]] = []
+
+    def snapshot(self: RetrievalStore, **kwargs: Any) -> Snapshot:
+        calls.append(kwargs)
+        return Snapshot(generation, "banking_knowledge", "text-embedding-3-small", 1536, None)
+
+    monkeypatch.setattr(RetrievalStore, "snapshot", snapshot)
+    item = r.schedule(study, inputs)[0]
+    assert executor.execute(arm, inputs.queries[item.question], item, cast(Ledger, object()),
+                            time.monotonic() + 60) == ()
+    assert calls[0]["lexical_mode"] == lexical_mode
+
+    def too_many(self: RetrievalStore, **kwargs: Any) -> Snapshot:
+        raise StepRefused("lexical_query_too_many_lexemes")
+
+    monkeypatch.setattr(RetrievalStore, "snapshot", too_many)
+    with pytest.raises(r.Refused, match=r"^lexical_query_too_many_lexemes$"):
+        executor.execute(arm, inputs.queries[item.question], item, cast(Ledger, object()), time.monotonic() + 60)
 
 
 def fixture_study(*, sealed: bool = False) -> tuple[QAStudy, r.Inputs]:

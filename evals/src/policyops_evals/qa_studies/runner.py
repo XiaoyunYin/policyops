@@ -41,7 +41,7 @@ from policyops.persistence.budget import AppLedgerStore, EvalLedgerStore
 from policyops.persistence.database import RUNTIME_CONNECT_OPTIONS, make_engine, transaction, workspace_transaction
 from policyops.persistence.embeddings import EmbeddingStore
 from policyops.persistence.evaluation import EvaluationClaimToken, EvaluationRepository, EvaluationTrial, Slot
-from policyops.persistence.retrieval import RetrievalStore
+from policyops.persistence.retrieval import RetrievalStore, StepRefused
 from policyops.providers.calls import Providers
 from policyops.providers.embedding_calls import prepare_job, run_job_sync
 from policyops.providers.tokenizer import Tokenizer
@@ -346,10 +346,15 @@ class RetrieverExecutor:
             if report.status != "complete" or len(report.vectors) != 1:
                 raise Refused("query_embedding_incomplete")
             vector = "[" + ",".join(str(v) for v in report.vectors[0].vector) + "]"
-        snapshot = self.retrieval.snapshot(corpus_key=self.corpus,
-            mode={"fts": "lexical", "dense": "dense", "rrf": "hybrid"}[arm.retrieval.method],
-            query=value, query_vector=vector, document_ids=(), branch_documents=arm.retrieval.branch_limit,
-            chunks_per_document=1, full_policy_max_chunks=1)
+        try:
+            snapshot = self.retrieval.snapshot(corpus_key=self.corpus,
+                mode={"fts": "lexical", "dense": "dense", "rrf": "hybrid"}[arm.retrieval.method],
+                query=value, query_vector=vector, document_ids=(), branch_documents=arm.retrieval.branch_limit,
+                chunks_per_document=1, full_policy_max_chunks=1, lexical_mode=arm.retrieval.lexical_mode)
+        except StepRefused as failure:
+            if failure.code == "lexical_query_too_many_lexemes":
+                raise Refused(failure.code) from None  # record the bound, without query text, in the slot artifact
+            raise
         if (snapshot.generation_id != self.generation or snapshot.text_oversized or snapshot.dense_nan_distance
                 or (vector is not None and (snapshot.embedding_model != "text-embedding-3-small"
                                             or snapshot.dimension != 1536))):

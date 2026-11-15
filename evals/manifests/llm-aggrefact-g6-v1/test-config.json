@@ -1,0 +1,28 @@
+{
+  "analysis": {
+    "clusters": "document_sha256",
+    "gate": "complete and kappa >= .6 and lower > .4 and false_pass <= .1",
+    "replicates": 10000,
+    "seed": 20261114
+  },
+  "binding": {
+    "arm": "haiku-entailment",
+    "cache_policy": "none",
+    "effort": "low",
+    "max_input_tokens": 10000,
+    "max_output_tokens": 512,
+    "model": "claude-haiku-5-5",
+    "prompt_sha256": "4192bf039d46e1e7b50f6e846c7f1ea61a1f1b36baf582ffa4d7ef35b54ebaee",
+    "prompt_version": "entailment/v2",
+    "schema_sha256": "60a0103256204f90ff1f28457e7383694ac2020483a7a7436ecfb6eee2beb9d6",
+    "schema_version": "claim_support_v2"
+  },
+  "g6_cap_usd": "6",
+  "price_revision": "pricing.2026-11-05.v1",
+  "protocol": "policyops.g6/v1",
+  "sample_sha256": "c498da5d561fa1ef35ebc08d7389b12f1afb2da41f7cce0d8612a9276be958f3",
+  "schedule_sha256": "2256240b7307ba7277a287258819b9de073befe69654954cfd047e5af39c3f91",
+  "schema_version": "policyops.g6-test/v1",
+  "selection_receipt_sha256": "c8e81b239733d05779a1b359f6014f4da742a0282379fc35549a2e548440c384",
+  "stage_cap_usd": "3"
+}

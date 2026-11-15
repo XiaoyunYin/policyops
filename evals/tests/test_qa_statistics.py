@@ -138,15 +138,37 @@ def test_all_errors_and_single_class_degeneracy() -> None:
     assert result.balanced_accuracy is None and result.per_class_recall == (1.0, None)
 
 
-def compound_fixture() -> tuple[QAStudy, MemoryRepository, list[str], list[str], JudgeResult]:
+def compound_fixture(n: int = 20) -> tuple[QAStudy, MemoryRepository, list[str], list[str], JudgeResult]:
     body = answer_body(compound=True)
-    body["schedule"]["cohorts"][0].update(question_count=20, dialogue_count=1)
-    body["analysis"]["comparisons"][0]["required_questions"] = 20
+    body["schedule"]["cohorts"][0].update(question_count=n, dialogue_count=1)
+    body["analysis"]["comparisons"][0]["required_questions"] = n
     study, repository = bound(body)
     assert study.judge is not None
     judge = JudgeResult(selection_receipt_sha256=study.judge.selection_receipt_sha256, complete=True,
                         kappa=Decimal("0.6"), kappa_lower=Decimal("0.5"), false_pass=Decimal("0.1"))
-    return study, repository, [f"q{i}" for i in range(20)], ["dialogue"] * 20, judge
+    return study, repository, [f"q{i}" for i in range(n)], ["dialogue"] * n, judge
+
+
+@pytest.mark.parametrize(("failures", "candidate_latency", "reference_failures", "expected"), [
+    (4, 30, 0, "candidate_noninferior_and_cheaper"),
+    (5, 30, 0, "candidate_noninferior_and_cheaper"),
+    (6, 30, 0, "inconclusive"),
+    (4, 31, 0, "inconclusive"),
+    (0, 30, 4, "candidate_noninferior_and_cheaper"),
+    (0, 30, 6, "inconclusive")])
+def test_compound_policy_failure_as_worst(failures: int, candidate_latency: int,
+                                        reference_failures: int, expected: str) -> None:
+    study, repository, ids, clusters, judge = compound_fixture(100)
+    # Quality is independently completed (e.g. unavailable old timing); isolate the latency gate.
+    a = [O(F(1), Measurement(Decimal("0.8"), None if i < failures else Decimal(candidate_latency),
+                          "error" if i < failures else "success"), metric_failed=False) for i in range(100)]
+    b = [O(F(1), Measurement(Decimal(1), None if i < reference_failures else Decimal(20),
+                          "error" if i < reference_failures else "success"), metric_failed=False) for i in range(100)]
+    result = stats.comparison_result(study, study.analysis.comparisons[0].name, ids, clusters, a, b,
+                                    registration_sha256=study.registration_sha256, judge=judge)
+    assert result.candidate_p95_seconds == (candidate_latency if failures <= 5 else None)
+    assert result.reference_p95_seconds == (20 if reference_failures <= 5 else None)
+    assert comparison_status(study, result, repository.repository(), SCOPE, SOURCE) == expected
 
 
 @pytest.mark.parametrize(("losses", "cost", "latency", "ref_latency", "expected"), [

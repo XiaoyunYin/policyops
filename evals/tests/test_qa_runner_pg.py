@@ -22,6 +22,10 @@ from .test_qa_study_registration import SOURCE, materialize_manifests
 
 
 pytestmark = pytest.mark.postgres
+EXPORT_FIELDS = {"slot_id", "cohort", "question_id", "arm", "repetition", "outcome", "metrics",
+                 "cost_usd", "cost_status", "held_liability_usd", "latency_ms", "failure_code",
+                 "metric_failures", "outcome_code", "stages", "policy_cost_usd", "policy_latency_ms",
+                 "policy_latency_provenance", "policy_latency_censored", "route", "escalation_reason"}
 
 
 @pytest.fixture
@@ -78,10 +82,7 @@ def test_structural_dev_run_resume_cache_and_export(qa_runner_db: AppDatabase, t
     assert len(public["slots"]) == 12
     assert all(s["outcome"] == "success" for s in public["slots"])
     assert all(s["metrics"]["recall_at_1"] == "1" for s in public["slots"] if s["arm"].startswith("dense"))
-    assert all(set(s) <= {"slot_id", "cohort", "question_id", "arm", "repetition", "outcome", "metrics",
-                          "cost_usd", "cost_status", "held_liability_usd", "latency_ms", "failure_code",
-                          "metric_failures", "outcome_code"}
-               for s in public["slots"])
+    assert all(set(s) <= EXPORT_FIELDS for s in public["slots"])
     # The per-metric flags and outcome codes added for stage-scoped missingness stay text-free.
     assert all(s["outcome_code"] is None and all(type(v) is bool for v in s["metric_failures"].values())
                for s in public["slots"])

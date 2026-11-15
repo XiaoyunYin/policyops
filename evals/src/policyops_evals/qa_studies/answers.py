@@ -52,6 +52,25 @@ class Answer(BaseModel):
     abstain: bool
 
 
+class CascadeFirst(Answer):
+    confidence: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+    escalate: bool
+
+
+CASCADE_VERSION = "qa.cascade-first/v1"
+CASCADE_SCHEMA_JSON = canonical_bytes(CascadeFirst.model_json_schema()).decode()
+CASCADE_SCHEMA_SHA256 = sha256_bytes(CASCADE_SCHEMA_JSON.encode())
+CASCADE_SUFFIX = """This is qa.cascade-first/v1. Also return confidence (number from 0 to 1),
+your own estimate that the answer is supported, and escalate (boolean). Set
+escalate true when the passages are insufficient. Confidence is an uncalibrated
+routing signal, not a calibrated probability or a correctness guarantee.
+"""
+
+
+def cascade_prompt(max_claims: int) -> str:
+    return prompt(max_claims) + CASCADE_SUFFIX
+
+
 SCHEMA_JSON = canonical_bytes(Answer.model_json_schema()).decode()
 SCHEMA_SHA256 = sha256_bytes(SCHEMA_JSON.encode())
 
@@ -108,22 +127,26 @@ def prompt(max_claims: int) -> str:
     return PROMPT.format(max_claims=max_claims)
 
 
-def request(history: str, passages: Sequence[Passage], *, max_claims: int, max_output: int) -> ModelRequest:
+def request(history: str, passages: Sequence[Passage], *, max_claims: int, max_output: int,
+            cascade: bool = False) -> ModelRequest:
     if not history.strip() or len(history) > 100_000 or not 1 <= max_output <= 1024 or len(passages) > 5:
         raise AnswerError("generation_input_bound")
     # Whitelisted fields, never serialize the query materialization or a reference record.
     payload = {"history": history, "passages": [{"id": p.id, "heading": p.heading, "body": p.body}
                                                for p in passages]}
-    return ModelRequest(instructions=prompt(max_claims), messages=(Message(role="user", parts=(TextPart(
+    return ModelRequest(instructions=cascade_prompt(max_claims) if cascade else prompt(max_claims),
+        messages=(Message(role="user", parts=(TextPart(
         text=json.dumps(payload, ensure_ascii=False, sort_keys=True)),)),), tool_choice="none",
-        output=OutputSpec(name="qa_answer_v1", answer_schema_json=SCHEMA_JSON), max_output_tokens=max_output)
+        output=OutputSpec(name="qa_cascade_first_v1" if cascade else "qa_answer_v1",
+                          answer_schema_json=CASCADE_SCHEMA_JSON if cascade else SCHEMA_JSON),
+        max_output_tokens=max_output)
 
 
-def parse_answer(payload: str | None) -> Answer:
+def parse_answer(payload: str | None, *, cascade: bool = False) -> Answer:
     try:
         if payload is None or len(payload.encode("utf-8")) > 16000:
             raise ValueError
-        answer = Answer.model_validate(strict_loads(payload))
+        answer = (CascadeFirst if cascade else Answer).model_validate(strict_loads(payload))
         if (len(set(answer.citations)) != len(answer.citations)
                 or (answer.abstain and (answer.answer.strip() or answer.citations))
                 or (not answer.abstain and not answer.answer.strip())):
@@ -206,3 +229,37 @@ def judge_gate(binding: JudgeBinding | None, path: Path | None) -> JudgeResult |
         return result if value.get("accounting_settled") is True else result.model_copy(update={"complete": False})
     except (KeyError, TypeError, ValueError):
         raise AnswerError("judge_report_binding") from None
+
+
+ESCALATION_REASONS = ("call_failed", "output_limit", "schema_invalid", "too_many_claims",
+                      "citation_integrity", "uncited_answer", "abstained", "requested", "low_confidence")
+
+
+def escalation_reason(payload: str | None, delivery: Delivery, *, threshold: float,
+                      max_claims: int, failure: str | None = None) -> tuple[CascadeFirst | None, str | None]:
+    """Ordered, closed routing decision. Self-reported confidence is uncalibrated."""
+    if failure is not None:
+        if failure not in {"answer.first_call_failed", "answer.first_output_limit"}:
+            raise AnswerError("cascade_unroutable_failure")
+        return None, "output_limit" if failure.endswith("output_limit") else "call_failed"
+    try:
+        answer = parse_answer(payload, cascade=True)
+        if not (isinstance(answer, CascadeFirst)):
+            raise AnswerError("cascade_contract_binding")
+    except AnswerError:
+        return None, "schema_invalid"
+    try:
+        sentences(answer.answer, maximum=max_claims)
+    except AnswerError:
+        return answer, "too_many_claims"
+    if any(not c.valid for c in citations(answer, delivery)):
+        return answer, "citation_integrity"
+    if not answer.abstain and not answer.citations:
+        return answer, "uncited_answer"
+    if answer.abstain:
+        return answer, "abstained"
+    if answer.escalate:
+        return answer, "requested"
+    if answer.confidence < threshold:
+        return answer, "low_confidence"
+    return answer, None

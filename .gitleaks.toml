@@ -29,10 +29,10 @@ paths = ['''\Aevals/src/policyops_evals/ingest_manifest\.py\z''', '''\Aevals/man
 # cross-encoder/ms-marco-MiniLM-L6-v2 tokenizer by `tokenizer_sha256`, which
 # generic-api-key reads as a token assignment. The value is the SHA-256 of that
 # public tokenizer.json. Only this exact value, only for that rule, only in the
-# committed G1 QA study configs.
+# committed G1/G2 QA study configs.
 [[allowlists]]
-description = "G0.4b public MiniLM cross-encoder tokenizer digest in committed G1 QA study configs"
+description = "G0.4b public MiniLM cross-encoder tokenizer digest in committed G1/G2 QA study configs"
 targetRules = ["generic-api-key"]
 condition = "AND"
 regexes = ['''\Ad241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66\z''']
-paths = ['''\Aevals/qa_studies/g1-[a-z0-9-]+\.json\z''']
+paths = ['''\Aevals/qa_studies/g[12]-[a-z0-9-]+\.json\z''']

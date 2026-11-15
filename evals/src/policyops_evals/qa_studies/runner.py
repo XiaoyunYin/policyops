@@ -33,6 +33,7 @@ from policyops.budget.ledger import (
     Diagnostic,
     DispatchGranted,
     DispatchRefused,
+    EvalBinding,
     Ledger,
     Reserved,
     Settled,
@@ -41,7 +42,13 @@ from policyops.budget.ledger import (
 from policyops.persistence.budget import AppLedgerStore, EvalLedgerStore
 from policyops.persistence.database import RUNTIME_CONNECT_OPTIONS, make_engine, transaction, workspace_transaction
 from policyops.persistence.embeddings import EmbeddingStore
-from policyops.persistence.evaluation import EvaluationClaimToken, EvaluationRepository, EvaluationTrial, Slot
+from policyops.persistence.evaluation import (
+    EvaluationClaimToken,
+    EvaluationRepository,
+    EvaluationTrial,
+    Slot,
+    StudyLock,
+)
 from policyops.persistence.retrieval import RetrievalStore, StepRefused
 from policyops.providers.calls import CallLimits, Providers, call_sync
 from policyops.providers.embedding_calls import prepare_job, run_job_sync
@@ -60,10 +67,13 @@ from policyops_evals.qa_studies.config import (
     AnswerGeneration,
     Arm,
     Caps,
+    CascadePolicy,
     ClosedBook,
     CrossEncoder,
+    FullContext,
     LunaReranker,
     ModelBinding,
+    PolicyArm,
     QAStudy,
     Rerank,
     RetrievalOnly,
@@ -72,18 +82,22 @@ from policyops_evals.qa_studies.config import (
 )
 from policyops_evals.qa_studies.cross_encoder import POLICY, CrossEncoderClient, Passage, WorkerError
 from policyops_evals.qa_studies.metrics import (
+    Citation,
     Measurement,
     answerable_false_abstention_rate,
     citation_metrics,
     cost_per_question,
+    gold_citation,
     latency_percentile,
     lexical_metrics,
+    policy_latency_percentile,
     quality_q,
     retrieval_metrics,
 )
 from policyops_evals.qa_studies.statistics import QuestionObservation, comparison_result, paired_difference
 from policyops_evals.studies import bundles
 from policyops_evals.studies.runner_v2 import raw_inventory
+from policyops_evals.studies.taxonomy import inventory, linked
 
 
 class Refused(ValueError):
@@ -247,12 +261,12 @@ class ArmExecutor(Protocol):
 
 
 def retrieval_arm(arm: Arm) -> RetrievalOnly:
-    if isinstance(arm, (AnswerGeneration, Rerank)):
+    if isinstance(arm, (AnswerGeneration, Rerank, PolicyArm)):
         return RetrievalOnly(kind="retrieval_only", name=arm.name, retrieval=arm.retrieval)
     if isinstance(arm, ClosedBook):
         raise Refused("closed_book_has_no_retriever")
     if not isinstance(arm, RetrievalOnly):
-        name = arm.policy.kind if arm.kind == "policy" else arm.kind
+        name = arm.kind
         raise Refused(f"{name}: not implemented in this slice")
     return arm
 
@@ -260,11 +274,34 @@ def retrieval_arm(arm: Arm) -> RetrievalOnly:
 def supported(study: QAStudy) -> None:
     ce_contracts = set()
     for arm in study.arms:
-        if not isinstance(arm, (RetrievalOnly, AnswerGeneration, Rerank, ClosedBook)):
-            name = arm.policy.kind if arm.kind == "policy" else arm.kind
+        if not isinstance(arm, (RetrievalOnly, AnswerGeneration, Rerank, ClosedBook, PolicyArm)):
+            name = arm.kind
             raise Refused(f"{name}: not implemented in this slice")
         if isinstance(arm, RetrievalOnly):
             continue
+        if isinstance(arm, PolicyArm):
+            if not isinstance(arm.policy, CascadePolicy):
+                raise Refused("selective_rerank: not implemented in this slice")
+            policy = arm.policy
+            if (policy.first.model != "gpt-6-luna" or policy.first.effort != "none"
+                    or policy.first.max_output_tokens != 512
+                    or policy.first.prompt_sha256 != sha256_bytes(answers.cascade_prompt(policy.max_claims).encode())
+                    or policy.first.schema_sha256 != answers.CASCADE_SCHEMA_SHA256
+                    or policy.fallback.model != "claude-haiku-5-5" or policy.fallback.effort != "low"
+                    or policy.fallback.max_output_tokens > 1024
+                    or policy.fallback.prompt_sha256 != sha256_bytes(answers.prompt(policy.max_claims).encode())
+                    or policy.fallback.schema_sha256 != answers.SCHEMA_SHA256
+                    or policy.first_context.max_passages > 2 or policy.first_context.evidence_tokens > 1536
+                    or policy.fallback_context.max_passages > 5 or policy.fallback_context.evidence_tokens > 4096
+                    or any(c.policy != "whole-passages-skip-overflow-v1"
+                           for c in (policy.first_context, policy.fallback_context))):
+                raise Refused("cascade_contract_binding")
+            if policy.reranker is None:
+                continue
+            # Validate the shared CE ranking with the same contract as standalone arms.
+            arm = Rerank(kind="rerank", name=arm.name, retrieval=arm.retrieval,
+                         reranker=policy.reranker, generator=policy.fallback,
+                         context=policy.fallback_context, max_claims=policy.max_claims)
         generator = arm.generator
         if generator is not None and (generator.effort not in (
                 {"none", "low"} if generator.model == "gpt-6-luna" else {"low"})
@@ -300,7 +337,8 @@ def supported(study: QAStudy) -> None:
     if len(ce_contracts) > 1:
         raise Refused("cross_encoder_pools_or_truncation_differ")
     by_name = {a.name: a for a in study.arms}
-    if any(c.uses_judge and any(isinstance(by_name[n], ClosedBook) for n in (c.candidate, c.reference))
+    if any((c.uses_judge or c.estimand == "gold_citation")
+           and any(isinstance(by_name[n], ClosedBook) for n in (c.candidate, c.reference))
            for c in study.analysis.comparisons):
         raise Refused("closed_book_judged_metrics_not_measured")
     if any(c.estimand == "gold_support" for c in study.analysis.comparisons):
@@ -531,7 +569,8 @@ def metrics_for(ranking: Sequence[str], gold: Gold, *, failed: bool) -> dict[str
 
 ANSWER_METRICS = ("citation_precision", "citation_recall", "quality_q", "false_abstention", "token_f1", "rouge_l",
                   "delivered_coverage", "delivered_support")
-COMPOSITION_METRICS = (*ANSWER_METRICS, "citation_integrity")
+COMPOSITION_METRICS = (*ANSWER_METRICS, "citation_integrity", "gold_citation")
+PAID_ROLES = ("embedding", "rerank", "answer", "answer.first", "answer.fallback", "judge")
 
 
 def role_stage(study: QAStudy, item: Scheduled, role: str) -> Stage:
@@ -637,21 +676,32 @@ class AnswerState:
     stage_latency_ms: dict[str, int] = field(default_factory=dict)
     stage_cost_usd: dict[str, str | None] = field(default_factory=dict)
     rerank_metadata: dict[str, Any] = field(default_factory=dict)
+    policy_latency_ms: int | None = None
+    policy_started_at: float = field(default_factory=time.time)
+    policy_started_monotonic: float = field(default_factory=time.monotonic)
+    policy_elapsed_offset_ms: int = 0
+    route: str | None = None
+    escalation_reason: str | None = None
 
 
 class AnswerExecutor:
     """Composes retrieval, paid calls and local CE. This object never receives Gold/references."""
     def __init__(self, study: QAStudy, repository: EvaluationRepository, scope: UUID,
                  token: EvaluationClaimToken, item: Scheduled, shared: SharedUsage,
-                 providers: Callable[[], Providers], boundary: Callable[[str], None]) -> None:
+                 providers: Callable[[], Providers], boundary: Callable[[str], None],
+                 artifacts: Path | None = None) -> None:
         self.study, self.repository, self.scope, self.token, self.item = study, repository, scope, token, item
         self.shared, self.providers, self.boundary = shared, providers, boundary
+        self.artifacts = artifacts
 
-    def cost(self, actor: Actor) -> str | None:
+    def cost(self, actor: Actor, role: str | None = None) -> str | None:
         with transaction(self.repository.engine) as connection:
             costs = connection.execute(text("SELECT actual_usd, state FROM evaluation.usage_attempts "
-                "WHERE scenario_scope_id = :scenario AND actor = :actor"),
-                {"scenario": self.token.binding.scenario_id, "actor": actor}).mappings().all()
+                "WHERE scenario_scope_id = :scenario AND actor = :actor "
+                "AND (CAST(:prefix AS text) IS NULL OR starts_with(operation_id, CAST(:prefix AS text)))"),
+                {"scenario": self.token.binding.scenario_id, "actor": actor,
+                 "prefix": None if role is None else "qa/" + role_stage(self.study, self.item, role).name + "/"}
+            ).mappings().all()
         return (str(sum((c["actual_usd"] or Decimal(0) for c in costs), Decimal(0)))
                 if all(c["state"] in {"settled", "released"} for c in costs) else None)
 
@@ -667,7 +717,7 @@ class AnswerExecutor:
 
     def paid(self, role: str, model: ModelBinding, request: ModelRequest, state: AnswerState, deadline: float,
              index: int = 0) -> str | None:
-        actor: Actor = "agent" if role == "answer" else "judge" if role == "judge" else "reranker"
+        actor: Actor = "agent" if role.startswith("answer") else "judge" if role == "judge" else "reranker"
         ledger = self.ledger(role, model, actor)
         self.boundary("before_" + role)
         started = time.monotonic()
@@ -687,9 +737,12 @@ class AnswerExecutor:
         state.audit.append({"role": role, "index": index, "billing": billing_record(report)})
         state.audit[-1]["output"] = None if report.result is None else report.result.structured_json
         # Usage is read from this claim's attempts; no content is retained in public metadata.
-        state.stage_cost_usd[role] = self.cost(actor)
+        state.stage_cost_usd[role] = self.cost(actor, role) if role.startswith("answer.") else self.cost(actor)
         self.boundary("after_" + role)
-        if (role in {"answer", "rerank"} and report.result is not None
+        if role == "answer.first" and (report.cleanup_unconfirmed
+                or any(a.fate == "unresolved" for a in report.attempts)):
+            raise Refused("unresolved_billing")
+        if ((role.startswith("answer") or role == "rerank") and report.result is not None
                 and report.result.outcome == "truncated" and report.result.stop_reason == "max_output_tokens"):
             raise Refused(role + "_output_limit")
         if role == "judge":
@@ -703,13 +756,14 @@ class AnswerExecutor:
             raise Refused(role + "_call_failed")
         return report.result.structured_json
 
-    def execute(self, arm: AnswerGeneration | Rerank | ClosedBook, query: QueryInput, retriever: ArmExecutor,
-                passage_text: dict[str, answers.Passage], tokenizer: Tokenizer, state: AnswerState,
-                judge: judges.JudgeArm | None, ce: Callable[[CrossEncoder, float], CrossEncoderClient],
-                deadline: float) -> None:
+    def execute(self, arm: AnswerGeneration | Rerank | ClosedBook | PolicyArm, query: QueryInput,
+                retriever: ArmExecutor, passage_text: dict[str, answers.Passage], tokenizer: Tokenizer,
+                state: AnswerState, judge: judges.JudgeArm | None,
+                ce: Callable[[CrossEncoder, float], CrossEncoderClient],
+                deadline: float, *, resumed: bool = False) -> None:
         if not query.generation:
             raise Refused("chronological_generation_history_required")
-        if not isinstance(arm, ClosedBook):
+        if not isinstance(arm, ClosedBook) and not resumed:
             ledger = self.ledger("embedding") if arm.retrieval.method != "fts" else self.ledger_local()
             started = time.monotonic()
             try:
@@ -719,21 +773,41 @@ class AnswerExecutor:
                 state.stage_latency_ms["embedding"] = int((time.monotonic() - started) * 1000)
                 state.stage_cost_usd["embedding"] = self.cost("embedding")
             state.first_stage = state.ranking
-            if isinstance(arm, Rerank) and state.ranking:
-                self.rerank(arm, query, passage_text, state, ce, deadline)
+            ranked_arm: AnswerGeneration | Rerank | PolicyArm = arm
+            if isinstance(arm, PolicyArm):
+                if not (isinstance(arm.policy, CascadePolicy)):
+                    raise Refused("cascade_contract_binding")
+                if arm.policy.reranker is not None:
+                    ranked_arm = Rerank(kind="rerank", name=arm.name, retrieval=arm.retrieval,
+                        reranker=arm.policy.reranker, generator=arm.policy.fallback,
+                        context=arm.policy.fallback_context, max_claims=arm.policy.max_claims)
+            if isinstance(ranked_arm, Rerank) and state.ranking:
+                self.rerank(ranked_arm, query, passage_text, state, ce, deadline)
             state.ranking_complete = True
-            state.delivery = answers.deliver(state.ranking, passage_text, arm.context, tokenizer)
-        if arm.generator is None:
-            return
-        payload = self.paid("answer", arm.generator, answers.request(query.generation, state.delivery.passages,
-            max_claims=arm.max_claims, max_output=arm.generator.max_output_tokens), state, deadline)
-        state.answer = answers.parse_answer(payload)
-        state.claims = answers.sentences(state.answer.answer, maximum=arm.max_claims)
+            if not isinstance(arm, PolicyArm):
+                state.delivery = answers.deliver(state.ranking, passage_text, arm.context, tokenizer)
+        if isinstance(arm, PolicyArm):
+            if not (isinstance(arm.policy, CascadePolicy)):
+                raise Refused("cascade_contract_binding")
+            self.cascade(arm, query, passage_text, tokenizer, state, deadline, resumed=resumed)
+            max_claims = arm.policy.max_claims
+        else:
+            max_claims = arm.max_claims
+            if arm.generator is None:
+                return
+            payload = self.paid("answer", arm.generator, answers.request(query.generation, state.delivery.passages,
+                max_claims=max_claims, max_output=arm.generator.max_output_tokens), state, deadline)
+            state.answer = answers.parse_answer(payload)
+        if not (state.answer is not None):
+            raise Refused("cascade_contract_binding")
+        state.claims = answers.sentences(state.answer.answer, maximum=max_claims)
         if isinstance(arm, ClosedBook):
             if state.answer.citations:
                 raise Refused("closed_book_citations")
+            self.policy_complete(state)
             return
         checks = answers.citations(state.answer, state.delivery)
+        self.policy_complete(state)
         if any(not c.valid for c in checks):
             state.outcome_code = "undelivered_citation"
             return
@@ -746,6 +820,52 @@ class AnswerExecutor:
                 raise Refused("judge_binding_required")
             for index, claim in enumerate(state.claims):
                 self.paid("judge", self.study.judge, judges.request(judge, document, claim), state, deadline, index)
+
+    def policy_complete(self, state: AnswerState) -> None:
+        state.policy_latency_ms = (state.policy_elapsed_offset_ms
+                                   + int((time.monotonic() - state.policy_started_monotonic) * 1000))
+
+    def cascade(self, arm: PolicyArm, query: QueryInput, passages: dict[str, answers.Passage],
+                tokenizer: Tokenizer, state: AnswerState, deadline: float, *, resumed: bool) -> None:
+        policy = arm.policy
+        if not (isinstance(policy, CascadePolicy)):
+            raise Refused("cascade_contract_binding")
+        if not resumed:
+            state.delivery = answers.deliver(state.ranking, passages, policy.first_context, tokenizer)
+            payload, failure = None, None
+            try:
+                payload = self.paid("answer.first", policy.first, answers.request(query.generation,
+                    state.delivery.passages, max_claims=policy.max_claims,
+                    max_output=policy.first.max_output_tokens, cascade=True), state, deadline)
+            except Refused as error:
+                if str(error) not in {"answer.first_call_failed", "answer.first_output_limit"}:
+                    raise
+                failure = str(error)
+            first, reason = answers.escalation_reason(payload, state.delivery,
+                threshold=float(policy.confidence_threshold), max_claims=policy.max_claims, failure=failure)
+            state.route, state.escalation_reason = ("first" if reason is None else "fallback"), reason
+            if reason is None:
+                if not (first is not None):
+                    raise Refused("cascade_contract_binding")
+                state.answer = answers.Answer(answer=first.answer, citations=first.citations, abstain=first.abstain)
+                return
+            # Only a fully settled first stage may checkpoint. No ambiguous work is replayed.
+            checkpoint = {"study_sha256": self.study.digest(), "slot_id": str(self.item.id),
+                          "owner": str(self.token.owner), "invocation": str(self.token.binding.invocation_id),
+                          "query_sha256": sha256_bytes(query.generation.encode()), "state": private_answer(state)}
+            target = directory_for(self.study) / (str(self.item.id) + "-cascade.json")
+            raw = canonical_bytes(checkpoint)
+            bundles.write(target, raw)
+            if self.artifacts is None:
+                raise Refused("cascade_checkpoint_artifacts_required")
+            bundles.write(self.artifacts / target.name, raw)
+            self.boundary("cascade_first_checkpoint")
+        state.delivery = answers.deliver(state.ranking, passages, policy.fallback_context, tokenizer)
+        # Construct from original history + ranking only. The first answer is never an input.
+        payload = self.paid("answer.fallback", policy.fallback, answers.request(query.generation,
+            state.delivery.passages, max_claims=policy.max_claims, max_output=policy.fallback.max_output_tokens),
+            state, deadline)
+        state.answer = answers.parse_answer(payload)
 
     def ledger_local(self) -> Ledger:
         return Ledger(EvalLedgerStore(self.repository.engine, env="evaluation", claim_token=self.token),
@@ -805,6 +925,9 @@ def answer_metrics(state: AnswerState, arm: Arm, gold: Gold, reference: str, *, 
     result.update({"citation_precision": None if closed else str(cited.precision),
         "citation_recall": None if closed else str(cited.recall),
         "citation_integrity": None if closed else str(int(cited.integrity_failures == 0 and response is not None)),
+        "gold_citation": None if closed else str(int(gold_citation(response.answer if response else "",
+            answerable=bool(gold.passage_ids), abstained=response.abstain if response else False, citations=cited,
+            error=failed and state.policy_latency_ms is None))),
         "quality_q": None if closed else str(int(quality_q(response.answer if response else "",
             abstained=response.abstain if response else False, citations=cited,
             claim_supported=state.verdicts if len(state.verdicts) == len(state.claims) else [None], error=failed))),
@@ -823,7 +946,7 @@ def answer_metrics(state: AnswerState, arm: Arm, gold: Gold, reference: str, *, 
         # Strict non-success for composition metrics, even if the answer was
         # parsed before a later judge failed. Completed ranking stays valid.
         for key in COMPOSITION_METRICS:
-            if result[key] is not None:
+            if result[key] is not None and not (key == "gold_citation" and state.policy_latency_ms is not None):
                 result[key] = "0"
     return result
 
@@ -858,7 +981,9 @@ def private_answer(state: AnswerState) -> dict[str, Any]:
         "evidence_tokens": state.delivery.tokens, "answer": None if state.answer is None else state.answer.model_dump(),
         "claims": state.claims, "verdicts": state.verdicts, "audit": state.audit,
         "rerank_metadata": state.rerank_metadata, "stage_latency_ms": state.stage_latency_ms,
-        "stage_cost_usd": state.stage_cost_usd}
+        "stage_cost_usd": state.stage_cost_usd, "policy_latency_ms": state.policy_latency_ms,
+        "policy_started_at": state.policy_started_at, "route": state.route,
+        "escalation_reason": state.escalation_reason}
 
 
 PUBLIC_FAILURES = frozenset({"abandoned_claim", "unresolved_billing", "slot_execution_error", "slot_deadline",
@@ -867,7 +992,8 @@ PUBLIC_FAILURES = frozenset({"abandoned_claim", "unresolved_billing", "slot_exec
     "answer_providers_required", "unsupported_arm", "evidence_contract", "unknown_ranked_passage", "invalid_answer",
     "generation_input_bound", "too_many_claims", "claim_limit", "undelivered_citation", "closed_book_citations",
     "judge_binding_required", "missing_cited_evidence", "invalid_judge_verdict", "answer_call_failed",
-    "judge_call_failed", "rerank_call_failed", "answer_output_limit", "rerank_output_limit",
+    "judge_call_failed", "rerank_call_failed", "answer.first_call_failed", "answer.fallback_call_failed",
+    "answer.first_output_limit", "answer.fallback_output_limit", "answer_output_limit", "rerank_output_limit",
     "invalid_rerank", "rerank_input_bound", "cross_encoder_failure", "stage_or_cumulative_cap",
     "stage_model_envelope_mismatch", "one_matching_execution_stage_required", "lexical_metric_bound"})
 
@@ -881,7 +1007,7 @@ def public_stages(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise Refused("stored_stage_shape")
     result: dict[str, Any] = {}
-    for role in ("embedding", "answer", "judge", "rerank"):
+    for role in PAID_ROLES:
         if role not in value:
             continue
         entry = value[role]
@@ -910,11 +1036,55 @@ def metric_failed(slot: dict[str, Any], metric: str) -> bool:
     return bool(slot.get("metric_failures", {}).get(metric, slot["outcome"] != "success"))
 
 
+def stored_policy_latency(components: dict[str, Any], private: dict[str, Any] | None,
+                          *, complete: bool, arm: Arm) -> tuple[int | None, str | None]:
+    if "policy_latency_ms" in components:
+        value = components["policy_latency_ms"]
+        if value is not None and (type(value) is not int or not 0 <= value <= 604800000):
+            raise Refused("stored_policy_latency")
+        return value if complete else None, "measured"
+    # Old stage sums are sound only for the serial single-answer implementation.
+    stages = None if private is None else private.get("stage_latency_ms")
+    required = {"answer"}
+    if not isinstance(arm, ClosedBook):
+        required.add("embedding")
+    if isinstance(arm, Rerank):
+        required.add("rerank")
+    if (not complete or isinstance(arm, (PolicyArm, FullContext, RetrievalOnly)) or not isinstance(stages, dict)
+            or not required <= stages.keys() or set(stages) - {"embedding", "rerank", "answer", "judge"}
+            or any(type(v) is not int or not 0 <= v <= 604800000 for v in stages.values())):
+        return None, "derived-stage-sum"
+    total = sum(stages.get(k, 0) for k in ("embedding", "rerank", "answer"))
+    return (total if total <= 604800000 else None), "derived-stage-sum"
+
+
+def citation_score(record: dict[str, Any], *, complete: bool) -> str:
+    if not complete:
+        return "0"
+    try:
+        answer = answers.parse_answer(json.dumps(record.get("answer")))
+        delivered, gold = record["delivered_passage_ids"], record["gold_passage_ids"]
+        if (not isinstance(delivered, (list, tuple)) or not isinstance(gold, (list, tuple))
+                or len(delivered) > 5 or len(gold) > 10000
+                or any(not isinstance(p, str) or len(p) > 500 for p in (*delivered, *gold))):
+            raise ValueError
+        cited = citation_metrics([Citation(p, identity_valid=p in delivered, access_valid=p in delivered)
+                                  for p in answer.citations], gold)
+        return str(int(gold_citation(answer.answer, answerable=bool(gold), abstained=answer.abstain,
+                                     citations=cited)))
+    except (ValueError, KeyError, TypeError):
+        raise Refused("stored_citation_record") from None
+
+
 def export(study: QAStudy, order: Sequence[Scheduled], repository: EvaluationRepository,
-           runs: dict[str, UUID]) -> dict[str, Any]:
+           runs: dict[str, UUID], inputs: Inputs | None = None) -> dict[str, Any]:
     rows = {row["id"]: row for run in runs.values() for row in repository.results(run)}
     claims = {s.id: s for run in runs.values() for s in repository.slots(run)}
     slots = []
+    arms = {a.name: a for a in study.arms}
+    legacy = any("citation_record" not in row["components"] and not isinstance(arms[item.arm], RetrievalOnly)
+                 for item in order if (row := rows.get(item.id)) is not None)
+    found = inventory(directory_for(study)) if legacy else {}
     for item in order:
         row = rows.get(item.id)
         claim = claims.get(item.id)
@@ -938,6 +1108,39 @@ def export(study: QAStudy, order: Sequence[Scheduled], repository: EvaluationRep
             code = row["components"].get("outcome_code")
             slot_value["outcome_code"] = (code if isinstance(code, str) and code in {
                 "uncited_answer", "undelivered_citation"} else None)
+        arm = arms[item.arm]
+        if row is not None and not isinstance(arm, RetrievalOnly):
+            components = row["components"]
+            private = None
+            record = components.get("citation_record")
+            if record is None and row.get("artifact_sha256") is not None:
+                _, result_path = linked(found, str(item.id) + ".json", row["artifact_sha256"])
+                candidates = [p for (name, _), paths in found.items()
+                              if name == str(item.id) + "-answer.json" for p in paths if p.parent == result_path.parent]
+                if len(candidates) == 1:
+                    private, _ = bundles.read(candidates[0])
+                    if not isinstance(private, dict):
+                        raise Refused("stored_answer_shape")
+                    if inputs is not None:
+                        record = dict(private, gold_passage_ids=inputs.gold[item.question].passage_ids)
+            if "policy_latency_ms" in components:
+                complete = components["policy_latency_ms"] is not None
+            else:
+                # A downstream judge failure preserves a fully validated policy answer.
+                complete = (row["outcome"] == "success" or row["error_class"] in {
+                    "invalid_judge_verdict", "judge_call_failed", "judge_binding_required"})
+                complete = complete and private is not None and private.get("answer") is not None
+            slot_value["metrics"]["gold_citation"] = (None if isinstance(arm, ClosedBook) else
+                citation_score(record, complete=complete) if record is not None else "0")
+            slot_value["metric_failures"]["gold_citation"] = not complete or record is None
+            latency, provenance = stored_policy_latency(components, private, complete=complete, arm=arm)
+            slot_value.update(policy_latency_ms=latency, policy_latency_provenance=provenance,
+                              policy_latency_censored=latency is None)
+            route, reason = components.get("route"), components.get("escalation_reason")
+            if isinstance(arm, PolicyArm):
+                if route not in {None, "first", "fallback"} or reason not in {None, *answers.ESCALATION_REASONS}:
+                    raise Refused("stored_route")
+                slot_value.update(route=route, escalation_reason=reason)
         if row is not None and "stages" in row["components"]:
             stages = public_stages(row["components"]["stages"])
             slot_value["stages"] = stages
@@ -948,8 +1151,6 @@ def export(study: QAStudy, order: Sequence[Scheduled], repository: EvaluationRep
                 raise Refused("stored_stage_cost_contradiction")
             slot_value["policy_cost_usd"] = (str(policy_cost)
                 if row["cost_status"] == "known" and row["cost_usd"] is not None else None)
-            slot_value["policy_latency_ms"] = (max(0, row["latency_ms"] - (judge.get("latency_ms") or 0))
-                                               if row["latency_ms"] is not None else None)
         slots.append(slot_value)
     return {"schema_version": "policyops.qa-export/v1", "study_id": str(study.study_id),
             "specification_sha256": study.digest(), "slots": slots}
@@ -971,6 +1172,15 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
             else Decimal(s.get("policy_latency_ms", s["latency_ms"])) / 1000,
             "missing" if s["outcome"] == "missing" else "success" if s["outcome"] == "success" else "error",
             Decimal(s["held_liability_usd"])) for s in rows]
+        policy_measurements = [Measurement(m.cost_usd,
+            None if row.get("policy_latency_ms") is None else Decimal(row["policy_latency_ms"]) / 1000,
+            "success" if row.get("policy_latency_ms") is not None and not row.get("policy_latency_censored", True)
+            else "missing" if row["outcome"] == "missing" else "error", m.held_liability_usd)
+            for row, m in zip(rows, measurements, strict=True)]
+        end_to_end = [Measurement(m.cost_usd,
+            None if row["latency_ms"] is None else Decimal(row["latency_ms"]) / 1000,
+            "success" if row["outcome"] == "success" else "error", m.held_liability_usd)
+            for row, m in zip(rows, measurements, strict=True)]
         aggregates.append({"cohort": assignment.cohort, "arm": assignment.arm, "scheduled": len(rows),
             "failed_or_missing": sum(s["outcome"] != "success" for s in rows),
             "outcome_counts": {code: sum(s.get("outcome_code") == code for s in rows)
@@ -985,8 +1195,23 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
             "cost": {k: str(v) if isinstance(v, Decimal) else v
                      for k, v in asdict(cost_per_question(measurements)).items()},
             "latency": {label: {k: str(v) if isinstance(v, Decimal) else v
-                                for k, v in asdict(latency_percentile(measurements, probability)).items()}
+                                for k, v in asdict(latency_percentile(end_to_end, probability)).items()}
                         for label, probability in (("p50", Fraction(1, 2)), ("p95", Fraction(19, 20)))},
+            "policy_latency": {label: {k: str(v) if isinstance(v, Decimal) else v
+                for k, v in asdict(policy_latency_percentile(policy_measurements, probability)).items()}
+                for label, probability in (("p50", Fraction(1, 2)), ("p95", Fraction(19, 20)))},
+            "policy_latency_rule": "failure-as-worst-v1",
+            "policy_latency_provenance": {v: sum(s.get("policy_latency_provenance") == v for s in rows)
+                for v in ("measured", "derived-stage-sum")},
+            "escalation_rate": str(Fraction(sum(s.get("route") == "fallback" for s in rows), len(rows)))
+                if isinstance(arm, PolicyArm) else None,
+            "escalation_reason_counts": {v: sum(s.get("escalation_reason") == v for s in rows)
+                for v in answers.ESCALATION_REASONS} if isinstance(arm, PolicyArm) else {},
+            "route_cost": {v: {"n": sum(s.get("route") == v for s in rows),
+                "known_policy_usd": str(sum((Decimal(s.get("policy_cost_usd") or "0")
+                    for s in rows if s.get("route") == v), Decimal(0))),
+                "unknown": sum(s.get("route") == v and s.get("policy_cost_usd") is None for s in rows)}
+                for v in ("first", "fallback")} if isinstance(arm, PolicyArm) else {},
             "metrics": {key: None if isinstance(arm, ClosedBook) and key not in {
                 "token_f1", "rouge_l", "false_abstention"} else str(sum((
                     Fraction(s["metrics"].get(key) or "0") if not metric_failed(s, key) else Fraction(0)
@@ -996,7 +1221,7 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
                 "latency_ms": sum(s.get("stages", {}).get(role, {}).get("latency_ms")
                 or 0 for s in rows), "unconfirmed": sum(s["outcome"] != "success" or (
                     role in s.get("stages", {}) and s["stages"][role].get("cost_usd") is None) for s in rows)}
-                for role in ("embedding", "rerank", "answer", "judge")}})
+                for role in PAID_ROLES}})
     comparisons = []
     for comparison in study.analysis.comparisons:
         ids, clusters = [], []
@@ -1012,8 +1237,8 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
                     missing = row["outcome"] == "missing"
                     success = not metric_failed(row, comparison.estimand)
                     ranking_metric = comparison.estimand in asdict(retrieval_metrics((), ()))
-                    # Ranking comparisons use completion/latency of that stage;
-                    # end-to-end policy latency remains censored in aggregates.
+                    # Ranking comparisons use that stage's completion/latency;
+                    # compound gates use policy completion, independently of quality.
                     latency_ms = (sum(row.get("stages", {}).get(role, {}).get("latency_ms") or 0
                                       for role in ("embedding", "rerank")) if ranking_metric and "stages" in row
                                   else row.get("policy_latency_ms", row["latency_ms"]))
@@ -1022,7 +1247,9 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
                         Measurement(None if row.get("policy_cost_usd", row["cost_usd"]) is None else Decimal(
                             row.get("policy_cost_usd", row["cost_usd"])),
                             None if latency_ms is None else Decimal(latency_ms) / 1000,
-                            "success" if success else "error", Decimal(row["held_liability_usd"]))))
+                            "success" if (success if ranking_metric else not row.get("policy_latency_censored", True))
+                            and latency_ms is not None else "error", Decimal(row["held_liability_usd"])),
+                        metric_failed=not success))
         candidate, reference = observations[comparison.candidate], observations[comparison.reference]
         result = comparison_result(study, comparison.name, ids, clusters, candidate, reference,
                                    registration_sha256=study.registration_sha256, judge=judge_result)
@@ -1030,6 +1257,9 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
             [o.value if o else None for o in reference], clusters, seed=study.analysis.bootstrap_seed,
             alpha=Fraction(comparison.alpha))
         comparisons.append({"name": comparison.name, "result": result.model_dump(mode="json"),
+            "policy_latency_rule": "failure-as-worst-v1" if comparison.decision == "noninferior_and_cheaper" else None,
+            "policy_latency_failed_counts": {name: sum(o is None or o.measurement.status != "success" for o in values)
+                for name, values in observations.items()} if comparison.decision == "noninferior_and_cheaper" else None,
             "ordinary_95": [str(estimate.low), str(estimate.high)], "point": str(estimate.point),
             "status": registration.comparison_status(study, result,
                 DescriptiveView(repository.engine) if study.purpose == "dev" and study.registration_sha256 is None
@@ -1043,6 +1273,11 @@ def report(study: QAStudy, inputs: Inputs, public: dict[str, Any], repository: E
                 "Luna reranking uses bounded excerpts; CE uses query128/pair384 prefix truncation.",
                 "Ranking metrics survive downstream failures; per-metric failure counts retain all scheduled slots.",
                 "Lexical lexeme-cap refusals are strict retrieval failures, with no fallback.",
+                "Cascade confidence is an uncalibrated model routing signal.",
+                "Policy latency uses failure-as-worst-v1: failures rank as +infinity; "
+                "a quantile is None only when its nearest rank falls in the failures. "
+                "Failed counts include unavailable policy latency. End-to-end latency retains "
+                "the censored-lower-bound rule.",
                 "Judged comparisons are descriptive without a bound passing G6 test report."]}
 
 
@@ -1055,6 +1290,63 @@ class DescriptiveView(EvaluationRepository):
         return None
 
 
+def resume_cascade(study: QAStudy, item: Scheduled, inputs: Inputs, repository: EvaluationRepository,
+                   slot: Slot, lease: StudyLock) -> tuple[EvaluationClaimToken, AnswerState] | None:
+    """Recover only the frozen between-stage checkpoint under the current study lease.
+
+    Keep the original owner, invocation, scenario and operation identities. Any
+    fallback attempt, held billing or missing checkpoint falls back to abort.
+    This evaluator-only recovery uses the existing claim fencing contract.
+    """
+    target = directory_for(study) / (str(item.id) + "-cascade.json")
+    if not target.exists():
+        return None
+    value, raw_checkpoint = bundles.read(target)
+    linked(inventory(directory_for(study)), target.name, sha256_bytes(raw_checkpoint))
+    if (not isinstance(value, dict) or value.get("study_sha256") != study.digest()
+            or value.get("slot_id") != str(item.id)
+            or value.get("query_sha256") != sha256_bytes(inputs.queries[item.question].generation.encode())):
+        raise Refused("cascade_checkpoint_binding")
+    with transaction(repository.engine) as connection:
+        lease.check(connection)
+        row = connection.execute(text("SELECT owner_token, invocation_scope, state FROM evaluation.trial_claims "
+            "WHERE id = :id AND study_scope = :study AND scenario_scope = :scenario FOR UPDATE"),
+            {"id": slot.id, "study": slot.study_id, "scenario": slot.scenario_id}).mappings().one()
+        attempts = connection.execute(text("SELECT operation_id, state FROM evaluation.usage_attempts "
+            "WHERE scenario_scope_id = :scenario"), {"scenario": slot.scenario_id}).mappings().all()
+        lease.check(connection)
+    arm = next(a for a in study.arms if a.name == item.arm)
+    if not (isinstance(arm, PolicyArm) and isinstance(arm.policy, CascadePolicy)):
+        raise Refused("cascade_contract_binding")
+    first_prefix = "qa/" + role_stage(study, item, "answer.first").name + "/"
+    allowed = (first_prefix, "qa/" + role_stage(study, item, "embedding").name + "/")
+    if (row["state"] != "running" or str(row["owner_token"]) != value.get("owner")
+            or str(row["invocation_scope"]) != value.get("invocation")
+            or not any(a["operation_id"].startswith(first_prefix) for a in attempts)
+            or any(a["state"] not in {"settled", "released"}
+                   or not a["operation_id"].startswith(allowed) for a in attempts)):
+        return None
+    raw = value["state"]
+    ranking = tuple(raw["ranked_passage_ids"])
+    if (not raw.get("ranking_complete") or len(ranking) > 100 or len(set(ranking)) != len(ranking)
+            or any(p not in inputs.passage_text for p in ranking)
+            or raw.get("route") != "fallback" or raw.get("escalation_reason") not in answers.ESCALATION_REASONS
+            or type(raw.get("policy_started_at")) not in {int, float}
+            or not 0 <= time.time() - raw["policy_started_at"] <= 604800):
+        raise Refused("cascade_checkpoint_state")
+    if time.time() - raw["policy_started_at"] >= study.execution.request_deadline_seconds:
+        return None  # Restart does not reset the slot time budget.
+    token = EvaluationClaimToken(slot.id, row["owner_token"],
+        EvalBinding(slot.study_id, row["invocation_scope"], slot.scenario_id), lease.pid)
+    state = AnswerState(ranking=ranking, ranking_complete=True,
+        first_stage=tuple(raw["first_stage_passage_ids"]), audit=raw["audit"],
+        stage_latency_ms=raw["stage_latency_ms"], stage_cost_usd=raw["stage_cost_usd"],
+        rerank_metadata=raw["rerank_metadata"], route="fallback", escalation_reason=raw["escalation_reason"],
+        policy_started_at=raw["policy_started_at"],
+        policy_elapsed_offset_ms=int((time.time() - raw["policy_started_at"]) * 1000))
+    return token, state
+
+
 def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store: EvalLedgerStore,
         executor: ArmExecutor, *, allow_paid: bool, resume: bool,
         source: dict[str, Any] | None = None, boundary: Callable[[str], None] = lambda _: None,
@@ -1064,7 +1356,7 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
     study.validate_data()
     supported(study)
     arms = {arm.name: arm for arm in study.arms}
-    judged = any(isinstance(a, AnswerGeneration) or (isinstance(a, Rerank) and a.generator is not None)
+    judged = any(isinstance(a, (AnswerGeneration, PolicyArm)) or (isinstance(a, Rerank) and a.generator is not None)
                  for a in arms.values())
     judge = answers.selected_judge(study.judge, selection_receipt) if judged else None
     if study.example or not preflight(study)["within_caps"]:
@@ -1107,8 +1399,8 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
         lookup = {}
         for item in order:
             arm = arms[item.arm]
-            stage = stage_for(study, item, arm) if isinstance(arm, RetrievalOnly) else role_stage(study, item, "answer"
-                if not isinstance(arm, Rerank) or arm.generator is not None else "rerank")
+            role = "answer.first" if isinstance(arm, PolicyArm) else "answer"
+            stage = stage_for(study, item, arm) if isinstance(arm, RetrievalOnly) else role_stage(study, item, role)
             config = configuration(study, stage) if isinstance(arm, RetrievalOnly) else composition_configuration(study)
             stage_id = uuid5(scope, "stage/" + stage.name if isinstance(arm, RetrievalOnly) else "qa-composition/v1")
             store.ensure_invocation(scope, stage_id, config.caps)
@@ -1122,15 +1414,23 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
         existing = {s.id: s for run_id in runs.values() for s in repository.slots(run_id)}
         if existing.keys() != lookup.keys():
             raise Refused("persisted_schedule_bijection")
+        recovering: dict[UUID, tuple[EvaluationClaimToken, AnswerState]] = {}
+        scheduled_by_id = {item.id: item for item in order}
         for slot in existing.values():
             if slot.state == "running":
+                arm = arms[scheduled_by_id[slot.id].arm]
+                checkpoint = (resume_cascade(study, scheduled_by_id[slot.id], inputs, repository, slot, lease)
+                              if isinstance(arm, PolicyArm) and isinstance(arm.policy, CascadePolicy) else None)
+                if checkpoint is not None:
+                    recovering[slot.id] = checkpoint
+                    continue
                 repository.abort(slot, lease)  # never reissue even a claim that crashed before reservation
         invocation = directory.parent.parent / str(uuid4())  # shared bounded inventory paths are benchmarks-relative
         invocation.mkdir()
         primary: BaseException | None = None
         try:
             for item in order:
-                if existing[item.id].state != "scheduled":
+                if existing[item.id].state != "scheduled" and item.id not in recovering:
                     continue
                 slot, stage, stage_id, config = lookup[item.id]
                 arm = arms[item.arm]
@@ -1148,14 +1448,16 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                 if program_usd + shared.usd + (config.reservation("embedding").worst_usd if paid else 0) > (
                         study.execution.program_cap_usd):
                     break
-                token = repository.claim(slot, stage_id, lease)
+                token = recovering[item.id][0] if item.id in recovering else repository.claim(slot, stage_id, lease)
                 if token is None:
                     raise Refused("claim_unavailable")
                 boundary("claimed")
                 started = time.monotonic()
                 error: str | None = None
                 ranking: tuple[str, ...] = ()
-                state = AnswerState()
+                state = recovering[item.id][1] if item.id in recovering else AnswerState(
+                    policy_started_at=time.time(), policy_started_monotonic=started)
+                slot_seconds = study.execution.request_deadline_seconds - state.policy_elapsed_offset_ms / 1000
                 try:
                     boundary("before_execute")
                     if isinstance(arm, RetrievalOnly):
@@ -1163,7 +1465,7 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                         ranking = executor.execute(arm, inputs.queries[item.question], item, ledger,
                                                    started + study.execution.request_deadline_seconds)
                     else:
-                        if not isinstance(arm, (AnswerGeneration, Rerank, ClosedBook)):
+                        if not isinstance(arm, (AnswerGeneration, Rerank, ClosedBook, PolicyArm)):
                             raise Refused("unsupported_arm")
                         if providers is None:
                             raise Refused("answer_providers_required")
@@ -1173,13 +1475,14 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                             ce: Callable[[CrossEncoder, float], CrossEncoderClient] = absent_ce
                         else:
                             ce = cross_encoder
-                        composed = AnswerExecutor(study, repository, scope, token, item, shared, providers, boundary)
+                        composed = AnswerExecutor(study, repository, scope, token, item, shared, providers,
+                                                  boundary, invocation)
                         composed.execute(arm, inputs.queries[item.question], executor, inputs.passage_text,
                             tokenizer or load_tokenizer(), state, judge, ce,
-                            started + study.execution.request_deadline_seconds)
+                            started + slot_seconds, resumed=item.id in recovering)
                         ranking = state.ranking
                     boundary("executed")
-                    if time.monotonic() - started >= study.execution.request_deadline_seconds:
+                    if time.monotonic() - started >= slot_seconds:
                         raise Refused("slot_deadline")
                 except Exception as failure:
                     error = (str(failure) if isinstance(failure, (Refused, answers.AnswerError))
@@ -1209,9 +1512,16 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
                 boundary("artifact")
                 metric_failures = {key: (error is not None if isinstance(arm, RetrievalOnly)
                     or key in COMPOSITION_METRICS else not state.ranking_complete)
+                    if key != "gold_citation" else state.policy_latency_ms is None
                     for key, value in metrics.items() if value is not None}
                 components: dict[str, Any] = {"metrics": metrics, "metric_failures": metric_failures}
                 if not isinstance(arm, RetrievalOnly):
+                    components["citation_record"] = {
+                        "answer": None if state.answer is None else state.answer.model_dump(),
+                        "delivered_passage_ids": [p.id for p in state.delivery.passages],
+                        "gold_passage_ids": inputs.gold[item.question].passage_ids}
+                    components["policy_latency_ms"] = state.policy_latency_ms
+                    components["route"], components["escalation_reason"] = state.route, state.escalation_reason
                     components["outcome_code"] = state.outcome_code if error is None else None
                     components["stages"] = {role: {"latency_ms": state.stage_latency_ms.get(role),
                         "cost_usd": state.stage_cost_usd.get(role)} for role in state.stage_latency_ms}
@@ -1231,7 +1541,7 @@ def run(study: QAStudy, inputs: Inputs, repository: EvaluationRepository, store:
         finally:
             try:
                 raw_inventory(directory, invocation)
-                public = export(study, order, repository, runs)
+                public = export(study, order, repository, runs, inputs)
                 bundles.write(directory / ("export-" + sha256_bytes(canonical_bytes(public)) + ".json"),
                               canonical_bytes(public), byte_limit=QA_BUNDLE_BYTES)
             except BaseException:
@@ -1254,7 +1564,8 @@ def command(study: QAStudy, action: str, *, materialization: Path, app_dsn_file:
     if (action == "run" and not allow_paid
             and any(not isinstance(a, RetrievalOnly) or a.retrieval.method != "fts" for a in study.arms)):
         raise Refused("paid_opt_in_required_before_credentials")
-    if action == "run" and any(isinstance(a, AnswerGeneration) or (isinstance(a, Rerank) and a.generator is not None)
+    if action == "run" and any(isinstance(a, (AnswerGeneration, PolicyArm))
+                               or (isinstance(a, Rerank) and a.generator is not None)
                                for a in study.arms):
         answers.selected_judge(study.judge, selection_receipt)
     gate = answers.judge_gate(study.judge, judge_report) if action == "report" else None
@@ -1318,7 +1629,7 @@ def command(study: QAStudy, action: str, *, materialization: Path, app_dsn_file:
             raise Refused("study_binding_changed")
         with repository.study_lock(scope.id):
             public = export(study, schedule(study, inputs), repository,
-                            {a.name: registration.run_id(study, scope.id, a.name) for a in study.arms})
+                            {a.name: registration.run_id(study, scope.id, a.name) for a in study.arms}, inputs)
             if action == "status":
                 return public
             result = report(study, inputs, public, repository, scope.id, source, gate)

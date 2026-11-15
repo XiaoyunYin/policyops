@@ -20,7 +20,12 @@ from typing import Literal
 
 from policyops_evals.canonical import canonical_bytes, sha256_bytes
 from policyops_evals.qa_studies.config import QAStudy
-from policyops_evals.qa_studies.metrics import Measurement, cost_per_question, latency_percentile
+from policyops_evals.qa_studies.metrics import (
+    Measurement,
+    cost_per_question,
+    latency_percentile,
+    policy_latency_percentile,
+)
 from policyops_evals.qa_studies.registration import ComparisonResult, JudgeResult, ObservationSummary
 from policyops_evals.studies.statistics import r7
 
@@ -161,6 +166,17 @@ class QuestionObservation:
     value: Fraction | None
     measurement: Measurement
     integrity: bool = True
+    # New composition callers separate metric completion from latency censoring.
+    # None preserves the historical caller contract.
+    metric_failed: bool | None = None
+
+    @property
+    def successful(self) -> bool:
+        return not self.metric_failed if self.metric_failed is not None else self.measurement.status == "success"
+
+    @property
+    def missing(self) -> bool:
+        return self.metric_failed is None and self.measurement.status == "missing"
 
 
 def _measurements(observations: Sequence[QuestionObservation | None]) -> list[Measurement]:
@@ -169,10 +185,9 @@ def _measurements(observations: Sequence[QuestionObservation | None]) -> list[Me
 
 def _summary(arm: str, observations: Sequence[QuestionObservation | None]) -> ObservationSummary:
     costs = cost_per_question(_measurements(observations))
-    missing = sum(o is None or o.measurement.status == "missing" for o in observations)
+    missing = sum(o is None or o.missing for o in observations)
     return ObservationSummary(arm=arm, scheduled=len(observations), recorded=len(observations) - missing,
-        failed=sum(o is not None and o.measurement.status != "missing"
-                   and (o.measurement.status != "success" or o.value is None) for o in observations),
+        failed=sum(o is not None and not o.missing and (not o.successful or o.value is None) for o in observations),
         missing=missing, integrity=all(o is None or o.integrity for o in observations),
         accounting_settled=costs.mean_usd is not None, held_liability_usd=costs.held_liability_usd)
 
@@ -205,7 +220,7 @@ def comparison_result(study: QAStudy, comparison_name: str, question_ids: Sequen
         raise ValueError("comparison scheduled frame mismatch")
     # Validate the entire frame and values before the more expensive bootstrap.
     _frame(clusters, study.analysis.bootstrap_seed, study.analysis.bootstrap_replicates)
-    scores = [[o.value if o is not None and o.measurement.status == "success" and o.integrity else None
+    scores = [[o.value if o is not None and o.successful and o.integrity else None
                for o in arm] for arm in (candidate, reference)]
     quality = paired_difference(scores[0], scores[1], clusters, seed=study.analysis.bootstrap_seed,
                                 replicates=study.analysis.bootstrap_replicates, alpha=Fraction(comparison.alpha))
@@ -219,7 +234,8 @@ def comparison_result(study: QAStudy, comparison_name: str, question_ids: Sequen
                              direction="upper")
         if cost.adjusted_bound is not None and cost.adjusted_bound <= 1_000_000:
             cost_upper = _decimal(cost.adjusted_bound, upper=True)
-    latencies = [latency_percentile(arm, Fraction(19, 20)).seconds for arm in measurements]
+    percentile = policy_latency_percentile if comparison.decision == "noninferior_and_cheaper" else latency_percentile
+    latencies = [percentile(arm, Fraction(19, 20)).seconds for arm in measurements]
     lower = _decimal(quality.adjusted_bound)
     if lower is None:
         raise ValueError("quality bound undefined")

@@ -563,8 +563,18 @@ Ranking completion fixes ranked IDs and retrieval metrics even when answering or
 judging later fails. Retrieval/rerank failures zero ranking and downstream metrics;
 composition metrics retain strict non-success. Aggregates and paired comparisons
 use per-metric failure flags, with `metric_failed_counts` in each aggregate.
-Ranking comparisons use ranking-stage latency; aggregate policy latency remains
-end-to-end and censors operational failures. Uncited answers and undelivered
+Ranking comparisons use ranking-stage latency. Policy latency excludes judging:
+new records measure slot start through final answer validation; old serial records
+derive the embedding + rerank + answer stage sum, with provenance disclosed.
+Unsound derivations remain unavailable. Policy aggregates and compound-gate p95
+use `failure-as-worst-v1`: failed policy slots (including unavailable policy
+latency) rank as +infinity among all scheduled slots. The nearest-rank quantile
+at ceil(p * n) is observed unless that rank falls in the failures, when it is
+`None`; each aggregate quantile reports `failed_count`, and compound comparisons
+report `policy_latency_failed_counts` beside candidate/reference p95. Thus p95 remains determined
+with up to 5% failures. Judge failures after policy completion preserve observed
+policy latency. The separate end-to-end `latency` field retains its existing
+censored-lower-bound rule. Uncited answers and undelivered
 citations complete with separate `outcome_code` / `outcome_counts`, Q=0 and the
 existing citation precision/recall rules (uncited=0; undelivered integrity=0).
 Their sentences are not judged. Invalid judge verdicts and provider errors remain
@@ -580,8 +590,9 @@ bills remain held. Resume executes remaining scheduled slots. `--ce-artifact DIR
 without fallback. Private checkpoints retain answers and billing evidence;
 exports allowlist IDs, numeric metrics, costs, latency and failure codes only.
 Policy cost/latency exclude judging; experimental spend includes judging and
-shared preprocessing is disclosed separately. Cascade, selective rerank,
-full-context and caching execution remain deferred.
+shared preprocessing is disclosed separately. The dev cascade uses Luna first and
+Haiku fallback over the same ranking; confidence is an uncalibrated routing signal.
+Selective rerank, full-context and caching execution remain deferred.
 
 ## G8 local cross-encoder tooling
 

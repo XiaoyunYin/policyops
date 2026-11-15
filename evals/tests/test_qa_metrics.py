@@ -13,6 +13,7 @@ from policyops_evals.qa_studies.metrics import (
     cost_per_question,
     latency_percentile,
     lexical_metrics,
+    policy_latency_percentile,
     quality_q,
     retrieval_metrics,
     tokenize,
@@ -115,6 +116,37 @@ def test_latency_nearest_rank_with_ties_and_censoring() -> None:
     assert p.seconds is None and p.lower_bound_seconds == 0
     ties = [Measurement(Decimal(0), Decimal(10))] * 20
     assert latency_percentile(ties, F(19, 20)).seconds == 10
+
+
+@pytest.mark.parametrize("failures", [0, 4, 5, 6, 100])
+def test_policy_latency_failure_as_worst(failures: int) -> None:
+    rows = [Measurement(Decimal(0), Decimal(i)) for i in range(1, 101)]
+    baseline = policy_latency_percentile(rows, F(19, 20))
+    assert baseline.seconds is not None
+    # Replace the fastest observations: failures must not lower the percentile.
+    rows[:failures] = [Measurement(Decimal(0), None, "error")] * failures
+    result = policy_latency_percentile(rows, F(19, 20))
+    assert result.n == 100 and result.failed_count == failures
+    assert result.seconds == (Decimal(95 + failures) if failures <= 5 else None)
+    assert result.seconds is None or result.seconds >= baseline.seconds
+    if failures == 4:
+        assert latency_percentile(rows, F(19, 20)).seconds is None
+    if failures:
+        # Elapsed failure bounds have no influence on this explicit convention.
+        rows[:failures] = [Measurement(Decimal(0), Decimal(600), "timeout")] * failures
+        assert policy_latency_percentile(rows, F(19, 20)) == result
+
+
+@pytest.mark.parametrize("probability", [F(0), F(2)])
+def test_policy_latency_probability_bounds(probability: F) -> None:
+    with pytest.raises(ValueError, match="bounds"):
+        policy_latency_percentile([Measurement(Decimal(0), Decimal(1))], probability)
+
+
+def test_policy_latency_frame_bounds() -> None:
+    for rows in ([], [Measurement(Decimal(0), Decimal(1))] * 10001):
+        with pytest.raises(ValueError, match="bounds"):
+            policy_latency_percentile(rows, F(19, 20))
 
 
 @pytest.mark.parametrize("bad", [Decimal("-1"), Decimal("NaN"), Decimal("Infinity"), Decimal("1000001")])

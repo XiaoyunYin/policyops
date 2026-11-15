@@ -726,7 +726,7 @@ class GitleaksInstallTests(unittest.TestCase):
                                            r"\Aevals/manifests/tau2-19f13ea3/ingest-corpora\.json\z"])
         self.assertRegex(TOKENIZER_DIGEST, r"\A[0-9a-f]{64}\Z")
         self.assertEqual(tokenizer["regexes"], [rf"\A{TOKENIZER_DIGEST}\z"])
-        self.assertEqual(tokenizer["paths"], [r"\Aevals/qa_studies/g1-[a-z0-9-]+\.json\z"])
+        self.assertEqual(tokenizer["paths"], [r"\Aevals/qa_studies/g[12]-[a-z0-9-]+\.json\z"])
         for exception in (corpus, tokenizer):
             self.assertEqual(exception["targetRules"], ["generic-api-key"])
             self.assertEqual(exception["condition"], "AND")

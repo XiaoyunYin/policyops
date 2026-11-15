@@ -99,6 +99,15 @@ def citation_metrics(citations: Sequence[Citation], gold: Sequence[str]) -> Cita
         sum(not c.access_valid for c in citations), sum(not c.offsets_valid for c in citations))
 
 
+def gold_citation(response: str, *, answerable: bool, abstained: bool,
+                  citations: CitationMetrics, error: bool = False) -> bool:
+    """Deterministic human-gold citation success, independent of judge verdicts."""
+    if len(response) > MAX_TEXT:
+        raise ValueError("response bound")
+    return (answerable and not error and bool(response.strip()) and not abstained
+            and citations.integrity_failures == 0 and citations.recall > 0)
+
+
 def quality_q(response: str, *, abstained: bool, citations: CitationMetrics,
               claim_supported: Sequence[bool | None], error: bool = False) -> bool:
     """Verdicts must cover every substantive claim; None is a judge error."""
@@ -199,6 +208,28 @@ def latency_percentile(measurements: Sequence[Measurement], probability: Fractio
     upper = complete[rank] if rank < len(complete) else None
     exact = upper is not None and upper == lows[rank]
     return LatencyPercentile(upper if exact else None, lows[rank], not exact, len(measurements), censored)
+
+
+@dataclass(frozen=True)
+class PolicyLatencyPercentile:
+    seconds: Decimal | None
+    n: int
+    failed_count: int
+
+
+def policy_latency_percentile(measurements: Sequence[Measurement], probability: Fraction) -> PolicyLatencyPercentile:
+    """failure-as-worst-v1: nearest rank over all slots, failures ranked +infinity.
+
+    None means the requested rank falls in the failed tail. Failed elapsed
+    times are ignored; this is a policy outcome convention, not censor inference.
+    """
+    if not measurements or len(measurements) > MAX_QUESTIONS or not 0 < probability <= 1:
+        raise ValueError("policy latency percentile bounds")
+    rank = ceil(probability * len(measurements)) - 1
+    complete = sorted(m.latency_seconds for m in measurements
+                      if m.status == "success" and m.latency_seconds is not None)
+    return PolicyLatencyPercentile(complete[rank] if rank < len(complete) else None,
+                                   len(measurements), len(measurements) - len(complete))
 
 
 @dataclass(frozen=True)

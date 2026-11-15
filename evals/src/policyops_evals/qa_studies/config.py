@@ -183,6 +183,8 @@ class CascadePolicy(Frozen):
     fallback: ModelBinding
     first_context: Context
     fallback_context: Context
+    reranker: CrossEncoder | None = Field(default=None, exclude_if=lambda value: value is None)
+    max_claims: Annotated[int, Field(ge=1, le=4)] = Field(default=4, exclude_if=lambda value: value == 4)
     confidence_threshold: Literal["0.6", "0.8", "1.0"]
     escalation_rule: Literal["invalid-or-abstain-or-request-or-low-confidence-v1"]
 
@@ -200,7 +202,7 @@ class PolicyArm(Frozen):
     name: Name
     retrieval: Retrieval
     policy: Annotated[CascadePolicy | SelectiveRerankPolicy, Field(discriminator="kind")]
-    selection_receipt_sha256: Digest
+    selection_receipt_sha256: Digest | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class FullContext(Frozen):
@@ -281,7 +283,7 @@ class Comparison(Frozen):
     cohort: Name
     stratum: Literal["all", "responding", "clarification"]
     required_questions: Questions
-    estimand: Literal["recall_at_5", "ndcg_at_10", "quality_q", "delivered_support", "gold_support"]
+    estimand: Literal["recall_at_5", "ndcg_at_10", "quality_q", "delivered_support", "gold_support", "gold_citation"]
     denominator: Literal["scheduled-questions-strict-non-success"]
     decision: Literal["superiority", "noninferior_and_cheaper"]
     margin: Annotated[Decimal, Field(ge=Decimal("-1"), le=1, allow_inf_nan=False)]
@@ -300,8 +302,9 @@ class Comparison(Frozen):
         if self.decision == "superiority":
             if self.margin != 0 or self.compound is not None:
                 raise ValueError("superiority requires a strict positive improvement")
-        elif self.estimand != "quality_q" or self.margin != Decimal("-0.05") or self.compound is None:
-            raise ValueError("compound adoption requires Q > -0.05 and frozen cost/latency margins")
+        elif (self.estimand not in {"quality_q", "gold_citation"} or self.margin != Decimal("-0.05")
+              or self.compound is None):
+            raise ValueError("compound adoption requires Q or gold_citation > -0.05 and frozen cost/latency margins")
         return self
 
 
@@ -339,7 +342,8 @@ class Stage(Frozen):
     name: Name
     arm: Name | None
     cohort: Name | None
-    role: Literal["embedding", "answer", "judge", "rerank", "policy", "local", "cache_probe"]
+    role: Literal["embedding", "answer", "answer.first", "answer.fallback",
+                  "judge", "rerank", "policy", "local", "cache_probe"]
     model: Literal["gpt-6-luna", "claude-haiku-5-5", "text-embedding-3-small"] | None
     # Explicit ceilings include every scheduled question, repetition, failure,
     # possible escalation and cold cache write. No expected-hit discounts.
@@ -507,6 +511,9 @@ class QAStudy(Frozen):
         if any(c.included and c.split != ("train" if self.purpose == "dev" else "validation")
                for c in cohorts.values()):
             raise ValueError("purpose/cohort split mismatch")
+        if self.purpose != "dev" and any(isinstance(a, PolicyArm) and a.selection_receipt_sha256 is None
+                                         for a in self.arms):
+            raise ValueError("non-dev policy requires selection receipt")
         for comparison in self.analysis.comparisons:
             if any((a, comparison.cohort) not in assignments
                    for a in (comparison.candidate, comparison.reference)):
@@ -519,7 +526,7 @@ class QAStudy(Frozen):
                 raise ValueError("judged comparison requires frozen G6 judge binding")
             for name in (comparison.candidate, comparison.reference):
                 arm = arms[name]
-                if comparison.uses_judge and (isinstance(arm, RetrievalOnly)
+                if (comparison.uses_judge or comparison.estimand == "gold_citation") and (isinstance(arm, RetrievalOnly)
                                               or (isinstance(arm, Rerank) and arm.generator is None)):
                     raise ValueError("answer metric requires answer arms")
                 if not comparison.uses_judge and isinstance(arm, (ClosedBook, FullContext)):
@@ -528,7 +535,9 @@ class QAStudy(Frozen):
         if (len({lock.path for lock in locks}) != len(locks)
                 or not {"uv.lock", "evals/uv.lock"} <= {lock.path for lock in locks}):
             raise ValueError("unique application and evaluator locks required")
-        if (any(isinstance(a, Rerank) and isinstance(a.reranker, CrossEncoder) for a in self.arms)
+        if (any((isinstance(a, Rerank) and isinstance(a.reranker, CrossEncoder))
+                or (isinstance(a, PolicyArm) and isinstance(a.policy, CascadePolicy)
+                    and a.policy.reranker is not None) for a in self.arms)
                 and "reranker/uv.lock" not in {lock.path for lock in locks}):
             raise ValueError("cross-encoder runtime requires its isolated lock")
         if len({s.name for s in self.execution.stages}) != len(self.execution.stages):
@@ -552,13 +561,16 @@ class QAStudy(Frozen):
                     models.append(("answer", arm.generator))
             elif isinstance(arm, PolicyArm):
                 if isinstance(arm.policy, CascadePolicy):
-                    models.extend((("policy", arm.policy.first), ("policy", arm.policy.fallback)))
+                    models.extend((("answer.first", arm.policy.first), ("answer.fallback", arm.policy.fallback)))
                 else:
                     models.extend((("rerank", arm.policy.reranker.model), ("answer", arm.policy.generator)))
-            if any(role in {"answer", "policy"} for role, _ in models) and self.judge is not None:
+            if (any(role in {"answer", "answer.first", "answer.fallback", "policy"} for role, _ in models)
+                    and self.judge is not None):
                 models.append(("judge", self.judge))
             demands.extend((name, cohort, role, model,
-                            n * (arm.max_claims if isinstance(arm, (AnswerGeneration, Rerank, ClosedBook)) else 1)
+                            n * (arm.max_claims if isinstance(arm, (AnswerGeneration, Rerank, ClosedBook))
+                                 else arm.policy.max_claims if isinstance(arm, PolicyArm)
+                                 and isinstance(arm.policy, CascadePolicy) else 1)
                             if role == "judge" else n)
                            for role, model in models if not (role == "judge" and isinstance(arm, ClosedBook)))
         # Demand is aggregated for identical stages (e.g. two cascade calls to

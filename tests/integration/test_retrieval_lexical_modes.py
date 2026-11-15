@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import re
 import time
 
 import pytest
@@ -50,8 +51,9 @@ def snapshot(world: World, value: str, lexical_mode: LexicalMode) -> object:
 
 
 @pytest.mark.parametrize("mode", ["lexical", "hybrid"])
-def test_any_terms_subset_and_more_matches_rank_higher(world: World, mode: str) -> None:
-    result = ask(world, query(world, "refund card telescope", mode=mode), "any_terms")
+@pytest.mark.parametrize("lexical_mode", ["any_terms", "bm25"])
+def test_any_terms_subset_and_more_matches_rank_higher(world: World, mode: str, lexical_mode: LexicalMode) -> None:
+    result = ask(world, query(world, "refund card telescope", mode=mode), lexical_mode)
     assert len(result.lexical) == 2
     assert float(result.lexical[0].score) > float(result.lexical[1].score)
     assert result.evidence[0].source_uri.endswith("/a")
@@ -68,16 +70,20 @@ def test_all_terms_default_and_websearch_semantics_unchanged(world: World) -> No
     assert len(ask(world, query(world, "refund OR shipping")).lexical) == 3
 
 
+@pytest.mark.parametrize("lexical_mode", ["any_terms", "bm25"])
 @pytest.mark.parametrize("value", ['"refund card"', 'refund & !card | shipping:*',
     "refund <-> card", "refund ' \\\" ( ) & | ! :* card", "refund'); DROP TABLE app.chunks; --"])
-def test_any_terms_punctuation_cannot_create_query_operators(world: World, value: str) -> None:
-    result = ask(world, query(world, value), "any_terms")
-    plain = ask(world, query(world, "refund card shipping" if "shipping" in value else "refund card"), "any_terms")
+def test_any_terms_punctuation_cannot_create_query_operators(world: World, value: str,
+                                                           lexical_mode: LexicalMode) -> None:
+    result = ask(world, query(world, value), lexical_mode)
+    # The invariant: punctuation and tsquery operator characters cannot change semantics relative to the same words.
+    words = " ".join(re.findall(r"[A-Za-z]+", value))
+    plain = ask(world, query(world, words), lexical_mode)
     assert [d.document_id for d in result.lexical] == [d.document_id for d in plain.lexical]
     assert result.lexical_status == "ok"
 
 
-@pytest.mark.parametrize("lexical_mode", ["all_terms", "any_terms"])
+@pytest.mark.parametrize("lexical_mode", ["all_terms", "any_terms", "bm25"])
 @pytest.mark.parametrize("value", ["", "   ", "the and of", "&|!:* '\""])
 def test_empty_query_path(world: World, value: str, lexical_mode: LexicalMode) -> None:
     # Snapshot permits the empty text; the public request rejects blank text before persistence.
@@ -87,26 +93,28 @@ def test_empty_query_path(world: World, value: str, lexical_mode: LexicalMode) -
     assert result.lexical_status == "empty_query" and result.lexical == [] and result.rows == {}
 
 
-def test_distinct_normalized_lexeme_cap_boundary_and_no_truncation(world: World) -> None:
+@pytest.mark.parametrize("lexical_mode", ["any_terms", "bm25"])
+def test_distinct_normalized_lexeme_cap_boundary_and_no_truncation(world: World, lexical_mode: LexicalMode) -> None:
     terms = [str(100000 + i) for i in range(MAX_ANY_TERM_LEXEMES)]
-    snapshot(world, " ".join(terms), "any_terms")
-    snapshot(world, " ".join(terms + terms + ["the"]), "any_terms")  # duplicates and stops do not consume capacity
+    snapshot(world, " ".join(terms), lexical_mode)
+    snapshot(world, " ".join(terms + terms + ["the"]), lexical_mode)  # duplicates and stops do not consume capacity
     with pytest.raises(StepRefused, match="lexical_query_too_many_lexemes"):
-        snapshot(world, " ".join([*terms, "refund"]), "any_terms")
+        snapshot(world, " ".join([*terms, "refund"]), lexical_mode)
     snapshot(world, " ".join([*terms, "refund"]), "all_terms")  # legacy mode has no new cap
     request = query(world, " ".join([*terms, "refund"]))
-    result = asyncio.run(world.retriever(Embeddings(), lexical_mode="any_terms").retrieve(
+    result = asyncio.run(world.retriever(Embeddings(), lexical_mode=lexical_mode).retrieve(
         request, deadline=time.monotonic() + 60))
     assert isinstance(result, RetrievalRefused) and result.code == "query_too_long"
     assert result.detail == "lexical_query_too_many_lexemes"
     assert world.count("app.retrieval_traces") == 0
 
 
-def test_mode_is_bound_to_request_and_replay(world: World) -> None:
+@pytest.mark.parametrize("lexical_mode", ["any_terms", "bm25"])
+def test_mode_is_bound_to_request_and_replay(world: World, lexical_mode: LexicalMode) -> None:
     request = query(world, "refund card telescope")
-    first = ask(world, request, "any_terms")
+    first = ask(world, request, lexical_mode)
     assert first.config_sha256 != request.config.sha256() and first.request_sha256 != request.request_sha256()
-    again = ask(world, request, "any_terms")
+    again = ask(world, request, lexical_mode)
     assert again.replayed and again.payload_sha256 == first.payload_sha256
     result = asyncio.run(world.retriever(Embeddings()).retrieve(request, deadline=time.monotonic() + 60))
     assert isinstance(result, RetrievalRefused) and result.code == "step_conflict"

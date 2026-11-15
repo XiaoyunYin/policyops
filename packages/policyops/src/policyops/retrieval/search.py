@@ -297,7 +297,7 @@ class Retriever:
                  limits: RetrieverLimits | None = None, clock: Callable[[], float] = time.monotonic,
                  stop_on_budget: bool = False, rerank: bool = False, rerank_port: RerankPort | None = None,
                  env: str | None = None, lexical_mode: LexicalMode = "all_terms") -> None:
-        if lexical_mode not in ("all_terms", "any_terms"):
+        if lexical_mode not in ("all_terms", "any_terms", "bm25"):
             raise ValueError("invalid lexical mode")
         self.lexical_mode = lexical_mode
         # Rerank wiring first: before any read, reservation, credential or factory use.

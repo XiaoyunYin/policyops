@@ -50,8 +50,10 @@ from policyops.retrieval.rank import ChunkRow, Hit
 CANDIDATES_LIMIT = 65_536  # retrieval_traces_candidates_size
 SCOPE_LIMIT = 8_192  # retrieval_traces_scope_size
 MAX_TEXT_CODE_POINTS = 20_000  # chunks_text_length (a CHECK since 0002, on every row)
-LexicalMode = Literal["all_terms", "any_terms"]
+LexicalMode = Literal["all_terms", "any_terms", "bm25"]
 MAX_ANY_TERM_LEXEMES = 64  # refuse above this distinct normalized-lexeme count; never truncate
+BM25_K1 = 1.2  # fixed Okapi constants, not fitted to the corpus
+BM25_B = 0.75
 
 
 class StepRefused(Exception):
@@ -153,13 +155,13 @@ _FILTER = ("k.generation_id = :g AND char_length(k.text) <= 20000 "
            "AND (CAST(:docs AS uuid[]) IS NULL OR d.id = ANY(CAST(:docs AS uuid[])))")
 
 
-def _branch_sql(score: str, match: str, order: str) -> str:
+def _branch_sql(score: str, match: str, order: str, *, ctes: str = "") -> str:
     """Per-document best chunk (`order` is ASC or DESC on the score), top documents and their best chunks, with a
     total order (`COLLATE "C"` for code-point order of source URIs, chunk IDs as the last tie-breaker)."""
     best = "max" if order == "DESC" else "min"
     # Composed only from the fixed constants of this module, never from input.
     return f"""
-WITH scored AS (
+WITH {ctes}scored AS (
     SELECT d.id AS document_id, d.source_uri, k.id AS chunk_id, k.start_offset, k.end_offset, {score} AS score
     FROM app.chunks k {_JOINS}
     WHERE {_FILTER} AND {match}
@@ -189,7 +191,7 @@ ANY_TERMS_QUERY_SQL = """
 WITH parsed AS MATERIALIZED (
     SELECT tsvector_to_array(to_tsvector('english', :q)) AS lexemes
 )
-SELECT cardinality(lexemes) AS lexeme_count,
+SELECT lexemes, cardinality(lexemes) AS lexeme_count,
        CASE WHEN cardinality(lexemes) <= :lexeme_cap THEN
            COALESCE((SELECT string_agg(array_to_tsvector(ARRAY[lexeme])::text, ' | ' ORDER BY lexeme COLLATE "C")
                      FROM unnest(lexemes) AS terms(lexeme)), '')
@@ -197,6 +199,37 @@ SELECT cardinality(lexemes) AS lexeme_count,
 FROM parsed"""
 LEXICAL_ANY_SQL = _branch_sql("ts_rank_cd(k.tsv, CAST(:lexical_query AS tsquery), 32)",
                              "k.tsv @@ CAST(:lexical_query AS tsquery)", "DESC")
+# Length is the sum of retained position counts, not length(tsvector) (distinct lexemes), nor max(position).
+# PostgreSQL keeps at most 255 positions per lexeme (measured) and clamps positions above 16383
+# (then merges duplicates).
+# These queries score the stored, possibly capped vector exactly; lost original occurrences cannot be recovered.
+BM25_STATS_SQL = """
+SELECT count(*) AS n, COALESCE(avg(lengths.dl), 0)::double precision AS avgdl
+FROM app.chunks k
+CROSS JOIN LATERAL (
+    SELECT COALESCE(sum(cardinality(positions)), 0) AS dl FROM unnest(k.tsv)
+) lengths
+WHERE k.generation_id = :g"""
+BM25_DF_CTE = """
+terms AS MATERIALIZED (
+    SELECT lexeme, CAST(array_to_tsvector(ARRAY[lexeme])::text AS tsquery) AS term_query
+    FROM unnest(CAST(:lexemes AS text[])) AS query_terms(lexeme)
+), df AS MATERIALIZED (
+    SELECT terms.lexeme, (
+        SELECT count(*) FROM app.chunks f WHERE f.generation_id = :g AND f.tsv @@ terms.term_query
+    ) AS frequency FROM terms
+), """
+LEXICAL_BM25_SQL = _branch_sql("""(
+    SELECT COALESCE(sum(
+        ln(1.0 + (:bm25_n - df.frequency + 0.5) / (df.frequency + 0.5))
+        * tokens.tf * (1.0 + :bm25_k1)
+        / (tokens.tf + :bm25_k1 * (1.0 - :bm25_b + :bm25_b * tokens.dl / NULLIF(:bm25_avgdl, 0)))
+        ORDER BY tokens.lexeme COLLATE "C"), 0)
+    FROM (
+        SELECT lexeme, cardinality(positions) AS tf, sum(cardinality(positions)) OVER () AS dl
+        FROM unnest(k.tsv)
+    ) tokens JOIN df ON df.lexeme = tokens.lexeme
+)""", "k.tsv @@ CAST(:lexical_query AS tsquery)", "DESC", ctes=BM25_DF_CTE)
 DENSE_SQL = _branch_sql("(k.embedding <=> CAST(:qv AS public.vector))",
                         "k.embedding IS NOT NULL AND NOT ((k.embedding <=> CAST(:qv AS public.vector)) = 'NaN')",
                         "ASC")
@@ -303,6 +336,9 @@ class RetrievalStore:
             raise TypeError("workspace_id must be a UUID")
         verify_runtime_role(engine, APP_RUNTIME)
         self.engine, self.workspace_id = engine, workspace_id
+        # One immutable entry, workspace/store-local and keyed by the head verified inside each snapshot.
+        # Concurrent misses may recompute; replacing the whole tuple cannot mix a generation's N and avgdl.
+        self._bm25_stats: tuple[UUID, int, float] | None = None
 
     @contextmanager
     def _tx(self) -> Iterator[Connection]:
@@ -432,7 +468,7 @@ class RetrievalStore:
         The connection is owned from acquisition: option setup, the transaction and every read run inside the
         protected region, and it is always closed. A close failure after a primary failure is attached to the primary
         as a note (never replacing it); after success it propagates."""
-        if lexical_mode not in ("all_terms", "any_terms"):
+        if lexical_mode not in ("all_terms", "any_terms", "bm25"):
             raise StepRefused("lexical_mode_invalid")
         connection = connect_runtime(self.engine)
         try:
@@ -482,17 +518,29 @@ class RetrievalStore:
             limits = base | {"n": branch_documents, "per": chunks_per_document}
             if mode in ("lexical", "hybrid"):
                 lexical_sql = LEXICAL_SQL
-                params = {"q": query}
+                params: dict[str, Any] = {"q": query}
                 empty_sql = "SELECT numnode(websearch_to_tsquery('english', :q)) = 0"
-                if lexical_mode == "any_terms":
+                if lexical_mode in ("any_terms", "bm25"):
                     parsed = connection.execute(text(ANY_TERMS_QUERY_SQL),
                         {"q": query, "lexeme_cap": MAX_ANY_TERM_LEXEMES}).mappings().one()
                     if parsed["lexeme_count"] > MAX_ANY_TERM_LEXEMES:
                         raise StepRefused("lexical_query_too_many_lexemes",
-                                          "any_terms permits at most 64 distinct lexemes")
+                                          f"{lexical_mode} permits at most 64 distinct lexemes")
                     params = {"lexical_query": parsed["query"]}
                     empty_sql = "SELECT numnode(CAST(:lexical_query AS tsquery)) = 0"
                     lexical_sql = LEXICAL_ANY_SQL
+                    if lexical_mode == "bm25" and parsed["lexeme_count"]:
+                        stats = self._bm25_stats
+                        if stats is None or stats[0] != result.generation_id:
+                            measured = connection.execute(text(BM25_STATS_SQL),
+                                {"g": result.generation_id}).mappings().one()
+                            if measured["n"] > 10_000:
+                                raise StepRefused("bm25_generation_too_large")
+                            stats = (result.generation_id, int(measured["n"]), float(measured["avgdl"]))
+                            self._bm25_stats = stats
+                        params |= {"lexemes": parsed["lexemes"], "bm25_n": stats[1], "bm25_avgdl": stats[2],
+                                   "bm25_k1": BM25_K1, "bm25_b": BM25_B}
+                        lexical_sql = LEXICAL_BM25_SQL
                 empty = connection.execute(text(empty_sql), params).scalar_one()
                 if empty:
                     result.lexical_status = "empty_query"

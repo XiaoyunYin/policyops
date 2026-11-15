@@ -112,7 +112,7 @@ def _all_terms(value: object) -> bool:
 class Retrieval(Frozen):
     method: Literal["fts", "dense", "rrf"]
     # Preserve historical specification/arm digests for omitted or explicit default modes.
-    lexical_mode: Literal["all_terms", "any_terms"] = Field(default="all_terms", exclude_if=_all_terms)
+    lexical_mode: Literal["all_terms", "any_terms", "bm25"] = Field(default="all_terms", exclude_if=_all_terms)
     query_profile: Literal["history-four-v1", "last-user-turn-v1"]
     candidate_count: Annotated[int, Field(ge=1, le=100)]
     branch_limit: Annotated[int, Field(ge=1, le=100)]

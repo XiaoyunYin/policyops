@@ -38,7 +38,7 @@ from .test_qa_study_registration import SOURCE
 ADMIT = r.admit
 
 
-@pytest.mark.parametrize("lexical_mode", ["all_terms", "any_terms"])
+@pytest.mark.parametrize("lexical_mode", ["all_terms", "any_terms", "bm25"])
 def test_executor_passes_lexical_mode_and_records_cap_refusal(monkeypatch: pytest.MonkeyPatch,
                                                            lexical_mode: str) -> None:
     study, inputs = fixture_study()

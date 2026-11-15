@@ -250,7 +250,7 @@ class World:
     def retriever(self, embeddings: Embeddings, *, configuration: Configuration | None = None,
                   limits: RetrieverLimits | None = None, clock: Callable[[], float] = time.monotonic,
                   rerank: bool = False, rerank_port: RerankPort | None = None,
-                  lexical_mode: Literal["all_terms", "any_terms"] = "all_terms") -> Retriever:
+                  lexical_mode: Literal["all_terms", "any_terms", "bm25"] = "all_terms") -> Retriever:
         configuration = configuration or Configuration()
         return Retriever(self.engine, self.ws, embeddings=EmbeddingStore(self.engine, self.ws, env="test"),
                          ledger=build_app_ledger(env="test", engine=self.engine, workspace_id=self.ws,

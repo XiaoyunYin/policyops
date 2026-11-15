@@ -66,7 +66,8 @@ def test_example_and_cli_validate(capsys: pytest.CaptureFixture[str]) -> None:
     assert preflight(study)["within_caps"]
 
 
-def test_lexical_mode_default_preserves_digest_and_any_terms_is_explicit() -> None:
+@pytest.mark.parametrize("mode", ["any_terms", "bm25"])
+def test_lexical_mode_default_preserves_digest_and_any_terms_is_explicit(mode: str) -> None:
     value = body()
     default = parse(value)
     for arm in default.arms:
@@ -77,11 +78,11 @@ def test_lexical_mode_default_preserves_digest_and_any_terms_is_explicit() -> No
     explicit = parse(value)
     assert explicit.digest() == default.digest()
     assert explicit.arm_digest(explicit.arms[0]) == default.arm_digest(default.arms[0])
-    value["arms"][0]["retrieval"]["lexical_mode"] = "any_terms"
+    value["arms"][0]["retrieval"]["lexical_mode"] = mode
     any_terms = parse(value)
     assert any_terms.digest() != default.digest()
     assert any_terms.arm_digest(any_terms.arms[0]) != default.arm_digest(default.arms[0])
-    assert any_terms.arms[0].model_dump(mode="json")["retrieval"]["lexical_mode"] == "any_terms"
+    assert any_terms.arms[0].model_dump(mode="json")["retrieval"]["lexical_mode"] == mode
     value["arms"][0]["retrieval"]["lexical_mode"] = "raw_tsquery"
     with pytest.raises(ValidationError):
         parse(value)
@@ -100,6 +101,27 @@ def test_v2_dev_modes_baselines_and_conservative_preflight() -> None:
             ("fts-history-any", "fts-history-all")} <= pairs
     admission = preflight(study)
     assert admission["within_caps"] and Decimal(admission["ceiling_usd"]) > 0
+
+
+def test_v3_bm25_dev_pairs_and_preserved_dense_baselines() -> None:
+    study = load_study(EXAMPLE.with_name("g1-dev-retrieval-v3.json"))
+    previous = load_study(EXAMPLE.with_name("g1-dev-retrieval-v2.json"))
+    assert study.purpose == "dev" and study.study_id != previous.study_id
+    arms = {a.name: a.model_dump(mode="json")["retrieval"] for a in study.arms}
+    assert set(arms) == {"bm25-history", "rrf-bm25-history", "bm25-last", "rrf-bm25-last",
+                         "dense-history", "dense-last", "rrf-any-history", "any-history", "any-last"}
+    assert all(arms[n]["lexical_mode"] == "bm25" for n in arms if "bm25" in n)
+    for profile in ("history", "last"):
+        assert arms[f"dense-{profile}"] == next(a for a in previous.arms if a.name == f"dense-{profile}").model_dump(
+            mode="json")["retrieval"]
+    assert {(c.candidate, c.reference) for c in study.analysis.comparisons} == {
+        (f"{candidate}-{profile}", f"{baseline}-{profile}") for profile in ("history", "last")
+        for candidate, baseline in (("rrf-bm25", "dense"), ("bm25", "any"))}
+    assert all(a.retrieval.query_profile == ("history-four-v1" if a.name.endswith("history")
+                                            else "last-user-turn-v1")
+               for a in study.arms if isinstance(a, RetrievalOnly))
+    admission = preflight(study)
+    assert admission["within_caps"] and Decimal(admission["ceiling_usd"]) == Decimal("0.03522560")
 
 
 def test_offline_cli_preflight_digest_and_example_registration_refusal(capsys: pytest.CaptureFixture[str],

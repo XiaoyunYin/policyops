@@ -233,7 +233,7 @@
     "source_revision": null
   },
   "purpose": "sealed_test",
-  "registration_sha256": null,
+  "registration_sha256": "db9f637e2751ccddb794791821616da7d6bced488d3c3394e71357a9d2ab89ff",
   "schedule": {
     "assignments": [
       {

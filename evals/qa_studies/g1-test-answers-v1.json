@@ -503,7 +503,7 @@
     "source_revision": null
   },
   "purpose": "sealed_test",
-  "registration_sha256": null,
+  "registration_sha256": "10fb101b1738d7c3f69675be10baddc8b204be5567643b7e5b0c5d706abdc260",
   "schedule": {
     "assignments": [
       {

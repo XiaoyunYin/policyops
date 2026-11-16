@@ -22,10 +22,11 @@ from types import MappingProxyType
 from typing import Literal
 
 
-Provider = Literal["openai", "anthropic"]
+Provider = Literal["openai", "anthropic", "bedrock"]
 ModelKind = Literal["chat", "embedding"]
 CACHE_TTLS: Mapping[str, frozenset[str]] = MappingProxyType({
-    "openai": frozenset({"30m", "12h"}), "anthropic": frozenset({"5m", "1h"})})
+    "openai": frozenset({"30m", "12h"}), "anthropic": frozenset({"5m", "1h"}),
+    "bedrock": frozenset({"5m", "1h"})})
 REVISION = re.compile(r"[a-z][a-z0-9_.-]{0,99}")
 
 
@@ -149,3 +150,20 @@ SNAPSHOT_2026_11_05 = PriceSnapshot(
         "text-embedding-3-small": ModelPrice("text-embedding-3-small", "openai", "embedding", (
             Tier("standard", None, Decimal("0.02")),)),
     })
+
+
+# Separate opt-in revision: the registered 2026-11-05 snapshot above stays unchanged.
+# US geographic profile: conservatively use the higher in-region Standard rows from the coordinator's
+# us-west-2 Price List snapshot (effective 2026-10-01), even if AWS bills at the source-region profile rate.
+# This is a reservation/settlement assumption, not verification of account billing. Global rows are lower.
+SNAPSHOT_2026_11_15 = PriceSnapshot(
+    revision="pricing.2026-11-15.v1", checked_utc="2026-11-15T22:54:15Z",
+    sources=(*SOURCES, "https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_pricing_GetProducts.html"),
+    models={**SNAPSHOT_2026_11_05.models,
+            "bedrock:us.anthropic.claude-haiku-5-5": ModelPrice(
+                "bedrock:us.anthropic.claude-haiku-5-5", "bedrock", "chat", (
+                Tier("short", 100_000, Decimal("0.11"), Decimal("0.55"), Decimal("0.011"),
+                     {"5m": Decimal("0.1375"), "1h": Decimal("0.22")}),
+                # Price unexpected long usage exactly, then block; requests in this tier are refused.
+                Tier("long", None, Decimal("0.55"), Decimal("2.75"), Decimal("0.055"),
+                     {"5m": Decimal("0.6875"), "1h": Decimal("1.10")})))})

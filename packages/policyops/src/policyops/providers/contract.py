@@ -47,7 +47,7 @@ from types import MappingProxyType
 from typing import Literal
 
 
-Provider = Literal["openai", "anthropic"]
+Provider = Literal["openai", "anthropic", "bedrock"]
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,10 @@ class Endpoint:
 
 
 ENDPOINTS: Mapping[str, Endpoint] = MappingProxyType({
+    # Fixed single segment: dots/hyphens stay literal. A colon would require %3A on wire, %253A in SigV4.
+    "bedrock": Endpoint("bedrock-runtime.us-west-2.amazonaws.com",
+                        "/model/us.anthropic.claude-haiku-5-5/invoke", "", "https://bedrock-runtime.us-west-2.amazonaws.com",
+                        MappingProxyType({}), "authorization"),
     "openai": Endpoint("api.openai.com", "/v1/responses", "/v1/responses/input_tokens", "https://api.openai.com/v1",
                        MappingProxyType({}), "authorization"),
     "anthropic": Endpoint("api.anthropic.com", "/v1/messages", "/v1/messages/count_tokens",
@@ -71,7 +75,7 @@ CONTRACT_VERSION = "policyops.provider-request/v1"
 
 # Cache modes the adapters implement. Everything else in the registry is refused before any reservation.
 IMPLEMENTED_CACHE_MODES: Mapping[str, frozenset[str]] = MappingProxyType({
-    "openai": frozenset({"none", "30m"}), "anthropic": frozenset({"none"})})
+    "openai": frozenset({"none", "30m"}), "anthropic": frozenset({"none"}), "bedrock": frozenset({"none"})})
 NOT_IMPLEMENTED = MappingProxyType({
     ("openai", "12h"): "the installed SDK documents 30m as the only supported prompt-cache TTL",
     ("anthropic", "5m"): "Anthropic positive cache modes are not implemented (cache-none contract only)",
@@ -107,6 +111,8 @@ def ambient_settings(provider: Provider, environ: Mapping[str, str] | None = Non
     """The disallowed SDK environment variable names that are set. Only the names are read: the mapping is iterated
     for its keys (`name in os.environ` would go through `__getitem__` and decode the value)."""
     names = frozenset(iter(os.environ if environ is None else environ))
+    if provider == "bedrock":
+        return tuple(sorted(name for name in names if name.startswith(("AWS_", "ANTHROPIC_"))))
     prefix = ENV_PREFIX[provider]
     return tuple(sorted(name for name in names if name.startswith(prefix) and name not in ENV_TOLERATED[provider]))
 
@@ -114,6 +120,8 @@ def ambient_settings(provider: Provider, environ: Mapping[str, str] | None = Non
 def require_clean_environment(provider: Provider, environ: Mapping[str, str] | None = None) -> None:
     present = ambient_settings(provider, environ)
     if present:
+        if provider == "bedrock":
+            raise ContractGap("bedrock.ambient_settings")
         raise ContractGap(f"refusing to build a {provider} client while {', '.join(present)} is set")
 
 

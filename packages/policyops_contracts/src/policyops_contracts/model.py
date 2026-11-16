@@ -139,7 +139,7 @@ Outcome = Literal["completed", "structured", "refused", "truncated", "invalid_ou
 
 class ModelResult(WireModel):
     outcome: Outcome
-    provider: Literal["openai", "anthropic"]
+    provider: Literal["openai", "anthropic", "bedrock"]
     requested_model: Annotated[str, StringConstraints(min_length=1, max_length=200)]
     returned_model: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None
     provider_request_id: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None

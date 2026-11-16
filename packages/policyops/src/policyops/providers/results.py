@@ -157,15 +157,32 @@ def openai_evidence(response: Mapping[str, Any], prepared: PreparedRequest, cach
 
 def anthropic_evidence(message: Mapping[str, Any], prepared: PreparedRequest, *,
                        usage_inconsistent: bool = False) -> Evidence:
+    return _messages_evidence(message, prepared, usage_inconsistent=usage_inconsistent)
+
+
+def bedrock_evidence(message: Mapping[str, Any], prepared: PreparedRequest) -> Evidence:
+    """InvokeModel identity is the fixed endpoint; the request ID is supplied from the AWS response header.
+
+    Cache fields may be omitted (zero); when present, every checksum and split must agree. No tier pin is inferred.
+    """
+    return _messages_evidence(message, prepared, bedrock=True)
+
+
+def _messages_evidence(message: Mapping[str, Any], prepared: PreparedRequest, *,
+                       usage_inconsistent: bool = False, bedrock: bool = False) -> Evidence:
     """`usage_inconsistent`: a streamed cumulative counter decreased or was malformed (`adapters`); the usage is then
     unknown and blocked, never resolved by picking one of the observed values."""
-    rid = _request_id(message.get("id"))
-    model = _safe_model(message.get("model"))
+    rid = _request_id(message.get("_bedrock_request_id") if bedrock else message.get("id"))
+    model = _safe_model(message.get("model", "anthropic.claude-haiku-5-5" if bedrock else None))
     usage = message.get("usage")
     if usage_inconsistent:
         return _unpriced(rid, model, "usage_inconsistent", {})
     if not isinstance(usage, dict):
         return Evidence(None, UNKNOWN, rid, model)
+    if bedrock:
+        usage = dict(usage)
+        usage.setdefault("cache_read_input_tokens", 0)
+        usage.setdefault("cache_creation_input_tokens", 0)
     split = _object(usage["cache_creation"]) if isinstance(usage.get("cache_creation"), dict) else None
     out_details = _object(usage.get("output_tokens_details"))
     counts: dict[str, int | None] = {
@@ -180,21 +197,29 @@ def anthropic_evidence(message: Mapping[str, Any], prepared: PreparedRequest, *,
         return _unpriced(rid, model, "usage_incomplete", counts)  # reasoning may be unreported, never malformed
     creation = counts["cache_creation"] or 0
     five, hour = counts["cache_creation_5m"], counts["cache_creation_1h"]
-    if creation:
+    if creation or split is not None or usage.get("cache_creation") is not None:
         if five is None or hour is None:
             return _unpriced(rid, model, "cache_ttl_unknown", counts)
         if five + hour != creation:
             return _unpriced(rid, model, "cache_split_mismatch", counts)
-    if usage.get("service_tier") != EXPECTED_SERVICE_TIER["anthropic"]:
+    if ((not bedrock and usage.get("service_tier") != EXPECTED_SERVICE_TIER["anthropic"])
+            or (bedrock and "service_tier" in usage)):
         return _unpriced(rid, model, "service_tier_unpriced", counts)
     if usage.get("speed") not in (None, "standard"):
         return _unpriced(rid, model, "speed_unpriced", counts)
-    if usage.get("inference_geo") not in ALLOWED_INFERENCE_GEO:
+    if usage.get("inference_geo") not in ({None, "us-east-1", "us-east-2", "us-west-2"} if bedrock
+                                         else ALLOWED_INFERENCE_GEO):
         return _unpriced(rid, model, "inference_geo_unpriced", counts)
-    if not _model_confirmed(prepared.model, message.get("model")):
+    if ((not bedrock and not _model_confirmed(prepared.model, message.get("model")))
+            or (bedrock and model not in {"us.anthropic.claude-haiku-5-5", "anthropic.claude-haiku-5-5",
+                                          "claude-haiku-5-5"})):
         return _unpriced(rid, model, "model_unconfirmed", counts)
     writes = {ttl: n for ttl, n in (("5m", five or 0), ("1h", hour or 0)) if n}
     total = (counts["input_tokens"] or 0) + (counts["cache_read"] or 0) + creation
+    if bedrock and "total_tokens" in usage:
+        counts["total"] = _count(usage["total_tokens"])
+        if counts["total"] != total + (counts["output"] or 0):
+            return _unpriced(rid, model, "usage_inconsistent", counts)
     try:
         priced = Usage(total, cache_read=counts["cache_read"] or 0, cache_writes=writes,
                        output=counts["output"] or 0, reasoning=counts["reasoning"])

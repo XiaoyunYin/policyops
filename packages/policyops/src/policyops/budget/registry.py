@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from policyops.budget.prices import SNAPSHOT_2026_11_05, PriceSnapshot
+from policyops.budget.prices import SNAPSHOT_2026_11_05, SNAPSHOT_2026_11_15, PriceSnapshot
 
 
 CACHE_NONE_CONTRACT: Mapping[str, str] = MappingProxyType({
@@ -27,7 +27,18 @@ CACHE_NONE_CONTRACT: Mapping[str, str] = MappingProxyType({
     "openai": "prompt_cache_options.mode=explicit; no breakpoints; omission means implicit 30m writes",
     # To be confirmed against the primary documentation by the T11 serializer before any request is sent.
     "anthropic": "no cache_control markers (request-level or per block); unverified until T11",
+    "bedrock": "no cache_control markers; text-only InvokeModel via US profile from us-west-2",
 })
+
+
+def bedrock_model_refusal(model: str) -> str:
+    """Value-free refusals for AWS IDs and their registry-qualified forms."""
+    identifier = model.removeprefix("bedrock:")
+    if identifier.startswith("global."):
+        return "bedrock.global_profile_unsupported"
+    if identifier in {"anthropic.claude-haiku-5-5", "claude-haiku-5-5"}:
+        return "bedrock.on_demand_unsupported"
+    return "bedrock.model_unsupported"
 
 
 class NotAllowed(ValueError):
@@ -88,6 +99,8 @@ class Registry:
     def chat(self, model: str, *, effort: str, cache_mode: str) -> ChatModel:
         spec = self.models.get(model)
         if not isinstance(spec, ChatModel):
+            if model.startswith(("bedrock:", "global.", "anthropic.", "us.")):
+                raise NotAllowed(bedrock_model_refusal(model))
             raise NotAllowed(f"{model!r} is not an allowed chat model")
         if effort not in spec.efforts:
             raise NotAllowed(f"effort {effort!r} is not allowed for {model}")
@@ -111,4 +124,10 @@ REGISTRY = Registry(SNAPSHOT_2026_11_05, {
     "claude-haiku-5-5": ChatModel("claude-haiku-5-5", frozenset({"low"}), frozenset({"none", "5m", "1h"})),
     "text-embedding-3-small": EmbeddingModel("text-embedding-3-small", frozenset({1536}), per_input_max_tokens=8192,
                                              request_max_tokens=300_000, request_max_inputs=2048),
+})
+
+BEDROCK_REGISTRY = Registry(SNAPSHOT_2026_11_15, {
+    **REGISTRY.models,
+    "bedrock:us.anthropic.claude-haiku-5-5": ChatModel(
+        "bedrock:us.anthropic.claude-haiku-5-5", frozenset({"low"}), frozenset({"none"})),
 })

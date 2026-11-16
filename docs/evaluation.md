@@ -1,5 +1,32 @@
 # Evaluation and Core evidence
 
+Bedrock is a separate opt-in provider; prior registrations keep the original snapshot and defaults.
+The offline capability matrix is:
+
+| Bedrock US profile via us-west-2 | Contract |
+|---|---|
+| Model | Only `us.anthropic.claude-haiku-5-5` (`bedrock:` registry prefix) |
+| Residency | Any of us-east-1, us-east-2, us-west-2; data stays in the US, with no single-region guarantee |
+| Rejected identifiers | Bare model: no on-demand invocation offered; global profile: no US geographic bound |
+| Text / structured JSON | Implemented; local schema validation |
+| Admission | Local UTF-8 byte upper bound; no count API |
+| Usage / unknown liability | Actual input/output and optional cache splits; existing ledger settlement/holds |
+| Streaming / non-text / cache writes / global / long context | Refused |
+| Credentials | Named static profile only; no refresh or provider chain |
+| Prices | Higher in-region Standard rows conservatively applied to the US profile; billing assumption |
+| Live | Coordinator HTTP 403 account-eligibility hold; profile smoke pending |
+
+`scripts/bedrock_smoke.py --execute --workspace <existing-workspace-uuid>` sends one tiny structured request through
+the real port and PostgreSQL ledger. Set `POLICYOPS_BEDROCK_PROFILE=<your-aws-profile>` and
+`POLICYOPS_BEDROCK_REGION=us-west-2`, with no `AWS_*` / `ANTHROPIC_*` names. A migrated local app database and
+libpq `PG*` settings for the app runtime role are prerequisites. The operation scope `bedrock-haiku-smoke-v1`
+persists across repeated launches, enforcing at most 4 inference calls / $0.05 including unknown liability;
+each launch makes one call, with no retries or repair. `--operation-key` selects that persisted budget scope;
+the default is `bedrock-haiku-smoke-v1`. Reuse the same key across repeats, including when changing from the bare
+ID to the US profile; choosing a new key creates a separate budget and does not carry prior liability. The script
+prints only effective model, usage, cost and AWS request ID. Exit 0 requires a structured result; failures return 1
+with those same fields, without exception messages, payloads or headers. Without `--execute`, it returns 2.
+
 The retail model comparison, authorization fixtures and recovery drills answer different
 questions. The registered holdout does **not** establish Luna's non-inferiority to Haiku;
 the deterministic safety suites passed their specified acceptance checks. All paid and

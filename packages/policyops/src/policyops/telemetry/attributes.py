@@ -44,7 +44,7 @@ class Attributes(TypedDict, total=False):
 
 
 ENUMS: dict[str, frozenset[str]] = {
-    "provider": frozenset({"openai", "anthropic"}),
+    "provider": frozenset({"openai", "anthropic", "bedrock"}),
     "model": frozenset({"gpt-6-luna", "gpt-6.1-sol", "claude-haiku-5-5", "claude-opus-5-5",
                          "text-embedding-3-small"}),
     "operation": frozenset({"chat", "embedding", "count", "reserve", "dispatch", "reconcile"}),

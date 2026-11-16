@@ -23,6 +23,7 @@ from types import MappingProxyType
 from typing import Any
 
 from policyops.budget.config import ChatActor, Configuration
+from policyops.budget.registry import bedrock_model_refusal
 from policyops.providers.bounds import REQUEST_BOUNDS, preflight
 from policyops.providers.canonical import (
     CanonicalError,
@@ -217,6 +218,19 @@ def prepare(request: ModelRequest, configuration: Configuration, actor_name: str
     tools, output = _schemas(request)
     endpoint = ENDPOINTS[provider]
     body = (_openai_body if provider == "openai" else _anthropic_body)(request, actor, tools, output)
+    if provider == "bedrock":
+        if actor.model != "bedrock:us.anthropic.claude-haiku-5-5":
+            raise ContractGap(bedrock_model_refusal(actor.model))
+        if actor.max_input > 100_000:
+            raise ContractGap("bedrock.long_context_unsupported")
+        if request.stream or any(not isinstance(part, TextPart) for m in request.messages for part in m.parts):
+            raise ContractGap("bedrock.text_only_nonstreaming")
+        # One text block per message bounds framing overhead independently of the number of DTO parts.
+        body["messages"] = [{"role": m.role, "content": [{"type": "text", "text": "".join(
+            part.text for part in m.parts if isinstance(part, TextPart))}]} for m in request.messages]
+        for key in ("model", "service_tier", "stream"):
+            body.pop(key)
+        body["anthropic_version"] = "bedrock-2023-05-31"
     keys = OPENAI_COUNT_KEYS if provider == "openai" else ANTHROPIC_COUNT_KEYS
     count_body = {key: body[key] for key in keys if key in body}
     try:

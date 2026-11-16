@@ -127,10 +127,12 @@ class _BoundedStream(httpx2.AsyncByteStream):
 
 
 class BoundedTransport(httpx2.AsyncBaseTransport):
-    def __init__(self, inner: httpx2.AsyncBaseTransport, expected: Expected, credential: SecretStr) -> None:
+    def __init__(self, inner: httpx2.AsyncBaseTransport, expected: Expected, credential: SecretStr,
+                 *, signed_headers: dict[str, SecretStr] | None = None) -> None:
         self.inner = inner
         self.expected = expected
         self.credential = credential
+        self._signed_headers = signed_headers
         self.sent = False
         self.refusal: str | None = None
         self.opened = 0
@@ -142,6 +144,12 @@ class BoundedTransport(httpx2.AsyncBaseTransport):
         return TransportRefused(code)
 
     def _auth_ok(self, request: httpx2.Request) -> bool:
+        if self.expected.provider == "bedrock":
+            if not self._signed_headers or not {"authorization", "x-amz-date"} <= self._signed_headers.keys():
+                return False
+            return all(len(request.headers.get_list(name)) == 1 and hmac.compare_digest(
+                request.headers[name].encode(), value.get_secret_value().encode())
+                       for name, value in self._signed_headers.items())
         endpoint = ENDPOINTS[self.expected.provider]
         values = request.headers.get_list(endpoint.auth_header)
         expected = f"Bearer {self.credential.get_secret_value()}"  # both installed SDKs send a bearer credential
@@ -153,9 +161,12 @@ class BoundedTransport(httpx2.AsyncBaseTransport):
         endpoint = ENDPOINTS[self.expected.provider]
         url = request.url
         if (request.method != "POST" or url.scheme != "https" or url.host != endpoint.host or url.port is not None
-                or url.path != self.expected.path or url.query):
+                or url.path != self.expected.path or url.query
+                or (self.expected.provider == "bedrock" and self.expected.path != endpoint.create_path)):
             raise self._refuse("endpoint_mismatch")
         allowed = ALLOWED_HEADERS | {endpoint.auth_header} | set(endpoint.version_headers)
+        if self.expected.provider == "bedrock":
+            allowed |= set(self._signed_headers or {})
         names = [name.decode("latin-1").lower() for name, _value in request.headers.raw]
         if len(names) != len(set(names)):
             raise self._refuse("duplicate_header")
@@ -177,6 +188,8 @@ class BoundedTransport(httpx2.AsyncBaseTransport):
             raise self._refuse("content_length_mismatch")
         try:
             same = canonical_bytes(strict_loads(body)) == self.expected.body
+            if self.expected.provider == "bedrock":
+                same = same and body == self.expected.body  # SigV4 signs the exact payload bytes
         except CanonicalError:
             same = False
         if not same:

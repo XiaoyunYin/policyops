@@ -50,7 +50,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 import math
 import time
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid5
 
 import httpx2
@@ -70,7 +70,7 @@ from policyops.budget.pricing import cost
 from policyops.persistence.database import TransactionOutcomeUnknown
 from policyops.providers.accounting import AccountingUnconfirmed
 from policyops.providers.adapters import CountFailed, Invocation, as_contract_gap, count, invoke
-from policyops.providers.contract import ContractGap, Provider
+from policyops.providers.contract import ContractGap, Provider, require_clean_environment
 from policyops.providers.results import Evidence
 from policyops.providers.serialize import PreparedRequest, prepare
 from policyops.telemetry import annotate, enabled, observed, provider_usage
@@ -78,7 +78,11 @@ from policyops_contracts.model import Message, ModelRequest, ModelResult, TextPa
 from policyops_contracts.provider_failures import failure_code
 
 
-RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
+if TYPE_CHECKING:
+    from policyops.providers.bedrock_auth import BedrockAccess
+
+
+RETRYABLE_STATUS = frozenset({408, 409, 424, 429, 500, 502, 503, 504, 529})
 RETRYABLE_ERRORS = frozenset({"timeout", "connection", "stream_without_final_response"})
 REPAIR_TEXT = ("Your previous reply did not match the required format. Reply again, following the required "
                "schema exactly.")
@@ -116,6 +120,7 @@ class Providers:
 
     credentials: Mapping[str, SecretStr]
     transport: Callable[[Provider], httpx2.AsyncBaseTransport]
+    bedrock: BedrockAccess | None = field(default=None, repr=False)
 
 
 AttemptFate = Literal["settled", "unresolved", "released", "replayed", "refused", "not_reserved"]
@@ -270,7 +275,7 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
         record.fate, record.reason = "replayed", f"{attempt.state}.{attempt.count_state}"
         raise _Stop(CallReport(None, "failed", f"replayed_{attempt.state}", report.attempts))
     pending[0] = _Pending(record)
-    credential = providers.credentials[prepared.provider]
+    credential = providers.credentials.get(prepared.provider, SecretStr(""))
     claim = ledger.claim_count(attempt_id, prepared.request_sha256)
     if not isinstance(claim, CountGranted):  # our own attempt, still reserved and never dispatched
         ledger.release(attempt_id)
@@ -282,10 +287,15 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
     pending[0] = _Pending(record, "counting")
     tokens: int | None = None
     try:
-        counted = await _capped(count(prepared, providers.transport(prepared.provider), credential), deadline,
-                                limits)
-        tokens, source, record.cleanup_confirmed = counted.tokens, f"{prepared.provider}.count", \
-            counted.cleanup_confirmed
+        if prepared.provider == "bedrock":
+            from policyops.providers.bedrock import input_bound
+
+            tokens, source, record.cleanup_confirmed = input_bound(prepared), "bedrock.byte_bound.v1", True
+        else:
+            counted = await _capped(count(prepared, providers.transport(prepared.provider), credential), deadline,
+                                    limits)
+            tokens, source, record.cleanup_confirmed = counted.tokens, f"{prepared.provider}.count", \
+                counted.cleanup_confirmed
     except CountFailed as error:
         source, record.reason, record.cleanup_confirmed = "failed", f"count.{error.code}", error.cleanup_confirmed
     except _AttemptExpired:
@@ -314,8 +324,16 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
     cache_mode = ledger.configuration.actors[actor].cache_mode  # type: ignore[union-attr]
     invocation: Invocation
     try:
-        invocation = await _capped(invoke(prepared, providers.transport(prepared.provider), credential,
-                                          cache_mode=cache_mode), deadline, limits)
+        if prepared.provider == "bedrock":
+            from policyops.providers.bedrock import invoke as bedrock_invoke
+
+            if providers.bedrock is None:
+                raise ContractGap("bedrock.credentials_missing")
+            invocation = await _capped(bedrock_invoke(prepared, providers.transport(prepared.provider),
+                                                     providers.bedrock), deadline, limits)
+        else:
+            invocation = await _capped(invoke(prepared, providers.transport(prepared.provider), credential,
+                                              cache_mode=cache_mode), deadline, limits)
     except _AttemptExpired:
         # Possibly sent and billed: the hold stays. Its close was never observed, so it is not claimed.
         invocation = Invocation(sent=True, error="timeout", cleanup_confirmed=False)
@@ -324,8 +342,9 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
         raise
     record.cleanup_confirmed = invocation.cleanup_confirmed and record.cleanup_confirmed is not False
     config = ledger.configuration.actors[actor]
-    invocation = _count_deviation(invocation, attempt.counted_input_tokens, config.count_headroom_percent,
-                                  config.count_headroom_min)
+    invocation = _count_deviation(invocation, attempt.counted_input_tokens,
+                                  0 if prepared.provider == "bedrock" else config.count_headroom_percent,
+                                  0 if prepared.provider == "bedrock" else config.count_headroom_min)
     record.evidence = invocation.evidence
     if enabled():
         usage = invocation.evidence.usage if invocation.evidence is not None else None
@@ -353,7 +372,14 @@ async def _run(ledger: Ledger, providers: Providers, binding: Binding, key: UUID
             prepared = prepare(request, ledger.configuration, actor)
         except ContractGap as error:
             return CallReport(None, "contract_gap", str(error)[:200], report.attempts)
-        if not isinstance(providers.credentials.get(prepared.provider), SecretStr):
+        if prepared.provider == "bedrock":
+            try:
+                require_clean_environment("bedrock")
+            except ContractGap as error:
+                return CallReport(None, "contract_gap", str(error), report.attempts)
+        if ((prepared.provider == "bedrock" and providers.bedrock is None)
+                or (prepared.provider != "bedrock" and not isinstance(
+                    providers.credentials.get(prepared.provider), SecretStr))):
             return CallReport(None, "contract_gap", f"no server credential for {prepared.provider}", report.attempts)
         for retry in range(1 + limits.retries_per_request):
             invocation = await _attempt(ledger, providers, binding, key, f"{operation}.r{repair}.a{retry}",

@@ -8,6 +8,8 @@ dependencies = [
     "alembic>=1.18,<2",
     # T11 provider adapters: official SDKs, pinned exactly (implicit retries/timeouts/redirects are disabled in code).
     "anthropic==2.3.0",
+    # G7: CPU-only SigV4 and static-file credential providers; no boto3 or SDK Bedrock client.
+    "botocore==1.43.120",
     "fastapi>=0.160,<0.170",
     "httpx>=0.28,<0.29",
     # T11 local validation of structured results and tool arguments (bounded local refs only).

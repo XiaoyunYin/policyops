@@ -1498,3 +1498,100 @@ characters each) per call, including calls the adapter rejects. It buffers at mo
 oversized or malformed diagnostic input is marked explicitly. Only fictional fixture data belongs in this smoke.
 It records exception-group leaf types without messages. Diagnostics observe delivery and preserve the adapter's
 validation, billing and cleanup behavior; they never authorize execution or retain headers/full response bodies.
+
+### Bedrock InvokeModel contract (G7)
+
+`BEDROCK_REGISTRY` opts into `bedrock:us.anthropic.claude-haiku-5-5`, revision `pricing.2026-11-15.v1`. Existing registries,
+actor defaults and `SNAPSHOT_2026_11_05` retain their values. The fixed request is
+`POST https://bedrock-runtime.us-west-2.amazonaws.com/model/us.anthropic.claude-haiku-5-5/invoke`, with
+`anthropic_version: "bedrock-2023-05-31"`, thinking disabled and low effort. There is no Anthropic service-tier
+field. Non-streaming text histories and text/structured responses are implemented. Tool-use/result content,
+positive cache modes, other models and long context are refused. Schemas may be declared,
+but continuation with non-text blocks is unsupported. The US geographic inference profile may serve requests
+in **us-east-1, us-east-2 or us-west-2**. Data stays in the US, with no single-region guarantee.
+The bare `anthropic.claude-haiku-5-5` ID is a rejected alternative: this model supports inference profiles only,
+so on-demand invocation by that ID is not offered (`bedrock.on_demand_unsupported`). The `global.` profile has
+no US geographic bound and is refused separately (`bedrock.global_profile_unsupported`). Other Bedrock IDs
+yield `bedrock.model_unsupported`; all three codes omit supplied values.
+
+The profile ID is a single URI segment. Its dots and hyphens are unreserved and stay literal; it has no colon.
+A colon in a model ID would be `%3A` on the wire and `%253A` in the SigV4 canonical URI (the percent is encoded
+again). Version-suffixed IDs, ARNs and pre-encoded variants are refused; the fixed literal path needs no escaping.
+
+Construct `BedrockAccess.from_settings(BedrockSettings(...))` before computing the call deadline, then pass it as
+`Providers.bedrock`. Explicit settings are `POLICYOPS_BEDROCK_PROFILE`, `POLICYOPS_BEDROCK_REGION` (only
+`us-west-2`), and optional `POLICYOPS_BEDROCK_CREDENTIALS_FILE` / `POLICYOPS_BEDROCK_CONFIG_FILE`. Otherwise use
+the platform user's `~/.aws/credentials` and `~/.aws/config`. Settings never carry access keys.
+
+Only botocore's `SharedCredentialProvider` and `ConfigProvider` run, in that order, over capped local snapshots
+(1 MiB each). Both named-profile sections are checked before either provider is constructed. Any `sso_*`,
+`role_arn`, `source_profile`, `credential_process`, `web_identity_token_file`, `credential_source`, `login_session`
+or legacy `aws_security_token` key yields `bedrock.credentials_unsupported_provider`, without values. Use
+`aws_session_token`. Missing/partial profiles fail closed. Providers receive checked dictionaries, eliminating
+a check/load race. No environment, SSO, assume-role, process, web-identity, container or metadata provider exists.
+Static keys have no expiry. A session token is used as given, never refreshed. Each access object freezes keys
+until reconstructed; expired tokens get a final credential/access error. Local reads precede the inference
+deadline; filesystem latency is not claimed to be bounded by the HTTP timeout.
+
+Every `AWS_*` and `ANTHROPIC_*` environment name is refused, including empty values and matching regions. This
+stronger names-only rule avoids reading secret values and fails closed on future settings:
+
+| Refused names | Reason |
+|---|---|
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_SECURITY_TOKEN` | Ambient credentials bypass the static profile. |
+| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE` | Profile selection belongs to explicit settings. |
+| `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` | File selection belongs to explicit settings/platform defaults. |
+| `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_STS_REGIONAL_ENDPOINTS` | Region/STS routing cannot change the fixed endpoint and signing region; matching values are also refused. |
+| `AWS_ENDPOINT_URL*`, `AWS_USE_FIPS_ENDPOINT`, `AWS_USE_DUALSTACK_ENDPOINT` | Endpoint overrides conflict with fixed host/residency. |
+| `AWS_CA_BUNDLE` | Trust overrides cannot change inference TLS trust. |
+| `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `AWS_WEB_IDENTITY_TOKEN_FILE` | Role/web-identity acquisition is outside the static contract. |
+| `AWS_CONTAINER_CREDENTIALS_*`, `AWS_EC2_METADATA_*`, `AWS_METADATA_SERVICE_*` | Container/metadata acquisition may perform unbounded network I/O. |
+| `AWS_BEARER_TOKEN_BEDROCK` | Bearer auth cannot replace SigV4/static-profile auth. |
+| Other `AWS_*` | Fail closed on further credential, endpoint, trust, retry, logging or discovery settings. |
+| All `ANTHROPIC_*`, including API keys, base URLs, profile, custom headers and logging | Prevent redirection, alternate authentication and SDK logging configuration. |
+
+HTTP proxy variables are ignored by `trust_env=False`; redirects and transport retries are disabled. Per attempt,
+an `AWSRequest` is synchronously signed with botocore 1.43.120's SigV4 primitives for service `bedrock`.
+`_QuietSigV4Auth.add_auth` omits upstream DEBUG calls that expose canonical token/date headers and signatures;
+golden and upstream-equivalence tests check unchanged canonicalization, HMAC and injection. No global logger is
+modified. Authorization, token and date headers exist only in memory/on the wire, with transport comparisons
+held in `SecretStr`; none enter identities, traces, ledger records or errors. The existing `BoundedTransport`
+checks exact signed values, host/path/body and framing, caps responses, permits one request per attempt and closes
+on cancellation. Signing has no thread or background task.
+
+Rejected alternatives: `AnthropicBedrock` / `anthropic[bedrock]` (auth runs in a worker before the supplied transport;
+the probe demonstrated post-cancellation work), boto3/direct SDK HTTP (bypasses the bounded boundary), and full
+botocore chains (network/process/refresh side effects). Only botocore is added; its wheel still includes service
+data, although only auth/request/static-provider functionality is used. No count API is used, including Mantle.
+
+Admission is `UTF8(system + all message text) + bytes(canonical tools and output_config) + 1024 + 64 × messages`.
+One text block per message prevents DTO part counts multiplying framing. Byte-level BPE tokens each consume at
+least one source byte, bounding text even for multibyte Unicode. Canonical schema bytes count names, descriptions,
+keys, enums and punctuation. The 1024 fixed allowance conservatively covers system/assistant framing, tool
+declaration/choice and output-schema instructions; 64 per message covers roles, separators and turn framing
+(four times the illustrative 16-token allowance). This is specific to the pinned text-only template.
+The ledger reserves the actor maximum; the byte bound plus configured admission headroom must fit that ceiling
+before dispatch. Actual input above the byte bound blocks, even if within admission headroom. Typical five-passage
+requests are about 26k bytes / 6.5k tokens: approximately 4× reservation overestimate. Enlarge actor/caps explicitly
+when needed; default actors remain unchanged. Actual usage settles the bill.
+
+Strict Messages responses require `id`, `type`, `role`, text content, stop reason and input/output usage. The AWS
+request ID comes only from `x-amzn-RequestId`, not Messages `id`. Optional cache fields default to zero only when
+absent; all reported counts, TTL splits and reasoning must agree. Unknown/contradictory evidence retains liability;
+known usage settles even for invalid payloads or contract overruns. Unexpected cache writes are priced then blocked.
+A response model ID is optional because the fixed InvokeModel path binds identity. Profile-routed bodies may
+return `claude-haiku-5-5`, `anthropic.claude-haiku-5-5` or `us.anthropic.claude-haiku-5-5`; these are accepted and
+retained as returned-model evidence. Other supplied model IDs block settlement with `model_unconfirmed`.
+No Anthropic service-tier pin is applied. HTTP 400/403/404 are final, including access/credential/agreement errors;
+408/424/429/500/503 are retryable within the existing limits. ModelNotReady is 429. Error bodies and header values
+are discarded in favor of fixed `http_NNN` classes.
+
+Primary references: [InvokeModel contract/errors](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html),
+[signer](https://github.com/boto/botocore/blob/1.43.120/botocore/auth.py),
+[static providers and full-chain alternatives](https://github.com/boto/botocore/blob/1.43.120/botocore/credentials.py).
+The profile uses the coordinator's us-west-2 Price List in-region **Standard** rows, effective 2026-10-01:
+input $0.11, output $0.55, cache write 5m $0.1375, cache write 1h $0.22 and cache read $0.011 per million tokens.
+These are the higher published tier. Reservation and settlement conservatively use them even if AWS bills
+geographic profiles at the source-region rate; this is an accounting assumption, not verified account billing.
+Coordinator smoke is pending an account-eligibility hold (HTTP 403), including for both profiles after agreement
+availability. Live availability and access remain coordinator evidence; offline tests establish the adapter contract.

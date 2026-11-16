@@ -210,7 +210,7 @@ class Configuration:
                            worst_case(price, max_input=config.max_request_tokens), digest)
 
 
-Name = Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"^[a-z0-9][a-z0-9._-]*$")]
+Name = Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"^[a-z0-9][a-z0-9:._-]*$")]
 
 
 class BudgetSettings(BaseSettings):

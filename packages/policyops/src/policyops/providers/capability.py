@@ -27,6 +27,10 @@ LiveState = Literal["not_run", "attempted", "supported", "refused", "unavailable
 CELLS = ("text", "tool_call", "structured_output", "streaming", "counting", "count_vs_usage", "cache_none")
 
 PROTOCOL = {
+    "bedrock": {"model": "us.anthropic.claude-haiku-5-5", "api": "InvokeModel", "region": "us-west-2",
+                "serving_regions": ["us-east-1", "us-east-2", "us-west-2"], "data_residency": "US",
+                "anthropic_version": "bedrock-2023-05-31", "effort": "low", "thinking": "disabled",
+                "cache_none": "no cache_control", "admission": "UTF-8 bytes + 1024 + 64 per message"},
     "openai": {"model": "gpt-6-luna", "api": "responses", "effort": "low", "service_tier": "default",
                "cache_none": "prompt_cache_options.mode=explicit, no breakpoints", "store": False},
     "anthropic": {"model": "claude-haiku-5-5", "api": "messages", "effort": "low", "thinking": "disabled",
@@ -35,17 +39,22 @@ PROTOCOL = {
                   "cache_none": "no cache_control, no replayed thinking, no per-message effort change"},
 }
 NOT_IMPLEMENTED = {"openai": ["cache 12h (SDK documents 30m only)"],
-                   "anthropic": ["cache 5m", "cache 1h", "adaptive thinking continuation"]}
+                   "anthropic": ["cache 5m", "cache 1h", "adaptive thinking continuation"],
+                   "bedrock": ["streaming", "non-text content", "tool results", "cache 5m", "cache 1h",
+                               "count API", "bare on-demand model", "global profiles", "long context",
+                               "refreshing credentials"]}
 
 
 def capability_record() -> dict[str, Any]:
     live: dict[str, dict[str, LiveState]] = {provider: dict.fromkeys(CELLS, "not_run") for provider in PROTOCOL}
     return {
         "v": "policyops.provider-capability/v1",
-        "sdk": {"openai": "3.40.0", "anthropic": "2.3.0"},
+        "sdk": {"openai": "3.40.0", "anthropic": "2.3.0", "botocore": "1.43.120"},
         "protocol": PROTOCOL,
         "not_implemented": NOT_IMPLEMENTED,
-        "offline_contract": {provider: [*CELLS[:5], "unknown_usage_hold", "contract_block"]
+        "offline_contract": {provider: (["text", "structured_output", "byte_bound", "unknown_usage_hold",
+                                         "contract_block"] if provider == "bedrock" else
+                                        [*CELLS[:5], "unknown_usage_hold", "contract_block"])
                              for provider in PROTOCOL},
         "live": live,
         "live_note": ("Unpopulated template: actual dated live evidence is recorded externally per separately "

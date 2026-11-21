@@ -1593,5 +1593,5 @@ The profile uses the coordinator's us-west-2 Price List in-region **Standard** r
 input $0.11, output $0.55, cache write 5m $0.1375, cache write 1h $0.22 and cache read $0.011 per million tokens.
 These are the higher published tier. Reservation and settlement conservatively use them even if AWS bills
 geographic profiles at the source-region rate; this is an accounting assumption, not verified account billing.
-Coordinator smoke is pending an account-eligibility hold (HTTP 403), including for both profiles after agreement
-availability. Live availability and access remain coordinator evidence; offline tests establish the adapter contract.
+The live smoke returned HTTP 403. Live access was declined for this new AWS account
+for now. Offline tests establish the adapter contract.

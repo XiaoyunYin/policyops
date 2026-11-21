@@ -7,11 +7,41 @@ reviewing cited proposals, and approving simulated order changes.
 It separates model suggestions from deterministic authorization, then uses durable operation
 IDs and receipts to reconcile writes whose responses are lost.
 
-**Status:** local showcase, verified locally including real-browser E2E on the Compose stack;
-not deployed. GitHub Actions runs the offline gates on Ubuntu and Windows and the
-PostgreSQL/Dex integration suites on Ubuntu, with no secrets or model calls.
-The default Compose stack leaves model-driven investigation unconfigured. Its browser demo
-starts from a deterministic proposal and exercises real consent, approval and simulator execution.
+**Status.** Live demo at [52-11-210-0.sslip.io](https://52-11-210-0.sslip.io) · verified live 2026-11-15; observed reachable 2026-11-21.
+The demo starts from a seeded proposal with fictional data. It runs on one host with
+restricted demo roles, a nightly reset and no SLA.
+[Sign-in and demo steps](docs/deployment.md#public-credentials-and-fixture-reset) ·
+[What failed and what changed](#what-failed-and-what-changed).
+
+## Results at a glance
+
+| Study | Status | Result |
+|---|---|---|
+| [Agent model comparison (E03)](docs/evaluation.md#e03-model-comparison) | `descriptive` | Luna strict pass^1 0.700 vs Haiku 0.750. Difference −0.050 [−0.135, +0.035], with 44% lower settled all-actor cost. The non-inferiority gate did not pass. |
+| [Recovery / execution ledger (E04)](docs/evaluation.md#e04-operation-ledger-versus-naive-retry) | positive | Across 100 paired faults, 83 completed once and 17 were fenced without effect, with zero duplicates. Naive retry misreported all 20 committed writes with lost responses. |
+| [Gateway vs prompt-only (E05)](docs/evaluation.md#e05-gateway-versus-prompt-only) | positive | Final live sample: 0/48 vs 2/48 attack effects, and 0/12 vs 6/12 false blocks. Acceptance covers the tested authority rules. |
+| [MCP parity (O01)](docs/evaluation.md#mcp-parity-o01) | positive | 167/167 read-only calls matched the direct gateway path, with zero unauthorized disclosures or false denials. Warm p50/p95 overhead 14.5/39.9 ms, cold start about 3.1 s. Luna client smoke 2/2 for $0.0003. |
+| [Browser and recovery drills](docs/evaluation.md#recovery-and-e07-correctness) | positive | 2/2 Playwright flows passed, along with kill-after-commit recovery by receipt lookup and a stopped-writer restore into a second database on the same PostgreSQL cluster. |
+| [LLM-judge calibration](docs/evaluation.md#llm-judge-calibration) | negative | Agreement with human labels was κ 0.398 [0.358, 0.438], below the registered gate. Judged RAG metrics remain `descriptive`. |
+| [BM25 development result](docs/evaluation.md#bm25-development-result) | `descriptive` | BM25 vs OR-based full-text search: R@5 0.458 vs 0.114, a paired gain of +0.344 [+0.284, +0.404] on 500 development questions (R@10 0.548 vs 0.168). |
+| [Sealed RAG retrieval](docs/evaluation.md#sealed-rag-retrieval) | `inconclusive` | On human-labelled MultiDoc2Dial, RRF − dense R@5 was −0.019 [−0.038, +0.0005]. Dense was numerically ahead. |
+| [Sealed RAG answers](docs/evaluation.md#sealed-rag-answers) | `inconclusive` | One arm used a local cross-encoder (CE). Non-confirmatory gold-citation differences: CE − RRF +0.059 [+0.033, +0.085], adjusted lower bound +0.029. CE − Luna rerank +0.005 [−0.022, +0.032], at p95 6.6 s vs 8.1 s. CE reranks on local CPU at $0 provider cost. |
+| [Model cascade](docs/evaluation.md#model-cascade) | negative | No Luna→Haiku threshold qualified on dev. Plain Luna had a gold-citation rate of 0.378 at $0.000202 per question vs Haiku's 0.394 at $0.000312. The cascades scored 0.352 / 0.356 / 0.402 at $0.000205 / $0.000205 / $0.000444 in known cost per question. |
+| [Reranker fine-tuning](docs/evaluation.md#reranker-fine-tuning) | negative | Neither of the two pre-declared recipes beat the base cross-encoder on internal validation. |
+| [Bedrock adapter](docs/evaluation.md#bedrock-adapter) | Offline-verified only | The adapter signs its own SigV4 requests through the bounded transport, using static credentials and a US inference profile. Live access was declined for this new AWS account for now. |
+
+Brackets show 95% confidence intervals. E03 used the minimal agent with the full retail
+policy. The [evaluation report](docs/evaluation.md) gives denominators, failure codes, spend
+and reproduction commands.
+
+## What failed and what changed
+
+- On development data, AND-based lexical search rarely matched conversational queries, tight answer and rerank limits caused slot failures, and downstream errors zeroed retrieval scores. The study added BM25, revised the limits and preserved completed ranking metrics.
+- The judge missed its calibration gate, so the sealed RAG claims used human relevance labels.
+- No cascade threshold met the development gate. In an unplanned observation on development data, without an interval, plain Luna was cheaper than each cascade on known cost and had comparable citation rates.
+- Neither fine-tuning recipe beat the base cross-encoder, which stayed in the sealed study.
+- One unresolved provider bill ($0.00108 held) among 1,302 CE-arm slots made both reranking claims `inconclusive` before the margin test. The accounting rule worked as registered and yielded no positive claim.
+- Live deployment surfaced five defects, all fixed: shared Lightsail names, bootstrap user-data and SSH setup, merged Compose networking, a missing PostgreSQL trust root, and CPU burst exhaustion from heavy health checks.
 
 ## Workflow
 
@@ -48,26 +78,13 @@ evidence of real customer consent or a model-driven browser investigation.
 See [runtime composition](docs/architecture.md#investigation-graph-and-checkpoints) and
 [the browser acceptance scope](docs/operations.md#real-browser-workbench-acceptance).
 
-## Results at a glance
-
-- **E03, registered holdout:** Luna strict pass^1 0.700 vs Haiku 0.750; difference −0.050 [−0.135, 0.035], 44% lower settled all-actor cost. Decision: `descriptive`; non-inferiority not shown. Dev v6: 0.7125 vs 0.7875. [Method and results](docs/evaluation.md#e03-model-comparison).
-- **E04, recovery:** 100 paired fault cases; ledger 83 completed once + 17 fenced without effect, zero duplicate effects. Naive retry misreported all 20 committed lost-response writes as failures. Acceptance passed within this fixture scope. [Recovery study](docs/evaluation.md#e04-operation-ledger-versus-naive-retry).
-- **E05, authorization:** final live sample: gateway 0/48 attack effects, prompt-only Luna 2/48; false blocks 0/12 vs 6/12. Acceptance passed; this is a controlled authority test, not general injection resistance. [Attack study](docs/evaluation.md#e05-gateway-versus-prompt-only).
-- **MCP read-only facade:** a real MCP client replayed 167 matrix, E05 and identity calls; 167/167 matched the direct gateway path, with 0 unauthorized disclosures and 0 false denials. Warm-worker overhead is p50 14.5 ms / p95 39.9 ms; a cold worker start costs about 3.1 s. A capped Luna MCP-client smoke completed 2/2 tasks for $0.0003. [MCP parity](docs/evaluation.md#mcp-parity-o01).
-- **Browser and recovery drills:** 2/2 Playwright flows passed; kill-after-commit recovered by receipt lookup without resend, and a stopped-writer separate-database restore passed. Correctness acceptance passed; no load/performance claim. [Exact scope](docs/evaluation.md#recovery-and-e07-correctness).
-
-Intervals are paired task-bootstrap 95% intervals. E03 uses the minimal agent with the full
-retail policy, not the workbench graph or a retrieval variant. Raw trajectories are not
-published; the [evidence report](docs/evaluation.md) records configs, snapshot identities,
-failures, spending and reproduction commands.
-
 ## Engineering decisions
 
 | Decision | Trade-off and rejected alternative | Evidence |
 |---|---|---|
 | The model proposes; deterministic services authorize | More explicit rules and refusal paths; prompt-only policy enforcement cannot close expiry/revocation races | [Gateway](docs/architecture.md#policy-and-tool-gateway), [E05](docs/evaluation.md#e05-gateway-versus-prompt-only) |
-| Consent and staff approval bind immutable versions and digests | Changes require a fresh decision; a generic approval flag cannot bind arguments, evidence, terms and expiry | [Review contracts](docs/architecture.md#proposal-review-t18), [race tests](tests/integration/test_proposal_decisions.py) |
-| Stable operation IDs, a ledger and reconciliation | Ambiguous writes may remain unknown or be fenced without effect; checkpoint replay or blind retry cannot establish a remote outcome | [Execution](docs/architecture.md#approved-execution-and-reconciliation-t19), [E04](docs/evaluation.md#e04-operation-ledger-versus-naive-retry) |
+| Consent and staff approval bind immutable versions and digests | Changes require a fresh decision; a generic approval flag cannot bind arguments, evidence, terms and expiry | [Review contracts](docs/architecture.md#proposal-review), [race tests](tests/integration/test_proposal_decisions.py) |
+| Stable operation IDs, a ledger and reconciliation | Ambiguous writes may remain unknown or be fenced without effect; checkpoint replay or blind retry cannot establish a remote outcome | [Execution](docs/architecture.md#approved-execution-and-reconciliation), [E04](docs/evaluation.md#e04-operation-ledger-versus-naive-retry) |
 | Forced RLS with separate migration/runtime roles | More grants and transaction scope management; application filters alone leave query mistakes exposed | [Database roles](docs/database.md#roles), [runtime-role tests](tests/integration/test_app_tenancy.py) |
 | Reserve worst-case cost and retain unknown bills | Conservative holds reduce availability; estimating a missing bill as zero would permit unaccounted spending | [Budget ledger](docs/architecture.md#model-configuration-and-usage-budgets), [accounting tests](tests/integration/test_budget_ledger.py) |
 | Prespecified dev studies, registered holdout, strict pass^k | Errors remain failures in headline metrics; dropping errored trials or changing gates after results would bias selection | [Evaluation method](docs/evaluation.md#method), [statistics](evals/src/policyops_evals/studies/statistics.py) |
@@ -160,11 +177,20 @@ No paid evaluation or provider call is part of these default commands.
 
 ## Live demo / Deploy
 
-Live URL: **pending deployment and HTTPS/rollback verification**. The offline AWS
-[deployment runbook](docs/deployment.md) provisions a $12/month Lightsail demo with
-Terraform, Caddy TLS and a $20 budget alert. Public fictional credentials and their
-restricted demo roles are documented there. No provider keys or real customer data
-belong on this host; nightly resets discard demo activity.
+[Open the live demo](https://52-11-210-0.sslip.io). The seeded proposal exercises
+simulated customer consent, separate staff approval and simulator execution. Public
+demo roles are restricted to the fictional tenant, and the nightly reset discards
+demo activity. The host has no model provider keys.
+
+Release `3609714` passed all 28 live verifier checks, including HTTPS and Dex login.
+The schema-compatible A/B/A drill passed 28/28 at each step, with a docs-only B release.
+PostgreSQL clients enforce `verify-full` with an explicit trust root. The public profile
+runs lightweight health checks every 30 seconds and ships precompiled Python bytecode.
+The deployed revision is older than main. Lightsail costs about $12/month with a $20
+budget alert. [Deployment runbook](docs/deployment.md).
+
+GitHub Actions runs offline gates on Ubuntu and Windows and PostgreSQL/Dex integration
+on Ubuntu. The default checks make no model calls.
 
 ## Repository map
 
@@ -181,15 +207,18 @@ belong on this host; nightly resets discard demo activity.
 
 ## Limits and remaining work
 
-- No production deployment, real customers or real commerce mutations. External hosting
-  needs TLS/issuer/secret settings, ingress/egress hardening and rollback verification.
+- The live demo is a single host with no SLA. It uses fictional data and simulated
+  commerce mutations.
 - E03 does not show Luna quality-equivalent to Haiku. Its reference errors and held bill
   remain reported; costs are local ledger calculations, not reconciled provider invoices.
 - Banking trajectory retrieval (E01) is outside this release: ingestion, search, reranking
   and offline metric machinery exist, but its study controller/evaluator contract and
   quality results do not. Retail E03 uses full policy context.
-- No ANN/HNSW scaling study, graph-versus-loop quality comparison, context/cache optimization
-  study, evaluation explorer or collector/dashboard stack.
+- The context and caching study and field engineering scoping and incident-analysis
+  artifacts remain open. ANN/HNSW scaling, graph-versus-loop quality, an evaluation
+  explorer and a collector/dashboard stack are also outside the current evidence.
+- The Bedrock adapter is verified offline only. Live access was declined for this new
+  AWS account for now. [Bedrock adapter](docs/evaluation.md#bedrock-adapter).
 - No hard end-to-end deadline guarantee: synchronous SQL, in-flight remote calls and
   connection shutdown have documented limits. No billing-evidence outbox exists.
 - Citations verify historical source identity and exact quotes, not entailment or truth.

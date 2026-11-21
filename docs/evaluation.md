@@ -1,37 +1,11 @@
 # Evaluation and Core evidence
 
-Bedrock is a separate opt-in provider; prior registrations keep the original snapshot and defaults.
-The offline capability matrix is:
-
-| Bedrock US profile via us-west-2 | Contract |
-|---|---|
-| Model | Only `us.anthropic.claude-haiku-5-5` (`bedrock:` registry prefix) |
-| Residency | Any of us-east-1, us-east-2, us-west-2; data stays in the US, with no single-region guarantee |
-| Rejected identifiers | Bare model: no on-demand invocation offered; global profile: no US geographic bound |
-| Text / structured JSON | Implemented; local schema validation |
-| Admission | Local UTF-8 byte upper bound; no count API |
-| Usage / unknown liability | Actual input/output and optional cache splits; existing ledger settlement/holds |
-| Streaming / non-text / cache writes / global / long context | Refused |
-| Credentials | Named static profile only; no refresh or provider chain |
-| Prices | Higher in-region Standard rows conservatively applied to the US profile; billing assumption |
-| Live | Coordinator HTTP 403 account-eligibility hold; profile smoke pending |
-
-`scripts/bedrock_smoke.py --execute --workspace <existing-workspace-uuid>` sends one tiny structured request through
-the real port and PostgreSQL ledger. Set `POLICYOPS_BEDROCK_PROFILE=<your-aws-profile>` and
-`POLICYOPS_BEDROCK_REGION=us-west-2`, with no `AWS_*` / `ANTHROPIC_*` names. A migrated local app database and
-libpq `PG*` settings for the app runtime role are prerequisites. The operation scope `bedrock-haiku-smoke-v1`
-persists across repeated launches, enforcing at most 4 inference calls / $0.05 including unknown liability;
-each launch makes one call, with no retries or repair. `--operation-key` selects that persisted budget scope;
-the default is `bedrock-haiku-smoke-v1`. Reuse the same key across repeats, including when changing from the bare
-ID to the US profile; choosing a new key creates a separate budget and does not carry prior liability. The script
-prints only effective model, usage, cost and AWS request ID. Exit 0 requires a structured result; failures return 1
-with those same fields, without exception messages, payloads or headers. Without `--execute`, it returns 2.
-
 The retail model comparison, authorization fixtures and recovery drills answer different
 questions. The registered holdout does **not** establish Luna's non-inferiority to Haiku;
-the deterministic safety suites passed their specified acceptance checks. All paid and
-recovery execution reported here was local; hosted CI runs only the offline and PostgreSQL
-test suites. No production or real-customer outcome is claimed. Raw trajectories, database dumps and execution bundles are not published.
+the deterministic safety suites passed their specified acceptance checks. The retail model
+comparison and browser recovery drills ran locally. The studies below report their
+own cohorts and scope. Hosted CI runs offline and PostgreSQL test suites. Raw trajectories,
+database dumps and execution bundles are kept private.
 
 ## Method
 
@@ -540,7 +514,7 @@ and caching execution await later slices.
 ### Answer and rerank arms
 
 QA answer runner (G0.4b): `qa-study run|status|report` also supports
-`answer_generation`, top-20 `rerank` (T14 Luna or G8 stdio cross-encoder), and
+`answer_generation`, top-20 `rerank` (T14 Luna or the stdio cross-encoder), and
 `closed_book`. Generation receives only the private materialization's chronological
 history and delivered passages. Gold/reference fields enter metrics afterward.
 Evidence uses whole passages, at most five and 4,096 cl100k tokens including JSON
@@ -557,8 +531,8 @@ Splitter `qa.sentences/v1` splits on LF or whitespace
 following `.`, `!`, or `?`, trims pieces, and retains those containing any Unicode
 alphanumeric character. Abbreviations have no special treatment. Exceeding the
 frozen 1–4 claim limit fails the answer; no suffix is silently omitted. Every claim
-is judged against delivered **cited** passages with the byte-bound G6 selection
-(`--selection-receipt`). Invalid verdicts are errors. A bound G6 test report
+is judged against delivered **cited** passages with the byte-bound judge selection
+(`--selection-receipt`). Invalid verdicts are errors. A bound judge calibration test report
 (`judge.test_report_sha256`, `--judge-report`) supplies the comparison gate;
 otherwise judged comparisons remain descriptive. Q is a citation/support surrogate,
 not human correctness. Closed-book citation, faithfulness and Q are N/A;
@@ -570,10 +544,10 @@ one-sentence answers so the conservative envelope fits $5: answers
 `2000 × (10000×.10 + 512×.50)/1M = $2.512`; Luna rerank
 `500 × (8000×.10 + 256×.50)/1M = $0.464`; query embeddings $0.01024;
 shared preprocessing allowance `300 × 8192 × .02/1M = $0.049152` (includes
-ingest and G8 mining); total **$4.980392** (5,800 calls/counts).
+ingest and reranker mining); total **$4.980392** (5,800 calls/counts).
 V1 is retained unchanged as the failed one-claim/256-token configuration.
-`g1-dev-answers-v2.json` uses a new study ID and the same cohort, arms and bound G6
-receipt/report, with up to four claims (more remains an error). Answers reserve
+`g1-dev-answers-v2.json` uses a new study ID and the same cohort, arms and bound judge
+calibration receipt/report, with up to four claims (more remains an error). Answers reserve
 `2500 × (6500×.10 + 1024×.50)/1M = $2.905`; judges reserve
 `8000 × (6500×.10 + 512×.50)/1M = $7.248`; Luna rerank reserves
 `500 × (8000×.10 + 1024×.50)/1M = $0.656`. With unchanged embedding allowances,
@@ -581,7 +555,7 @@ the total and enforced cap are **$10.868392**, 11,800 calls/counts. The smaller
 judge input ceiling changes only the reservation, preserving the calibrated
 model, effort, prompt and schema. Offline full provider-count projections measured
 2,163 eligible v1 claims (maximum 2,931 cl100k tokens); a 4,096-token evidence plus
-1,024-token claim stress case measured 5,352 (5,888 with G6's 10% headroom).
+1,024-token claim stress case measured 5,352 (5,888 with the 10% judge calibration headroom).
 The 6,500 provider-token ceiling is enforced using official counts before dispatch;
 cl100k estimates do not establish an exact cross-tokenizer bound. Preflight alone
 never authorizes spending.
@@ -621,7 +595,7 @@ shared preprocessing is disclosed separately. The dev cascade uses Luna first an
 Haiku fallback over the same ranking; confidence is an uncalibrated routing signal.
 Selective rerank, full-context and caching execution remain deferred.
 
-## G8 local cross-encoder tooling
+## Local cross-encoder tooling
 
 The isolated `reranker/` project supplies offline, safetensors-only BERT loading,
 shared prefix truncation (query 128 tokens, pair 384), a capped CPU training recipe,
@@ -637,7 +611,7 @@ Its equivalent command is `python scripts/devenv.py uv --project reranker run
 counts plus the selected ranking; EOF ends the worker. Client deadlines cover
 pipe writes and reads and kill/reap the owned process on failure.
 
-`policyops-evals g8 preflight|mine` recomputes the pinned train-only G8 pool and
+`policyops-evals g8 preflight|mine` recomputes the pinned train-only mining pool and
 duplicate exclusions. Internal validation uses a separately hash-ranked 10% of
 eligible dialogues, then independently samples at most 600 validation and 6,000
 training queries. Mining freezes dense/FTS/RRF candidates with an explicit lexical
@@ -658,7 +632,7 @@ its MS MARCO lineage has non-commercial research terms. MultiDoc2Dial is treated
 as CC BY 3.0; trained artifacts require the same provenance disclosures.
 
 
-## G1 sealed deterministic design
+## Sealed deterministic design
 
 `g1-test-retrieval-v1.json` schedules the manifest's official-validation retrieval
 cohort: 300 complete dialogues, 1,940 questions, one repetition and history-four
@@ -680,7 +654,7 @@ cascade comparison. The remaining one-sided claims are:
 Gold citation means a validated policy answer cites at least one human-gold
 passage; it does not prove correctness or entailment. Failed and missing policy
 answers are strict non-successes. Downstream judge failures preserve completed
-deterministic policy metrics. The existing G6 gate controls judged claim support,
+deterministic policy metrics. The judge calibration gate controls judged claim support,
 faithfulness and Q: these are descriptive, never confirmatory here. Closed book
 is descriptive; its citations, faithfulness and Q remain N/A. No dense answer,
 trained reranker or cascade arm is added to the sealed schedule.
@@ -770,3 +744,208 @@ still-scheduled slots. **Finalized successes and failures are never reissued;
 slots already failed stay failed.** Abandoned running claims retain the existing
 abort/no-reissue semantics. This is an operational stop, not an exclusion rule:
 all scheduled questions remain in analysis and no failure is selectively removed.
+
+
+## LLM-judge calibration
+
+The judge calibration study compared binary claim-support judgments with human labels from LLM-AggreFact.
+Development used 400 items (100 each from ClaimVerify, ExpertQA, RAGTruth and
+WiCE). Five arms compared Haiku entailment with Luna entailment and Luna's
+upstream-adapted prompt, each Luna prompt at low and high effort. Before test,
+development selection preferred false-pass ≤ 0.10 and then higher pooled κ.
+Development recorded 11 `invalid_output` errors, all from Haiku. The selected
+Haiku entailment arm ran on all 1,538 registered test items
+(400 each from the first three constituents and 338 from WiCE).
+
+The registered gate required complete execution, pooled Cohen's κ ≥ 0.60, its
+95% lower bound > 0.40, and false-pass ≤ 0.10. Pooled κ was **0.398 [0.358, 0.438]**,
+false-pass was **0.094 [0.067, 0.125]**, and macro balanced accuracy was 0.721.
+There were 36 `invalid_output` errors in test, leaving 1,502 valid verdicts
+(97.7%); errors stayed in the denominator. Test spend was $0.3777 settled.
+Total calibration spend including development and failed attempts was $1.0305.
+
+The gate failed on κ and its lower bound. Claim support, faithfulness and Q
+are therefore `descriptive`. The calibration covers sampled constituents.
+The silver MultiDoc2Dial controls were unrun, so transfer remains unverified.
+[Registered gate and cohort](../evals/manifests/llm-aggrefact-g6-v1/test-config.json).
+
+## Reranker fine-tuning
+
+The fine-tuning study compared CPU fine-tuning of MS MARCO MiniLM-L6-v2 against the unchanged
+base. Mining used 6,000 training queries and 600 internal-validation queries,
+with dialogue-separated validation and 13,200 mined negatives. The estimand
+was mean internal-validation nDCG@10. Checkpoint selection included the base
+and kept the earliest checkpoint with the highest score.
+
+| Arm | Best checkpoint after training began | nDCG@10 | Difference from base |
+|---|---:|---:|---:|
+| Base | Step 0 | 0.5575 | — |
+| Constant learning rate (v1) | Step 375 | 0.5539 | −0.0036 |
+| Warmup and linear decay (v2) | Step 300 | 0.5449 | −0.0126 |
+
+The first recipe selected step 0. The pre-declared follow-up required the best
+trained checkpoint to exceed base +0.005 (0.5625). It also selected step 0, and
+finished at 0.5347, a drop of 0.0228. The `validation_drop_gt_0.02` stability
+check prevented export of a v2 artifact. A local training attempt stopped before a
+checkpoint under host memory pressure, and the first cloud launch stopped at
+`private_output_containment`. Estimated cloud compute was about $5.3 across
+both runs, including idle time from the failed launch.
+
+Both recipes were negative on internal validation. The checkpoint comparison
+has no 95% CI in the run record. Mined negatives may include relevant passages.
+The sealed study retained the base weights and withdrew claim 2.
+
+## BM25 development result
+
+The final MultiDoc2Dial development retrieval run recorded 4,500/4,500 slots
+(500 questions in each of nine retriever/query-profile combinations). With
+four-turn history, exact BM25 scored 0.458 R@5 vs 0.114 for OR-based full-text
+search, a paired difference of **+0.344 [+0.284, +0.404]** (95% CI). R@10 was
+0.548 vs 0.168 (+0.380), with no recorded interval. RRF of BM25 and dense
+scored 0.546 R@5 vs 0.562 for dense, a difference of
+−0.016 [−0.053, +0.022]. The development rule selected the single retriever
+with highest history R@5: dense at 0.562 vs BM25 at 0.458.
+
+Status is `descriptive`. Four slots failed with
+`lexical_query_too_many_lexemes`. Recorded slot spend was $0 because the run
+used cached embeddings. Shared preprocessing is outside that total. All
+comparisons were on development questions.
+[Development configuration](../evals/qa_studies/g1-dev-retrieval-v3.json).
+
+## Model cascade
+
+The cascade study tested three Luna→Haiku confidence thresholds and two single-model
+baselines on the same 500 MultiDoc2Dial development questions (2,500/2,500
+slots). All arms used the base cross-encoder ranking. The cascade gave Luna
+a smaller evidence budget and used Haiku on escalation. The feasibility
+rule required a gold-citation difference vs Haiku ≥ −0.02, mean policy cost
+ratio ≤ 0.75 and policy p95 ≤ 1.5× Haiku and ≤ 30 s. The cheapest qualifying
+threshold would advance to the sealed study.
+
+| Arm | Gold-citation rate | Δ vs Haiku [95% CI] | One-sided lower bound (α = 0.0125) | Known policy cost / question | Known cost ratio vs Haiku | Escalated |
+|---|---:|---|---:|---:|---:|---:|
+| Haiku | 0.394 | — | — | $0.000312 | 1.000 | — |
+| Luna | 0.378 | −0.016 | — | $0.000202 | 0.646 | — |
+| Cascade 0.6 | 0.352 | −0.042 [−0.068, −0.016] | −0.072 | $0.000205 | 0.655 | 99/500 |
+| Cascade 0.8 | 0.356 | −0.038 [−0.065, −0.012] | −0.069 | $0.000205 | 0.655 | 102/500 |
+| Cascade 1.0 | 0.402 | +0.008 [−0.008, +0.025] | −0.010 | $0.000444 | 1.422 | 430/500 |
+
+The bootstrap contrasts are `descriptive`. The pre-declared development
+selection used point estimates. The cost column divides known policy spend
+by scheduled questions. Cost ratios use unrounded known spend. Held bills make the full cost means for 0.6 and 0.8
+unknown. Policy p50 was 4.98 s for Haiku, 5.28 s for Luna and 5.41, 5.39 and
+7.52 s for the three thresholds in ascending order. Policy p95 was undetermined
+for every arm under the failure-as-worst rule.
+
+No threshold qualified. The 0.6 and 0.8 thresholds missed quality, and 1.0
+missed cost. Plain Luna was cheaper on known cost than all three thresholds.
+An exploratory sensitivity check excluded the 60 questions affected by the
+cross-encoder incident (58 failed across all five arms). With 440 questions,
+gold-citation rates were 0.448 for Haiku, 0.427 for Luna and 0.398, 0.400 and
+0.452 for the thresholds. The feasibility decision remained negative, and the
+sealed claim slot stayed withdrawn. The confidence signal was uncalibrated.
+
+The 470 failed slots comprised `cross_encoder_failure` (293),
+`too_many_claims` (90), `invalid_judge_verdict` (67), `answer_call_failed` (5),
+`answer.fallback_call_failed` (5), `lexical_query_too_many_lexemes` (5),
+`invalid_answer` (2), `unresolved_billing` (2) and `abandoned_claim` (1).
+The strict analysis retained the failures. Experimental spend was about
+$1.47 settled plus $0.0018 held, within the $13 cap.
+[Development configuration](../evals/qa_studies/g2-dev-cascade-v1.json).
+
+## Sealed RAG retrieval
+
+The sealed retrieval comparison (claim 1) compared RRF (BM25 and dense) with the development-selected
+dense retriever on 1,940 questions in 300 official-validation MultiDoc2Dial
+dialogues. Both used four-turn history. All 3,880 slots were recorded.
+The estimand was paired R@5 on human relevance labels. Superiority required
+a one-sided Bonferroni lower bound above zero and settled accounting.
+
+RRF − dense was **−0.0186 [−0.0377, +0.0005]** (ordinary 95% CI), with
+adjusted lower bound **−0.0405**. Status is `inconclusive`. Dense was
+numerically ahead at 0.578 R@5 vs 0.559. RRF had one
+`lexical_query_too_many_lexemes` strict failure, and dense had zero failures.
+Experimental spend was $0.00333, all settled. The comparison measures
+passage retrieval on this corpus. Public benchmark contamination remains
+possible.
+[Sealed retrieval configuration](../evals/qa_studies/g1-test-retrieval-v1.json).
+
+## Sealed RAG answers
+
+The sealed answer comparisons (claims 3 and 4) used a separate official-validation cohort of 1,302
+questions in 200 MultiDoc2Dial dialogues. All 5,208 slots were recorded.
+Three grounded arms shared Luna generation and the RRF pool. They used no
+reranking, Luna reranking or the development-selected base cross-encoder
+(CE). A closed-book Luna arm provided a descriptive baseline.
+
+Both claims have registered status **`inconclusive`**. One provider call
+among the CE arm's 1,302 slots remained unresolved ($0.00108 held). The
+pre-declared rule checks for settled accounting before testing the
+margin. The same CE arm enters both comparisons, so the hold determines
+both statuses as registered. The call was never reissued.
+
+| Claim and estimand | Descriptive difference [ordinary 95% CI] | Adjusted lower bound | Registered rule after accounting |
+|---|---|---:|---|
+| 3. CE − RRF gold-citation rate | +0.059 [+0.033, +0.085] | +0.029 | Lower bound > 0 |
+| 4. CE − Luna rerank gold-citation rate | +0.005 [−0.022, +0.032] | −0.026 | Lower bound > −0.05, mean policy-cost ratio upper bound ≤ 0.80, policy p95 ≤ 1.5× reference and ≤ 30 s |
+
+The one-sided bounds use α = 0.0125. The differences are non-confirmatory.
+Claim 4's cost-ratio upper bound is unavailable because the CE arm's mean
+cost is unknown. The descriptive ratio using known policy spend is 0.42.
+CE reranking runs on local CPU at $0 provider cost. Answer generation still
+incurs provider costs.
+
+| Arm | Gold citation | R@5 | Grounded policy p95 |
+|---|---:|---:|---:|
+| RRF | 0.422 | 0.555 | 5.03 s |
+| RRF + Luna rerank | 0.475 | 0.638 | 8.13 s |
+| RRF + CE | 0.481 | 0.646 | 6.59 s |
+| Closed book | N/A | N/A | N/A |
+
+The table is `descriptive` and reports grounded policy latency excluding
+judging, with policy failures ranked as infinity. Gold citation measures
+whether a validated answer cites a human-gold passage. Correctness and
+entailment require separate evidence. Ranking metrics survive downstream
+failures, and judge failures preserve completed deterministic policy metrics.
+
+Across all stages, 280 slots failed: RRF 80, Luna rerank 101, CE 90, closed
+book 9. Codes were `invalid_judge_verdict` (154), `too_many_claims` (114),
+`answer_call_failed` (3), `lexical_query_too_many_lexemes` (3),
+`rerank_call_failed` (3), `invalid_answer` (2) and `unresolved_billing` (1).
+Experimental spend including judging was $2.752 settled, plus the held bill.
+
+A proposed v2 rule would retain strict quality non-successes and charge
+held bills at their reserved worst case in the cost bound. That would let
+the bound reflect the financial uncertainty of a held call. The proposal
+was not applied retroactively.
+[Sealed answers configuration](../evals/qa_studies/g1-test-answers-v1.json).
+
+## Bedrock adapter
+
+Bedrock is a separate opt-in provider. Prior registrations keep their original price
+snapshot and defaults. The adapter is **offline-verified only**. It signs its own
+SigV4 requests and sends them through the bounded transport.
+
+| Bedrock US profile via us-west-2 | Contract |
+|---|---|
+| Model | Only `us.anthropic.claude-haiku-5-5` (`bedrock:` registry prefix) |
+| Residency | Any of us-east-1, us-east-2, us-west-2; data stays in the US, with no single-region guarantee |
+| Rejected identifiers | Bare model: no on-demand invocation offered; global profile: no US geographic bound |
+| Text / structured JSON | Implemented; local schema validation |
+| Admission | Local UTF-8 byte upper bound; no count API |
+| Usage / unknown liability | Actual input/output and optional cache splits; existing ledger settlement/holds |
+| Streaming / non-text / cache writes / global / long context | Refused |
+| Credentials | Named static profile only; no refresh or provider chain |
+| Prices | Higher in-region Standard rows conservatively applied to the US profile; billing assumption |
+| Live | The smoke returned HTTP 403. Live access was declined for this new AWS account for now. |
+
+`scripts/bedrock_smoke.py --execute --workspace <existing-workspace-uuid>` sends one tiny structured request through
+the real port and PostgreSQL ledger. Set `POLICYOPS_BEDROCK_PROFILE=<your-aws-profile>` and
+`POLICYOPS_BEDROCK_REGION=us-west-2`, with no `AWS_*` / `ANTHROPIC_*` names. A migrated local app database and
+libpq `PG*` settings for the app runtime role are prerequisites. The operation scope `bedrock-haiku-smoke-v1`
+persists across repeated launches, enforcing at most 4 inference calls / $0.05 including unknown liability;
+each launch makes one call, with no retries or repair. `--operation-key` selects that persisted budget scope;
+the default is `bedrock-haiku-smoke-v1`. Reuse the same key across repeats, including when changing from the bare
+ID to the US profile; choosing a new key creates a separate budget and does not carry prior liability. The script
+prints only effective model, usage, cost and AWS request ID. Exit 0 requires a structured result; failures return 1
+with those same fields, without exception messages, payloads or headers. Without `--execute`, it returns 2.

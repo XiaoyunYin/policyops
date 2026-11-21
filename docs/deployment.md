@@ -1,15 +1,19 @@
 # AWS public fictional demo
 
-Status: **live and verified on 2026-11-15 at `3609714`; the A/B/A rollback drill is
-pending**. That deploy reported a healthy release after 201 seconds with zero API, worker
-and retail restarts. `scripts/deploy_verify.py --allow-admin-ssh` then passed: a valid
-certificate chain, the security headers and banner checks on the root, API and Dex
-routes, the HTTP redirect, the `__Host-` login/session/CSRF cookies, a real Dex login
-session and only ports 22, 80 and 443 open. The idle host was 98-99% idle with no CPU
-steal; the worker container used about 1% CPU and every other service less than 0.4%.
-Retail used about 237 MiB of its 256 MiB memory limit, which leaves little headroom.
-How the profile got there follows. The first
-2026-11-15 Lightsail attempt exposed launch-script handling of user-data and a shared
+**Status.** The demo was verified live on 2026-11-15 at `3609714` and observed
+reachable on 2026-11-21. That deploy reported a healthy release after 201 seconds
+with zero API, worker and retail restarts. `scripts/deploy_verify.py --allow-admin-ssh`
+passed 28/28 checks covering the certificate chain, headers, banners, HTTP redirect,
+`__Host-` cookies, Dex login, health and port reachability. From the admin network,
+ports 22, 80 and 443 were open among nine tested ports. The same verifier passed
+28/28 at each step of the schema-compatible A/B/A rollback drill. The live release
+returned to `3609714`. [Rollback scope](#backup-rollback-retention-and-teardown).
+
+The host was 98–99% idle with no CPU steal. The worker container used about 1% CPU,
+and every other service used less than 0.4%. Retail used about 237 MiB of its 256 MiB
+memory limit.
+
+The first 2026-11-15 Lightsail attempt exposed launch-script handling of user-data and a shared
 resource-name namespace; that host was destroyed. The replacement host bootstrapped
 successfully. At 19:10Z, deploy A built images but failed after 183 seconds creating API:
 Docker rejected the overlay's `extra_hosts` combined with inherited
@@ -22,7 +26,7 @@ made API healthy with zero restarts and all dependency checks true; public `/`, 
 and Dex discovery returned 200 over the ACME certificate. That was diagnostic evidence.
 The coordinator subsequently passed local Compose smoke and backup/restore drills at
 `ae776c7`, including the runtime roles under verified TLS. Its next public deploy ran with
-exhausted CPU burst capacity, as described below. Public login, host sizing and rollback remain live gates.
+exhausted CPU burst capacity, as described below. That attempt preceded the verified release above.
 
 ## Architecture and cost
 
@@ -126,7 +130,7 @@ than two. Every worker sample still rejects a heartbeat aged 25 seconds or more,
 though samples are farther apart. Probe failures never trigger automatic restarts by
 themselves. Reassess cadence after live CPU and outage-detection measurements.
 
-**Estimated steady-state idle budget, pending coordinator measurement:** assume no
+**Planning estimate for steady-state idle use.** Assume no
 build, visitors or runnable jobs, with at most 0.25 CPU-seconds for each of the three
 light Python probes and 0.10 CPU-seconds for each of PostgreSQL/Dex/Caddy's probes.
 At 30-second intervals, `(3 × 0.25 + 3 × 0.10) / 30 = 0.035 cores`, or **1.75% aggregate
@@ -550,8 +554,9 @@ a failed reset requires operator intervention. Never run this against retained r
   ports; firewall/config inspection complements the probe. API session and login cookies
   must be Secure/HttpOnly/SameSite=Lax; CSRF must be Secure/Strict and readable.
 - Repeat the existing real-browser consent -> Bob approval -> one receipt scenario over
-  HTTPS, denial for Carol/foreign tenant, API 429 behavior, reboot, nightly reset, backup
-  restore and the A/B/A drill. Static tests do not establish these composed behaviors.
+  HTTPS, denial for Carol/foreign tenant, API 429 behavior, reboot, nightly reset and
+  backup restore. Run the rollback drill for new release pairs after checking schema
+  compatibility. Static tests do not establish these composed behaviors.
 - Verify correct auto-renewal state and retain Caddy storage. sslip.io/DNS/ACME availability
   and issuance rate limits are external dependencies. An owned domain is optional; set
   `hostname` before initial seeding and point its A record to the static IP. Changing an
@@ -601,6 +606,12 @@ back with `docker compose ... exec -T postgres pg_restore -U postgres --exit-on-
 for tmpfs. Verify schema versions/owners, RLS and receipts before switching the selected
 database. Keep all source writers stopped until that decision. Restore is a separate
 drill; a backup file alone is not evidence.
+
+On 2026-11-15 the schema-compatible drill deployed A (`3609714`), deployed B
+(`5325f72`, documentation only), and rolled back to A's retained images without
+rerunning migrations. Each step passed 28/28 verifier checks. This covered a
+same-schema image rollback on one host. Schema changes and changes to application
+behavior were outside the drill's scope.
 
 The rollback driver records A deploy -> B deploy -> A image rollback with health/auth/
 header checks and elapsed time per step. Review schema compatibility first and supply

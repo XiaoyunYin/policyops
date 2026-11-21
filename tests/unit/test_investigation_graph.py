@@ -33,6 +33,7 @@ from policyops.orchestration.state import (
     InvestigationAction,
     InvestigationFailed,
     InvestigationState,
+    InvestigationStopped,
     state_from_json,
 )
 from policyops.persistence import checkpoint_json as codec
@@ -44,6 +45,7 @@ from policyops_contracts.conversation import AgentLimits, ToolResult, UserMessag
 from policyops_contracts.grounding import CitedQuote, ReconcileOutcome, RecordOutcome
 from policyops_contracts.model import ModelRequest, ToolCall
 from policyops_contracts.proposal import EvidenceRef
+from policyops_contracts.stops import StopReason
 from policyops_testing.agent_fakes import FakeKnowledge, ScriptedModel, calls, fictional_policy, report, result, says
 from tests.unit.test_grounding import CORPUS, RUN, WS, Reader, answer, quote, synthetic, validator
 
@@ -157,7 +159,8 @@ def test_invalid_replies_dispatch_nothing_then_recover(bad: CallReport) -> None:
 
 def test_invalid_ceiling_and_plain_prose_abstains() -> None:
     final, actions = run(ScriptedModel([calls("unknown", {}), calls("unknown", {})]))
-    assert final.terminal is not None and final.terminal.kind == "provider_error" and not actions.nodes
+    assert isinstance(final.terminal, InvestigationStopped) and final.terminal.details.reason == StopReason.INVALID_CAP
+    assert final.model_calls == final.invalid_count == 2 and not actions.nodes
     final, _ = run(ScriptedModel([says("Uncited policy assertion must not be delivered.")]))
     assert final.final_text == ABSTENTION
 

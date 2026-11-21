@@ -14,6 +14,8 @@ class StopReason(StrEnum):
     INPUT_TOKENS = "input_tokens"
     ACTIVE_TIME = "active_time"
     TOOL_CAP = "tool_cap"
+    RETRIEVAL_CAP = "retrieval_cap"
+    INVALID_CAP = "invalid_cap"
     CONTEXT_LIMIT = "context_limit"
     OVERRUN = "overrun"
     CONTRACT_BLOCK = "contract_block"
@@ -33,4 +35,5 @@ class StopDetails(WireModel):
 
     @property
     def failed(self) -> bool:
-        return self.reason in {StopReason.CONTEXT_LIMIT, StopReason.CONTRACT_BLOCK, StopReason.USAGE_UNCONFIRMED}
+        return self.reason in {StopReason.INVALID_CAP, StopReason.CONTEXT_LIMIT, StopReason.CONTRACT_BLOCK,
+                               StopReason.USAGE_UNCONFIRMED}

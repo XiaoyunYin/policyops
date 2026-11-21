@@ -1765,7 +1765,7 @@ export interface components {
          * StopReason
          * @enum {string}
          */
-        RunEventStopReason: "usd_cap" | "call_cap" | "count_cap" | "input_tokens" | "active_time" | "tool_cap" | "context_limit" | "overrun" | "contract_block" | "usage_unconfirmed";
+        RunEventStopReason: "usd_cap" | "call_cap" | "count_cap" | "input_tokens" | "active_time" | "tool_cap" | "retrieval_cap" | "invalid_cap" | "context_limit" | "overrun" | "contract_block" | "usage_unconfirmed";
         /** ToolCallFinished */
         RunEventToolCallFinished: {
             /**
@@ -1975,7 +1975,7 @@ export interface components {
          * StopReason
          * @enum {string}
          */
-        StopReason: "usd_cap" | "call_cap" | "count_cap" | "input_tokens" | "active_time" | "tool_cap" | "context_limit" | "overrun" | "contract_block" | "usage_unconfirmed";
+        StopReason: "usd_cap" | "call_cap" | "count_cap" | "input_tokens" | "active_time" | "tool_cap" | "retrieval_cap" | "invalid_cap" | "context_limit" | "overrun" | "contract_block" | "usage_unconfirmed";
         /** ToolCallFinished */
         ToolCallFinished: {
             /**

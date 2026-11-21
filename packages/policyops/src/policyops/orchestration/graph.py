@@ -228,7 +228,7 @@ class InvestigationGraph:
             state = self.fitted(state, (notice,))
             if state.terminal is not None:
                 return state
-            return (failed(state, InvestigationFailed(kind="provider_error"))
+            return (stopped(state, StopReason.INVALID_CAP)
                     if state.invalid_count >= self.limits.consecutive_invalid else state)
         if isinstance(action, Say):
             if after_transfer(state.previous_step):
@@ -240,7 +240,7 @@ class InvestigationGraph:
             return stopped(state, StopReason.CALL_CAP)
         if action.query is not None:
             if state.retrieval_index >= min(self.limits.knowledge_steps, 16):
-                return stopped(state, StopReason.TOOL_CAP)
+                return stopped(state, StopReason.RETRIEVAL_CAP)
             target: Literal["retrieve", "read", "propose"] = "retrieve"
         else:
             target = "propose" if TOOL_KINDS[ToolName(action.call.name)] == ToolKind.WRITE else "read"

@@ -16,6 +16,7 @@ Run, job and event times come from the lease clock (the database in production);
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -85,6 +86,7 @@ class RunService:
     clock: LeaseClock
     catalog: RuntimeCatalog
     ledger_clock: Clock  # the service clock, for ledger rows
+    run_id_factory: Callable[[], UUID] = uuid4  # server composition only, never a request field
 
     def _ledger_now(self, _connection: Connection) -> datetime:
         return self.ledger_clock.now()
@@ -133,7 +135,7 @@ class RunService:
             now = self.clock.now(connection)
             try:
                 run = store.create_run(
-                    connection, run_id=uuid4(), workspace_id=authorized.workspace_id, case_id=case_id,
+                    connection, run_id=self.run_id_factory(), workspace_id=authorized.workspace_id, case_id=case_id,
                     case_version=case.version, graph_sha256=spec.graph_sha256, prompt_sha256=spec.prompt_sha256,
                     config_sha256=spec.config_sha256, initiated_by=authorized.session.principal_id,
                     deadline_at=now + spec.run_timeout, now=now)

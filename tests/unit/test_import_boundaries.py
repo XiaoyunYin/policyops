@@ -108,6 +108,28 @@ EVAL_COMPOSITION_FILES = {
 EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persistence.roles",
                           "policyops.retrieval.ingest"}  # G0.4 real structural-corpus integration fixture.
 
+# N2-S1 uses the workbench service and worker with its own local operator profile.
+SCENARIO_IMPORTS = {
+    "src/policyops_evals/scenarios/cli.py": {
+        "policyops.persistence.database", "policyops.persistence.roles", "policyops.providers.tokenizer",
+    },
+    "src/policyops_evals/scenarios/grading.py": {"policyops.providers.canonical"},
+    "src/policyops_evals/scenarios/recording.py": {"policyops.providers.results", "policyops.providers.transport"},
+    "src/policyops_evals/scenarios/runtime.py": {
+        "policyops.adapters.retail_client", "policyops.auth.service", "policyops.budget.config",
+        "policyops.domain.roles", "policyops.persistence.database", "policyops.persistence.records",
+        "policyops.persistence.repositories", "policyops.persistence.runs", "policyops.providers.calls",
+        "policyops.providers.contract", "policyops.providers.tokenizer", "policyops.retrieval.parse",
+        "policyops.runtime.clock", "policyops.runtime.investigation", "policyops.runtime.spec",
+        "policyops.runtime.worker", "policyops.services.runs",
+    },
+    "src/policyops_evals/scenarios/setup.py": {
+        "policyops.persistence.database", "policyops.persistence.migrate", "policyops.persistence.records",
+        "policyops.persistence.repositories", "policyops.persistence.roles", "policyops.providers.calls",
+        "policyops.providers.tokenizer", "policyops.retrieval.ingest",
+    },
+}
+
 
 @pytest.mark.parametrize("subdir", ["src", "tests"])
 def test_evaluator_application_imports_are_limited_to_composition(subdir: str) -> None:
@@ -115,6 +137,7 @@ def test_evaluator_application_imports_are_limited_to_composition(subdir: str) -
         (str(path.relative_to(REPO)), module)
         for path, module in imported_modules(EVALS / subdir)
         if module.split(".")[0] == "policyops"
+        and module not in SCENARIO_IMPORTS.get(path.relative_to(EVALS).as_posix(), ())
         and (not matches(module, EVAL_COMPOSITION_IMPORTS | (EVAL_TEST_ONLY_IMPORTS if subdir == "tests" else set())) or
              (subdir == "src" and path.relative_to(EVALS / "src" / "policyops_evals").as_posix()
               not in EVAL_COMPOSITION_FILES))

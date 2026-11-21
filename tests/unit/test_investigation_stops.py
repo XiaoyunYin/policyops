@@ -18,7 +18,7 @@ from policyops.runtime.investigation import InvestigationExecutor
 from policyops.runtime.spec import StepContext, Stopped
 from policyops_contracts.conversation import AgentLimits
 from policyops_contracts.stops import StopDetails, StopReason
-from policyops_testing.agent_fakes import ScriptedModel, calls
+from policyops_testing.agent_fakes import Scripted, ScriptedModel, calls
 from tests.unit.test_investigation_graph import ABSTAIN, RecordingSaver, graph, initial, run
 
 
@@ -52,11 +52,39 @@ def test_last_call_finalizes_but_no_tool_is_dispatched_after_cap() -> None:
     assert not actions.nodes
 
 
-def test_tool_cap_stops_before_selected_action() -> None:
-    model = ScriptedModel([calls("calculate", {"expression": "1"})])
-    state, actions = run(model, initial(tool_steps=8))
-    assert isinstance(state.terminal, InvestigationStopped) and state.terminal.details.reason == StopReason.TOOL_CAP
-    assert not actions.nodes
+@pytest.mark.parametrize("invalid_before_last,reason,reads", [
+    (False, StopReason.TOOL_CAP, 7), (True, StopReason.CALL_CAP, 6),
+])
+def test_eighth_call_selects_the_stop_before_dispatch(invalid_before_last: bool, reason: StopReason,
+                                                      reads: int) -> None:
+    script: list[Scripted] = [calls("calculate", {"expression": "2 + 2"}, f"call_{i}") for i in range(8)]
+    if invalid_before_last:
+        script[6] = calls("unknown", {}, "call_6")
+    model = ScriptedModel(script)
+    state, actions = run(model, initial(max_steps=16), limits=AgentLimits(model_calls=8, steps_per_turn=7))
+    assert isinstance(state.terminal, InvestigationStopped) and state.terminal.details.reason == reason
+    assert state.model_calls == len(model.keys) == 8
+    assert state.tool_steps == reads and actions.nodes == ["read"] * reads
+
+
+def test_retrieval_cap_stops_before_third_query() -> None:
+    model = ScriptedModel([calls("search_policy", {"query": "refund"}, f"call_{i}") for i in range(3)])
+    state, actions = run(model, limits=AgentLimits(knowledge_steps=2))
+    assert isinstance(state.terminal, InvestigationStopped)
+    assert state.terminal.details.reason == StopReason.RETRIEVAL_CAP
+    assert state.model_calls == 3 and state.retrieval_index == state.tool_steps == 2
+    assert state.retrieved_steps == (0, 1) and not actions.nodes
+
+
+def test_active_time_cap_stops_before_first_call() -> None:
+    model = ScriptedModel([])
+    build, actions = graph(model)
+    build.deadline = 0
+    envelope = GraphEnvelope.model_validate({"state": initial().model_dump(mode="json")})
+    output = asyncio.run(build.node("investigate", envelope))
+    state = state_from_json(output["state"])
+    assert isinstance(state.terminal, InvestigationStopped) and state.terminal.details.reason == StopReason.ACTIVE_TIME
+    assert not model.keys and not actions.nodes
 
 
 def test_usage_unconfirmed_report_stays_reachable_and_message_is_truthful(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -91,8 +119,8 @@ def test_stop_text_and_failure_classification_are_bounded() -> None:
     for reason in StopReason:
         details = StopDetails(reason=reason, usage_unconfirmed=reason == StopReason.USAGE_UNCONFIRMED)
         assert len(stop_text(details)) < 500
-        assert details.failed == (reason in {StopReason.CONTEXT_LIMIT, StopReason.CONTRACT_BLOCK,
-                                            StopReason.USAGE_UNCONFIRMED})
+        assert details.failed == (reason in {StopReason.INVALID_CAP, StopReason.CONTEXT_LIMIT,
+                                            StopReason.CONTRACT_BLOCK, StopReason.USAGE_UNCONFIRMED})
 
 
 def test_accounting_failure_checkpoints_stop_and_keeps_report_until_finish() -> None:

@@ -31,7 +31,7 @@ const opt = (v: unknown, test: (v: unknown) => boolean): boolean => v === undefi
 export const RUN_STATES = ["queued", "running", "waiting_input", "waiting_approval", "reconciling", "succeeded",
   "failed", "cancelled", "budget_exceeded"] as const;
 export const STOP_REASONS = ["usd_cap", "call_cap", "count_cap", "input_tokens", "active_time", "tool_cap",
-  "context_limit", "overrun", "contract_block", "usage_unconfirmed"] as const;
+  "retrieval_cap", "invalid_cap", "context_limit", "overrun", "contract_block", "usage_unconfirmed"] as const;
 const NONCOMMIT = ["upstream_rejected", "effect_mismatch", "money_unrepresentable", "version_conflict", "fenced",
   "precheck_refused", "cancelled_before_dispatch"];
 const REVIEW_REASONS = ["review_rejected", "proposal_expired", "proposal_stale", "run_deadline_exceeded",

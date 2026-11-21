@@ -30,6 +30,8 @@ _LABELS = {
     StopReason.INPUT_TOKENS: "the input token limit was reached",
     StopReason.ACTIVE_TIME: "the active investigation time limit was reached",
     StopReason.TOOL_CAP: "the tool step limit was reached",
+    StopReason.RETRIEVAL_CAP: "the policy retrieval limit was reached",
+    StopReason.INVALID_CAP: "the limit on consecutive invalid model replies was reached",
     StopReason.CONTEXT_LIMIT: "the required context does not fit",
     StopReason.OVERRUN: "provider usage exceeded its reservation",
     StopReason.CONTRACT_BLOCK: "the provider request or accounting contract was blocked",

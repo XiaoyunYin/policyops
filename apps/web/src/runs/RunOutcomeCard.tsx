@@ -9,7 +9,8 @@ const REASONS: Readonly<Record<string, string>> = {
   precheck_refused: "Execution precheck refused", cancelled_before_dispatch: "Cancelled before dispatch", fenced: "Execution fenced before committing",
 };
 const STOPS: Readonly<Record<string, string>> = { usd_cap: "Cost limit", call_cap: "Call limit", count_cap: "Count limit",
-  input_tokens: "Input token limit", active_time: "Active time limit", tool_cap: "Tool limit", context_limit: "Context limit",
+  input_tokens: "Input token limit", active_time: "Active time limit", tool_cap: "Tool limit",
+  retrieval_cap: "Policy retrieval limit", invalid_cap: "Invalid reply limit", context_limit: "Context limit",
   overrun: "Budget overrun", contract_block: "Contract validation", usage_unconfirmed: "Usage unconfirmed" };
 function action(event: EventEnvelope | undefined): { title: string; tone: string; reason?: string | undefined; operation?: string | undefined; receipt?: string | undefined } {
   const p = event?.payload;

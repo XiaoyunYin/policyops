@@ -165,6 +165,9 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="policyops-evals", description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
     groups = root.add_subparsers(dest="group", required=True)
+    from policyops_evals.scenarios.cli import add_parser as add_scenarios_parser
+
+    add_scenarios_parser(groups.add_parser("scenarios", help="Operator workbench scenario smoke"))
     # G8 dispatch stays lazy: frozen report commands must not import live providers or persistence.
     g8 = groups.add_parser("g8", help="G8 train-only cross-encoder mining")
     g8_commands = g8.add_subparsers(dest="g8_command", required=True)

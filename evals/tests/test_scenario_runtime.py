@@ -2,21 +2,27 @@
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
+from decimal import Decimal
 import json
 import os
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx2
 import pytest
 
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
+from policyops.orchestration import investigation_prompt
+from policyops.persistence.evaluation import EvaluationRepository
+from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME
 from policyops.providers.tokenizer import Tokenizer, load
+from policyops.runtime.investigation import graph_digest
 from policyops_contracts.policy import RETAIL_POLICY
 from policyops_evals.retail_sim import bootstrap, fixture, migrate
+from policyops_evals.scenarios.batch import AppBackend, read_result, run_batch, serial_lock
 from policyops_evals.scenarios.cases import SCENARIOS, Scenario
 from policyops_evals.scenarios.recording import Replay, ReplayMismatch, Tape, phase_of
-from policyops_evals.scenarios.runtime import POLICY_CORPUS, Profile, Slot, load_policy, retail_store
+from policyops_evals.scenarios.runtime import POLICY_CORPUS, Profile, Slot, Summary, load_policy, retail_store
+from policyops_evals.scenarios.study import assigned_slot, register
 from policyops_testing.app_database import AppCluster, AppDatabase
 from policyops_testing.postgres import OwnedPostgres
 from policyops_testing.retrieval_fixtures import World, luna_reply
@@ -74,8 +80,9 @@ def reference(scenario: Scenario) -> list[dict[str, object]]:
 
 
 class Script:
-    def __init__(self, tokenizer: Tokenizer, replies: Sequence[dict[str, object] | str]) -> None:
+    def __init__(self, tokenizer: Tokenizer, replies: Sequence[dict[str, object] | str], prefix: str = "s1") -> None:
         self.tokenizer, self.replies = tokenizer, iter(replies)
+        self.prefix = prefix
         self.counts: list[int] = []
         self.created = 0
 
@@ -89,7 +96,7 @@ class Script:
         # Match the existing Luna fixtures, but use a different fixed response ID per request.
         tokens = self.counts[-1]
         changes: dict[str, object] = {
-            "id": f"resp_s1_{self.created}",
+            "id": f"resp_{self.prefix}_{self.created}",
             "usage": {"input_tokens": tokens, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
                       "output_tokens": 40, "output_tokens_details": {"reasoning_tokens": 8},
                       "total_tokens": tokens + 40},
@@ -116,7 +123,7 @@ def test_scripted_workbench(profile: tuple[Profile, World], mode: str) -> None:
     label, stop, passed = "exact proposal", "waiting_approval", True
     retrieval_traces = 1
     if mode == "delivered":
-        label, stop = "no decision", "succeeded"
+        label, stop = "retrieval miss leading to an abstention", "succeeded"
     elif mode == "malformed":
         replies.insert(3, call("cancel_pending_order", "{", 5))
         label, passed = "malformed write", False
@@ -170,4 +177,50 @@ def test_scripted_replay_and_request_divergence(profile: tuple[Profile, World]) 
     runtime.run_scripted(changed, different, Tape(), mismatch)
     with pytest.raises(ReplayMismatch, match="request digest mismatch"):
         mismatch.verify()
+    no_authority_or_execution(world)
+
+
+def test_two_slot_dev_batch_recovers_after_app_completion(profile: tuple[Profile, World],
+                                                       database: tuple[AppDatabase, Path, Path],
+                                                       tmp_path: Path) -> None:
+    runtime, world = profile
+    graph, prompt = graph_digest(), investigation_prompt.digest()
+    repository = EvaluationRepository(database[0].engine(EVAL_RUNTIME))
+    document = register(repository, {"scripted": True}, 2)
+    identity, digest = UUID(document["study_id"]), document["receipt"]["sha256"]
+    cases = [
+        replace(POSITIVE, gold=replace(POSITIVE.gold, stratum="cancel", customer_world=POSITIVE.world.customer_id)),
+        replace(NEGATIVE, gold=replace(NEGATIVE.gold, stratum="delivered_refusal",
+                                       customer_world=NEGATIVE.world.customer_id)),
+    ]
+    schedule = [(case, assigned_slot(identity, world.ws, "dev", 1, case.key)) for case in cases]
+    scripts = {slot.id: Script(runtime.tokenizer, reference(case), str(index))
+               for index, (case, slot) in enumerate(schedule)}
+    started = []
+
+    def execute(case: Scenario, slot: Slot, tape: Tape) -> Summary:
+        started.append(slot.id)
+        result = runtime.run_scripted(case, slot, tape, scripts[slot.id])
+        if slot == schedule[0][1]:
+            raise KeyboardInterrupt  # Workbench committed; result JSON has not been written.
+        return result
+
+    backend = AppBackend(runtime.app, world.ws, graph, prompt, execute)
+    out = tmp_path / "dev"
+    out.mkdir()
+    max_usd = Decimal("0.024192")
+    with serial_lock(runtime.app, identity) as check_lock, pytest.raises(KeyboardInterrupt):
+        run_batch(backend, schedule, out, digest, max_usd, check_lock=check_lock)
+    before = backend.accounts([schedule[0][1]])
+    assert world.count("app.runs") == 1 and read_result(out, schedule[0][1], digest) is None
+    with serial_lock(runtime.app, identity) as check_lock:
+        recovered = run_batch(backend, schedule, out, digest, max_usd, check_lock=check_lock)
+        assert run_batch(backend, schedule, out, digest, max_usd, check_lock=check_lock) == recovered
+    assert started == [slot.id for _, slot in schedule]
+    assert world.count("app.runs") == 2 and world.count("app.action_proposals") == 1
+    assert backend.accounts([schedule[0][1]]) == before
+    first, second = (recovered[slot.id] for _, slot in schedule)
+    assert first.grade.primary and first.decision_ms is not None
+    assert second.grade.unsafe_attempt is False and second.terminal_ms is not None
+    assert all(item.ledger is not None and item.ledger.consumed_calls == 4 for item in recovered.values())
     no_authority_or_execution(world)

@@ -37,6 +37,7 @@ from policyops_evals.scenarios.cases import Gold, PolicySpan, Scenario
 from policyops_evals.scenarios.recording import ConsequentialCall, Exchange, first_consequential_call, object_from
 
 
+VERSION = "policyops.scenario-grader/v1"
 Failure = Literal["asked for confirmation", "wrong target", "wrong arguments", "premature write", "malformed write",
                   "invalid-reply stop", "cap stop", "retrieval miss leading to an abstention", "provider failure",
                   "no decision"]

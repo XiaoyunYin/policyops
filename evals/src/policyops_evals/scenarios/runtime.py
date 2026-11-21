@@ -13,7 +13,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 import httpx
 import httpx2
 from pydantic import SecretStr
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 
 from policyops.adapters.retail_client import RetailClient
 from policyops.auth.service import Authorized, SessionContext
@@ -44,6 +44,7 @@ from policyops_evals.retail_sim import fixture
 from policyops_evals.retail_sim.app import create_app
 from policyops_evals.retail_sim.auth import Key
 from policyops_evals.retail_sim.store import Store
+from policyops_evals.scenarios import in_test_context
 from policyops_evals.scenarios.cases import Scenario
 from policyops_evals.scenarios.grading import grade
 from policyops_evals.scenarios.recording import Recorder, Redactor, Tape
@@ -220,9 +221,13 @@ class Profile:
                          env="test", credential=token, redactor=slot.redactor((token,)))
 
     def _run(self, scenario: Scenario, slot: Slot, tape: Tape, transport: Callable[[], httpx2.AsyncBaseTransport],
-             *, env: str, credential: str, redactor: Redactor) -> Summary:
+             *, env: str, credential: str, redactor: Redactor, expected_generation: UUID | None = None) -> Summary:
+        if env != "test" and in_test_context():
+            raise ValueError("test scenarios require a mock provider transport")
         scenario.verify(self.retail.fixture.raw)
         generation = self.corpus_generation(slot.workspace)
+        if expected_generation is not None and generation != expected_generation:
+            raise ValueError("registered policy generation changed")
         wall, lease = SystemClock(), DatabaseLeaseClock()
         authorized = self._operator(slot, wall)
         binding = self._seed(scenario, slot, lease)
@@ -251,7 +256,7 @@ class Profile:
             if result.run_id != slot.run:
                 raise ValueError("slot run identity mismatch")
             worker = Worker(self.app, self.app, lease, catalog)
-            stop, latency = self._work(worker, slot)
+            stop, latency = self._work(worker, slot, tape, lease)
         if self.corpus_generation(slot.workspace) != generation:
             raise ValueError("policy generation changed during the slot")
         accounting = usage(self.app, slot)
@@ -297,22 +302,19 @@ class Profile:
         return CaseCustomerBinding(scope=scope, seed_id=f"retail-demo-{slot.case.int % 10_000:04d}",
                                    user_id=scenario.world.customer_id, bound_at=case.created_at)
 
-    def _work(self, worker: Worker, slot: Slot) -> tuple[str, int]:
+    def _work(self, worker: Worker, slot: Slot, tape: Tape, lease: DatabaseLeaseClock) -> tuple[str, int]:
         deadline = time.monotonic() + ACTIVE_SECONDS + 5
         while True:
             with workspace_transaction(self.app, slot.workspace) as connection:
                 run = runs.get_run(connection, slot.run)
                 if run is None:
                     raise ValueError("slot run missing")
-                if run.terminal or run.state == "waiting_approval":
-                    latency = int((run.updated_at - run.created_at).total_seconds() * 1000)
-                    for event in reversed(runs.events_after(connection, run, max(0, run.event_highwater - 32), 32)):
-                        if isinstance(event, EventEnvelope):
-                            if isinstance(event.payload, RunStopped):
-                                return event.payload.details.reason.value, latency
-                            if isinstance(event.payload, ErrorRaised):
-                                return event.payload.rule_id or event.payload.code.value, latency
-                    return run.state, latency
+                finished = terminal_outcome(connection, run)
+                if finished is not None:
+                    return finished
+                if tape.started_at is None:
+                    elapsed = (lease.now(connection) - run.created_at).total_seconds()
+                    tape.started_at = time.monotonic() - elapsed
                 job = runs.execute_job_of(connection, slot.run)
                 if job is None:
                     raise ValueError("slot execute job missing")
@@ -320,6 +322,19 @@ class Profile:
                 raise ValueError("slot worker did not reach a stop")
             if not worker.process(job.id, slot.workspace):
                 time.sleep(0.25)
+
+
+def terminal_outcome(connection: Connection, run: runs.Run) -> tuple[str, int] | None:
+    if not run.terminal and run.state != "waiting_approval":
+        return None
+    latency = int((run.updated_at - run.created_at).total_seconds() * 1000)
+    for event in reversed(runs.events_after(connection, run, max(0, run.event_highwater - 32), 32)):
+        if isinstance(event, EventEnvelope):
+            if isinstance(event.payload, RunStopped):
+                return event.payload.details.reason.value, latency
+            if isinstance(event.payload, ErrorRaised):
+                return event.payload.rule_id or event.payload.code.value, latency
+    return run.state, latency
 
 
 def retail_store(engine: Engine, root: Path) -> Store:

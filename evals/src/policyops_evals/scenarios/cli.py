@@ -1,15 +1,26 @@
-"""Explicit paid entrypoint. The scripted and replay paths construct only mock transports."""
+"""Operator entry points for N2 setup, registration, dev execution and reporting."""
+
+from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
+from decimal import Decimal
 import json
 import os
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from policyops_evals.scenarios import SMOKE_DSN_MAX_BYTES
+from policyops_evals.scenarios import SMOKE_DSN_MAX_BYTES, Refused, in_test_context, read_bounded
+
+
+if TYPE_CHECKING:
+    from sqlalchemy import Engine
+
+    from policyops_evals.scenarios.runtime import Profile
 
 
 def add_parser(group: argparse.ArgumentParser) -> None:
@@ -43,6 +54,26 @@ def add_parser(group: argparse.ArgumentParser) -> None:
     smoke.add_argument("--allow-paid", action="store_true")
     smoke.set_defaults(handler=command_smoke)
 
+    registration = commands.add_parser("register", help="Register the frozen N2 study and save its receipt")
+    run = commands.add_parser("run", help="Run a registered dev repeat")
+    report = commands.add_parser("report", help="Summarize the two registered dev repeats offline")
+    for command in (registration, run, report):
+        command.add_argument("--manifests", type=Path, required=True, help="directory with the four frozen manifests")
+        command.add_argument("--fixture-root", type=Path, required=True)
+        command.add_argument("--policy-file", type=Path, required=True)
+        command.add_argument("--out", type=Path, required=True, help="registered private output outside the repository")
+    registration.add_argument("--dsn-file", type=Path, required=True)
+    registration.add_argument("--workspace", type=UUID, required=True)
+    registration.set_defaults(handler=command_register)
+    run.add_argument("--dsn-file", type=Path, required=True)
+    run.add_argument("--split", choices=("dev", "held-out"), required=True)
+    run.add_argument("--repeat", type=int, choices=(1, 2), required=True)
+    run.add_argument("--max-usd", type=Decimal, required=True, help="aggregate cost ceiling for the selected repeat")
+    run.add_argument("--pilot", action="store_true")
+    run.add_argument("--allow-paid", action="store_true")
+    run.set_defaults(handler=command_run)
+    report.set_defaults(handler=command_report)
+
 
 def command_setup(args: argparse.Namespace) -> int:
     from policyops_evals.scenarios.setup import SetupRefused, run_setup
@@ -64,81 +95,93 @@ def command_smoke(args: argparse.Namespace) -> int:
         return _run_smoke(args)
     except Exception as error:
         # Provider and driver errors may carry raw requests, endpoints or connection credentials.
-        print(f"scenario smoke stopped ({type(error).__name__})", file=sys.stderr)
-        return 1
+        return _error("smoke", error)
 
 
-def _run_smoke(args: argparse.Namespace) -> int:
-    if (not args.allow_paid or "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
-            or os.environ.get("POLICYOPS_ENV") == "test"):
-        print("scenario smoke requires operator execution with --allow-paid", file=sys.stderr)
-        return 1
+def _require_paid(allow_paid: bool) -> None:
+    if not allow_paid or in_test_context():
+        raise Refused("scenario requires operator execution outside tests with --allow-paid")
 
-    import httpx2
-    from loguru import logger
+
+@contextmanager
+def _operator_engines(dsn_file: Path) -> Iterator[tuple[dict[str, Engine], tuple[str, ...]]]:
     import psycopg
     from psycopg.conninfo import conninfo_to_dict
-    from sqlalchemy import Engine
 
     from policyops.persistence.database import make_engine, verify_runtime_role
     from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
-    from policyops.providers.tokenizer import load
-    from policyops_evals.cli import outside_repository
     from policyops_evals.retail_sim.bootstrap import RUNTIME as RETAIL_RUNTIME
-    from policyops_evals.scenarios.cases import SCENARIOS
-    from policyops_evals.scenarios.recording import Tape
-    from policyops_evals.scenarios.runtime import (
-        SMOKE_CAP,
-        Profile,
-        configuration,
-        load_policy,
-        preflight,
-        retail_store,
-        smoke_slot,
-        usage,
-    )
 
-    preflight(configuration(), len(SCENARIOS))
-    with args.dsn_file.open("rb") as handle:
-        raw = handle.read(SMOKE_DSN_MAX_BYTES + 1)
-    if len(raw) > SMOKE_DSN_MAX_BYTES:
-        raise ValueError("DSN file too large")
-    dsns = json.loads(raw)
+    dsns = json.loads(read_bounded(dsn_file, SMOKE_DSN_MAX_BYTES))
     roles = {"app": APP_RUNTIME, "auth": AUTH_RUNTIME, "retail": RETAIL_RUNTIME}
     if not isinstance(dsns, dict) or set(dsns) != set(roles):
-        raise ValueError("invalid DSN file roles")
+        raise Refused("invalid private scenario DSN roles")
     redactions: list[str] = []
-    for name, role in roles.items():
-        dsn = dsns[name]
-        if not isinstance(dsn, str) or (parts := conninfo_to_dict(dsn)).get("user") != role:
-            raise ValueError("DSN file role mismatch")
-        redactions.append(dsn)
-        password = parts.get("password")
-        if isinstance(password, str):
-            redactions.append(password)
-    trace_dir = outside_repository(str(args.trace_dir)) / str(args.workspace)
-    policy, tokenizer = load_policy(args.policy_file), load()
 
     def engine_for(dsn: str) -> Engine:
         return make_engine(lambda: psycopg.connect(dsn, connect_timeout=5))
 
     with ExitStack() as stack:
         engines = {}
-        for name in roles:
-            engine = engine_for(dsns[name])
+        for role, expected in roles.items():
+            dsn = dsns[role]
+            if not isinstance(dsn, str) or (parts := conninfo_to_dict(dsn)).get("user") != expected:
+                raise Refused("scenario DSN role mismatch")
+            redactions.append(dsn)
+            if isinstance(password := parts.get("password"), str):
+                redactions.append(password)
+            engine = engine_for(dsn)
             stack.callback(engine.dispose)
-            engines[name] = engine
-        for name in ("app", "auth"):
-            verify_runtime_role(engines[name], roles[name])
+            engines[role] = engine
+        for role in ("app", "auth"):
+            verify_runtime_role(engines[role], roles[role])
+        yield engines, tuple(redactions)
+
+
+@contextmanager
+def _operator_profile(args: argparse.Namespace) -> Iterator[tuple[Profile, tuple[str, ...]]]:
+    from loguru import logger
+
+    from policyops.providers.tokenizer import load
+    from policyops_evals.scenarios.runtime import Profile, load_policy, retail_store
+
+    policy, tokenizer = load_policy(args.policy_file), load()
+    with _operator_engines(args.dsn_file) as (engines, redactions):
         logger.disable("tau2")
         store = retail_store(engines["retail"], args.fixture_root)
-        profile = Profile(engines["app"], engines["auth"], store, policy, tokenizer)
+        yield Profile(engines["app"], engines["auth"], store, policy, tokenizer), redactions
+
+
+def _credential() -> str:
+    value = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not value:
+        raise Refused("OpenAI credential missing")
+    return value
+
+
+def _run_smoke(args: argparse.Namespace) -> int:
+    _require_paid(args.allow_paid)
+
+    import httpx2
+
+    from policyops_evals.cli import outside_repository
+    from policyops_evals.scenarios.cases import SCENARIOS
+    from policyops_evals.scenarios.recording import Tape
+    from policyops_evals.scenarios.runtime import (
+        SMOKE_CAP,
+        configuration,
+        preflight,
+        smoke_slot,
+        usage,
+    )
+
+    preflight(configuration(), len(SCENARIOS))
+    trace_dir = outside_repository(str(args.trace_dir)) / str(args.workspace)
+    with _operator_profile(args) as (profile, redactions):
         profile.corpus_generation(args.workspace)
         for scenario in SCENARIOS:
-            scenario.verify(store.fixture.raw)
-        credential = os.environ.get("OPENAI_API_KEY", "").strip()
-        if not credential:
-            raise ValueError("OpenAI credential missing")
+            scenario.verify(profile.retail.fixture.raw)
+        credential = _credential()
         slots = [smoke_slot(args.workspace, scenario) for scenario in SCENARIOS]
         for slot, scenario in zip(slots, SCENARIOS, strict=True):
             accounts = [usage(profile.app, assigned) for assigned in slots]
@@ -156,3 +199,161 @@ def _run_smoke(args: argparse.Namespace) -> int:
             if usage(profile.app, slot).blocked:
                 raise ValueError("smoke ledger blocked")
     return 0
+
+
+def _error(command: str, error: Exception) -> int:
+    # DB, provider and validation diagnostics can contain private inputs.
+    detail = str(error) if isinstance(error, Refused) else type(error).__name__
+    print(f"scenario {command} stopped ({detail})", file=sys.stderr)
+    return 1
+
+
+def command_register(args: argparse.Namespace) -> int:
+    from policyops.persistence.evaluation import environment_repository
+    from policyops.providers.tokenizer import load
+    from policyops_evals.scenarios.runtime import active_policy_generation, load_policy
+    from policyops_evals.scenarios.study import (
+        load_inputs,
+        private_root,
+        register,
+        registration_payload,
+        write_registration,
+    )
+
+    try:
+        out = private_root(args.out)
+        inputs = load_inputs(args.manifests, args.fixture_root, args.policy_file)
+        policy, tokenizer = load_policy(args.policy_file), load()
+        with _operator_engines(args.dsn_file) as (engines, _):
+            generation = active_policy_generation(engines["app"], args.workspace, policy, tokenizer)
+        if generation is None:
+            raise Refused("the registered workspace needs a digest-matched active corpus")
+        repository = environment_repository()
+        if repository is None:
+            raise Refused("POLICYOPS_EVAL_DATABASE_DSN is required for registration")
+        try:
+            payload = registration_payload(inputs, args.workspace, generation, tokenizer.identity_sha256, out)
+            document = register(repository, payload, len(inputs.dev))
+            write_registration(out, document)
+        finally:
+            repository.engine.dispose()
+        print(json.dumps({"study_id": document["study_id"], "sha256": document["receipt"]["sha256"],
+                          "created_at": document["receipt"]["created_at"]}), flush=True)
+        return 0
+    except Exception as error:
+        return _error("register", error)
+
+
+def command_run(args: argparse.Namespace) -> int:
+    try:
+        return _run_batch(args)
+    except Exception as error:
+        return _error("run", error)
+
+
+def _run_batch(args: argparse.Namespace) -> int:
+    from policyops_evals.scenarios.study import require_dev
+
+    require_dev(args.split)
+    _require_paid(args.allow_paid)
+    if args.pilot and args.repeat != 1:
+        raise Refused("the pilot is the first 16 slots of dev repeat 1")
+
+    import httpx2
+
+    from policyops.persistence.evaluation import environment_repository
+    from policyops_evals.scenarios.batch import AppBackend, preflight, run_batch, serial_lock
+    from policyops_evals.scenarios.cases import Scenario
+    from policyops_evals.scenarios.recording import Tape
+    from policyops_evals.scenarios.reporting import collect, gate
+    from policyops_evals.scenarios.runtime import Slot, Summary
+    from policyops_evals.scenarios.study import (
+        PILOT_SLOTS,
+        assigned_slot,
+        load_inputs,
+        private_root,
+        read_registration,
+        registration_id,
+    )
+
+    preflight(args.max_usd, [], 0)
+    out = private_root(args.out)
+    inputs = load_inputs(args.manifests, args.fixture_root, args.policy_file)
+    study_id, receipt = read_registration(out, inputs)
+    bound = receipt["payload"]
+    digest = receipt["sha256"]
+    workspace = UUID(bound["workspace"])
+    generation = UUID(bound["corpus_generation"])
+    repository = environment_repository()
+    if repository is None:
+        raise Refused("POLICYOPS_EVAL_DATABASE_DSN is required to verify registration")
+    try:
+        config = repository.run_configuration(registration_id(study_id))
+        if config is None or config.get("registration") != receipt or repository.study_manifest(study_id) != digest:
+            raise Refused("database registration receipt mismatch")
+    finally:
+        repository.engine.dispose()
+
+    cases = inputs.dev[:PILOT_SLOTS] if args.pilot else inputs.dev
+    schedule = [(case, assigned_slot(study_id, workspace, args.split, args.repeat, case.key)) for case in cases]
+    pilot_frame = [(args.repeat, case, slot) for case, slot in schedule]
+    credential = _credential()
+    with _operator_profile(args) as (profile, redactions), serial_lock(profile.app, study_id) as check_lock:
+        if profile.tokenizer.identity_sha256 != bound["tokenizer_sha256"]:
+            raise Refused("registered tokenizer digest changed")
+        if profile.corpus_generation(workspace) != generation:
+            raise Refused("registered policy corpus generation changed")
+
+        def execute(case: Scenario, slot: Slot, tape: Tape) -> Summary:
+            return profile._run(
+                case, slot, tape, lambda: httpx2.AsyncHTTPTransport(trust_env=False, retries=0),
+                env="local", credential=credential, redactor=slot.redactor((credential, *redactions)),
+                expected_generation=generation,
+            )
+
+        backend = AppBackend(profile.app, workspace, bound["graph_sha256"], bound["prompt_sha256"], execute)
+        try:
+            results = run_batch(backend, schedule, out, digest, args.max_usd, check_lock=check_lock)
+        except Refused:
+            if args.pilot:
+                saved, _ = collect(out, pilot_frame, digest)
+                print(json.dumps({"pilot_gate": gate(pilot_frame, saved)}, sort_keys=True), flush=True)
+            raise
+        if args.pilot:
+            verdict = gate(pilot_frame, results)
+            print(json.dumps({"pilot_gate": verdict}, sort_keys=True), flush=True)
+            return int(verdict["verdict"] != "proceed")
+        print(json.dumps({"repeat": args.repeat, "recorded": len(results), "scheduled": len(schedule)}), flush=True)
+        return 0
+
+
+def command_report(args: argparse.Namespace) -> int:
+    from policyops_evals.scenarios.reporting import collect, markdown, report
+    from policyops_evals.scenarios.study import (
+        REPEATS,
+        assigned_slot,
+        atomic_write,
+        load_inputs,
+        private_child,
+        private_root,
+        read_registration,
+    )
+
+    try:
+        out = private_root(args.out)
+        inputs = load_inputs(args.manifests, args.fixture_root, args.policy_file)
+        study_id, receipt = read_registration(out, inputs)
+        workspace = UUID(receipt["payload"]["workspace"])
+        schedule = [(repeat, case, assigned_slot(study_id, workspace, "dev", repeat, case.key))
+                    for repeat in REPEATS for case in inputs.dev]
+        digest = receipt["sha256"]
+        results, pending = collect(out, schedule, digest)
+        summary = report(schedule, results, pending, digest=digest)
+        encoded = json.dumps(summary, sort_keys=True, allow_nan=False)
+        if len(encoded.encode()) > 128 * 1024:
+            raise Refused("scenario report exceeds its size bound")
+        atomic_write(private_child(out, "summary.md"), markdown(summary).encode())
+        print(encoded, flush=True)
+        return 0
+    except Exception as error:
+        return _error("report", error)

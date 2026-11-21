@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import re
 from tempfile import NamedTemporaryFile
@@ -128,6 +129,7 @@ class Exchange(BaseModel):
     response_sha256: str | None = None
     status: int | None = None
     elapsed_ms: int | None = None
+    slot_elapsed_ms: int | None = None
     complete: bool = False
 
 
@@ -137,6 +139,8 @@ class Tape:
     def __init__(self, directory: Path | None = None) -> None:
         self.directory = directory
         self.records: list[Exchange] = []
+        self.started_at: float | None = None
+        self.write_failed = False
         if directory is not None:
             directory.mkdir(parents=True, exist_ok=True)
             paths = sorted(directory.glob("[0-9][0-9].json"))
@@ -152,17 +156,29 @@ class Tape:
                 self.records.append(exchange)
 
     def save(self, exchange: Exchange) -> None:
+        try:
+            self._save(exchange)
+        except Exception:
+            # The provider adapter may classify a disk error as a transport failure.
+            self.write_failed = True
+            raise
+
+    def _save(self, exchange: Exchange) -> None:
         if exchange.index >= MAX_EXCHANGES:
             raise ValueError("cassette exchange limit")
         if self.directory is not None:
             target = self.directory / f"{exchange.index:02}.json"
-            with NamedTemporaryFile(mode="wb", dir=self.directory, delete=False) as handle:
-                temporary = Path(handle.name)
-                handle.write(exchange.model_dump_json().encode())
+            temporary: Path | None = None
             try:
+                with NamedTemporaryFile(mode="wb", dir=self.directory, delete=False) as handle:
+                    temporary = Path(handle.name)
+                    handle.write(exchange.model_dump_json().encode())
+                    handle.flush()
+                    os.fsync(handle.fileno())
                 temporary.replace(target)
             finally:
-                temporary.unlink(missing_ok=True)
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
         if exchange.index == len(self.records):
             self.records.append(exchange)
         else:
@@ -222,9 +238,12 @@ class Recorder(httpx2.AsyncBaseTransport):
 
         def finish(body: bytes | None, complete: bool) -> None:
             redacted = self.redactor.body(body) if body is not None else None
+            finished = monotonic()
+            slot_start = self.tape.started_at
             self.tape.save(exchange.model_copy(update={
                 "response": redacted, "response_sha256": digest(redacted), "complete": complete,
-                "status": response.status_code, "elapsed_ms": int((monotonic() - started) * 1000),
+                "status": response.status_code, "elapsed_ms": int((finished - started) * 1000),
+                "slot_elapsed_ms": int((finished - slot_start) * 1000) if slot_start is not None else None,
             }))
 
         if response.headers.get("content-encoding", "identity").lower() != "identity":

@@ -246,7 +246,7 @@ class Intent:
 
 CountState = Literal["none", "claimed", "admitted", "rejected", "failed"]
 DIAGNOSTIC_FIELDS = ("input_tokens", "cache_read", "cache_creation", "cache_creation_5m", "cache_creation_1h",
-                     "output", "reasoning", "total")
+                     "cache_creation_30m", "cache_creation_12h", "output", "reasoning", "total")
 
 
 @dataclass(frozen=True)

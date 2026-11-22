@@ -29,10 +29,12 @@ class Arm(StrEnum):
     WITHOUT_PROMPT = "c-minus-f"
     WITHOUT_BM25 = "c-minus-d"
     REVISION = "tool-contract-v1r1"
+    A0 = "A0"
+    A1 = "A1"
 
     @property
     def profile(self) -> InvestigationProfile:
-        if self is Arm.REVISION:
+        if self in (Arm.REVISION, Arm.A0, Arm.A1):
             return InvestigationProfile.TOOL_CONTRACT_V1R1
         return (InvestigationProfile.BASELINE if self is Arm.BASELINE
                 else InvestigationProfile.TOOL_CONTRACT_V1)

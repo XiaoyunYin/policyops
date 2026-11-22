@@ -177,6 +177,18 @@ SCENARIO_IMPORTS = {
                                     "policyops.persistence"},
     "tests/test_scenario_lock.py": {"policyops.orchestration", "policyops.orchestration.profile",
                                     "policyops.providers.tokenizer", "policyops.providers.tool_diagnostics"},
+    # N7 composes the locked workbench with cache-aware reservations and audits live app ledger rows.
+    "src/policyops_evals/scenarios/n7.py": {
+        "policyops.budget.prices", "policyops.orchestration", "policyops.persistence.budget",
+        "policyops.persistence.evaluation", "policyops.persistence.records", "policyops.providers.canonical",
+        "policyops.providers.serialize", "policyops.providers.tokenizer", "policyops.retrieval.parse",
+    },
+    "src/policyops_evals/scenarios/n7_cli.py": {"policyops.persistence.evaluation", "policyops.runtime.spec"},
+    "src/policyops_evals/scenarios/n7_report.py": {
+        "policyops.budget.config", "policyops.orchestration.minimal", "policyops.persistence.database",
+        "policyops.providers.canonical",
+    },
+    "tests/test_scenario_n7.py": {"policyops.orchestration", "policyops.providers.serialize"},
 }
 
 

@@ -102,6 +102,7 @@ class AppBackend:
     prompt_sha256: str
     execute_slot: Callable[[Scenario, Slot, Tape], Summary]
     config_for: Callable[[Slot], str | None] | None = None
+    cache_mode: str = "none"
 
     def execute(self, scenario: Scenario, slot: Slot, tape: Tape) -> Summary:
         return self.execute_slot(scenario, slot, tape)
@@ -125,7 +126,7 @@ class AppBackend:
 
     def accounts(self, slots: Sequence[Slot]) -> dict[UUID, RunState]:
         by_run = {slot.run: slot for slot in slots}
-        config = configuration()
+        config = configuration(self.cache_mode)
         reservation = config.reservation("agent")
         with workspace_transaction(self.engine, self.workspace) as connection:
             rows = connection.execute(text("""
@@ -146,12 +147,14 @@ class AppBackend:
                         COALESCE(sum(reserved_usd) FILTER
                             (WHERE state IN ('reserved', 'dispatching', 'unresolved')), 0) AS held,
                         bool_and(actor = 'agent' AND model = :model AND price_revision = :price
-                            AND config_sha256 = :config AND reserved_usd = :request_usd) AS bound
+                            AND config_sha256 = :config AND cache_mode = :cache_mode
+                            AND reserved_usd = :request_usd) AS bound
                     FROM app.usage_attempts WHERE workspace_id = s.workspace_id AND scope_id = s.id
                 ) a
                 WHERE r.workspace_id = :workspace AND r.id = ANY(:ids)
             """), {"ids": list(by_run), "workspace": self.workspace, "model": reservation.model,
                    "price": reservation.price_revision, "config": reservation.config_sha256,
+                   "cache_mode": reservation.cache_mode,
                    "request_usd": reservation.worst_usd, "check_config": self.config_for is not None}).mappings().all()
 
         result = {}

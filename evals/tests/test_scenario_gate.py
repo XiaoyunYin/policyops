@@ -7,8 +7,10 @@ With emission disabled, the test compares against the lock and writes no file.
 
 from dataclasses import replace
 from functools import partial
+from pathlib import Path
 from uuid import uuid4
 
+import httpx2
 from pydantic import TypeAdapter
 import pytest
 
@@ -21,7 +23,9 @@ from policyops.persistence.database import workspace_transaction
 from policyops_contracts.agent import AgentStep, ToolCallStep
 from policyops_contracts.conversation import AgentToolCall, ToolResult
 from policyops_contracts.retail import CancelPendingOrder
+from policyops_evals.scenarios import Refused, n7, n7_report
 from policyops_evals.scenarios.arms import Arm
+from policyops_evals.scenarios.batch import AppBackend
 from policyops_evals.scenarios.cases import POSITIVES, STRATA, Scenario, Stratum
 from policyops_evals.scenarios.generator import generate_dev
 from policyops_evals.scenarios.grading import Failure, Grade, grade_slot
@@ -34,7 +38,8 @@ from policyops_evals.scenarios.lock import (
     read_lock,
     verify_request_freeze,
 )
-from policyops_evals.scenarios.recording import Replay, Tape, digest, first_consequential_call
+from policyops_evals.scenarios.n3 import Assignment
+from policyops_evals.scenarios.recording import Replay, Tape, digest, first_consequential_call, phase_of
 from policyops_evals.scenarios.runtime import Profile, Slot, Summary
 from policyops_testing.postgres import OwnedPostgres
 from policyops_testing.retrieval_fixtures import World
@@ -110,6 +115,63 @@ def _record(runtime: Profile, world: World, case: Scenario, selected: Investigat
     summary = runtime.run_scripted(case, slot, recording, script, profile=selected)
     assert summary.calls == script.created == len(script.counts)
     return slot, recording, summary
+
+
+def test_n7_cache_arms_reconcile_live_rows_and_measure_persisted_proposal(
+        dev_cases: dict[Stratum, Scenario], profile: tuple[Profile, World], tmp_path: Path,
+) -> None:
+    runtime, world = profile
+    case = dev_cases["cancel"]
+    inputs = n7.inputs((case,), runtime.app, runtime.policy, runtime.tokenizer)
+    items = [Assignment(arm, 1, case, Slot(world.ws, uuid4())) for arm in n7.ARMS]
+    tapes = {}
+    original = {}
+    for item in items:
+        script = Script(runtime.tokenizer, oracle, prefix=item.slot.id.hex)
+
+        def tape_reply(request: httpx2.Request, arm: Arm = item.arm, script: Script = script) -> httpx2.Response:
+            response = script(request)
+            if phase_of(request) == "count" or arm is Arm.A0:
+                return response
+            raw = response.json()
+            prompt = script.counts[-1]
+            reads = min(prompt, script.counts[-2]) if len(script.counts) >= 2 else 0
+            writes = prompt - reads
+            raw["usage"]["input_tokens_details"] = {
+                "cached_tokens": reads, "cache_write_tokens": writes,
+                "cache_write_tokens_details": {"ttl_30m_tokens": writes, "ttl_12h_tokens": 0},
+            }
+            return httpx2.Response(200, json=raw)
+
+        tape = Tape(tmp_path / item.slot.id.hex)
+        tapes[item.arm] = tape
+        summary = runtime.run_scripted(case, item.slot, tape, tape_reply, profile=n7.PROFILE,
+                                       cache_mode=n7.MODES[item.arm])
+        assert summary.stop_reason == "waiting_approval"
+        original[item.arm] = summary.settled_usd
+
+    attempts, runs = n7_report.fetch(runtime.app, world.ws, items)
+
+    def unused(*_: object) -> Summary:
+        raise AssertionError("audit must never dispatch")
+
+    for item in items:
+        tape = tapes[item.arm]
+        audit = n7_report.audit(item, tape.records, attempts[item.slot.id], inputs.requests[item.arm][case.key])
+        assert all(audit.checks.values()) and audit.settled == original[item.arm]
+        decision = first_consequential_call(tape.records)
+        assert decision is not None
+        response_ms = tape.records[decision.exchange_index].slot_elapsed_ms
+        proposal = runs[item.slot.id]
+        assert response_ms is not None and proposal.proposal_ms is not None and proposal.proposal_ms >= response_ms
+        assert proposal.trimmed_pairs == proposal.trimmed_notices == 0
+        app = AppBackend(runtime.app, world.ws, inputs.identity.graph_sha256, inputs.identity.prompt_sha256,
+                         unused, cache_mode=n7.MODES[item.arm])
+        assert app.accounts([item.slot])[item.slot.id].ledger is not None
+        if item.arm is Arm.A1:
+            with pytest.raises(Refused, match="registered model and caps"):
+                replace(app, cache_mode="none").accounts([item.slot])
+    no_authority_or_execution(world)
 
 
 def test_scripted_strata_and_request_freeze(postgres: OwnedPostgres, tmp_path_factory: pytest.TempPathFactory,

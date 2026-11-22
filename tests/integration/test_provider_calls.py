@@ -181,7 +181,9 @@ def test_a_valid_answer_counts_once_sends_once_and_settles_the_exact_bill(db: Ap
 
 def test_a_known_cache_violation_settles_blocks_and_hands_on_no_payload(db: AppDatabase) -> None:
     books, binding, run = setup(db)
-    usage = {"input_tokens": 1000, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 200},
+    usage = {"input_tokens": 1000, "input_tokens_details": {
+        "cached_tokens": 0, "cache_write_tokens": 200,
+        "cache_write_tokens_details": {"ttl_30m_tokens": 200, "ttl_12h_tokens": 0}},
              "output_tokens": 40, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 1040}
     routes = Routes([tokens(1200)], [luna('{"decision": "approve"}', usage=usage)])
     report = go(books, binding, routes)
@@ -220,6 +222,28 @@ def test_missing_usage_keeps_the_hold_without_a_block(db: AppDatabase) -> None:
     assert result_of(report).outcome == "structured"  # the answer is usable; its bill is unknown
     assert attempts(db, run) == [("decide.r0.a0", "unresolved", "admitted", None, None)]
     assert run_scope(db, run)[1] == Decimal("0.002624")  # the conservative hold stays
+
+
+@pytest.mark.parametrize(("reads", "writes", "short", "long", "state", "block", "usd"), [
+    (0, 200, 200, 0, "settled", None, Decimal("0.000125")),
+    (0, 200, 150, 50, "settled", "cache_ttl_unrequested", Decimal("0.00013125")),
+    (0, 200, 190, 0, "unresolved", "cache_split_mismatch", None),
+    (801, 200, 200, 0, "unresolved", "usage_inconsistent", None),
+])
+def test_malformed_payload_prices_only_consistent_cache_usage(
+        db: AppDatabase, reads: int, writes: int, short: int, long: int,
+        state: str, block: str | None, usd: Decimal | None,
+) -> None:
+    config = Configuration(actors={**DEFAULT_ACTORS, "agent": ChatActor("agent", "gpt-6-luna", "low", "30m")})
+    books, binding, run = setup(db, config)
+    usage = {"input_tokens": 1000, "input_tokens_details": {
+        "cached_tokens": reads, "cache_write_tokens": writes,
+        "cache_write_tokens_details": {"ttl_30m_tokens": short, "ttl_12h_tokens": long}},
+        "output_tokens": 40, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 1040}
+    result = result_of(go(books, binding, Routes([tokens(1000)], [luna("", usage=usage, output=1)])))
+    assert result.outcome == ("contract_gap" if block else "failed")
+    assert attempts(db, run) == [("decide.r0.a0", state, "admitted", block, usd)]
+    assert run_scope(db, run)[1] == (config.reservation("agent").worst_usd if usd is None else 0)
 
 
 def test_a_token_limit_breach_below_the_dollar_hold_settles_and_stops(db: AppDatabase) -> None:

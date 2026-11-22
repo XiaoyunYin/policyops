@@ -94,6 +94,29 @@ def add_parser(group: argparse.ArgumentParser) -> None:
             subcommand.add_argument("--allow-paid", action="store_true")
         subcommand.set_defaults(handler=command_n3)
 
+    n7 = commands.add_parser("n7", help="Dev-only implicit caching study")
+    n7_commands = n7.add_subparsers(dest="n7_command", required=True)
+    for name in ("register", "pilot", "run", "report"):
+        command = n7_commands.add_parser(name)
+        for option in ("dsn-file", "manifests", "fixture-root", "policy-file", "out"):
+            command.add_argument(f"--{option}", type=Path, required=True)
+        if name == "register":
+            command.add_argument("--workspace", type=UUID, required=True)
+        if name in {"pilot", "run"}:
+            command.add_argument("--allow-paid", action="store_true")
+        if name == "report":
+            command.add_argument("--phase", choices=("pilot", "study"), required=True)
+        command.set_defaults(handler=command_n7)
+
+
+def command_n7(args: argparse.Namespace) -> int:
+    try:
+        from policyops_evals.scenarios.n7_cli import run
+
+        return run(args)
+    except Exception as error:
+        return _error("n7 " + args.n7_command, error)
+
 
 def command_n3(args: argparse.Namespace) -> int:
     try:

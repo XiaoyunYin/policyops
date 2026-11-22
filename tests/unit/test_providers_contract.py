@@ -290,7 +290,8 @@ def openai_response(**changes: Any) -> dict[str, Any]:
     return {"id": "resp_1", "model": "gpt-6-luna", "status": "completed", "service_tier": "default",
             "output": [{"type": "message", "role": "assistant",
                         "content": [{"type": "output_text", "text": "Done."}]}],
-            "usage": {"input_tokens": 1000, "input_tokens_details": {"cached_tokens": 400, "cache_write_tokens": 200},
+            "usage": {"input_tokens": 1000, "input_tokens_details": {
+                "cached_tokens": 0, "cache_write_tokens": 0},
                       "output_tokens": 120, "output_tokens_details": {"reasoning_tokens": 20},
                       "total_tokens": 1120}} | changes
 
@@ -305,12 +306,47 @@ def anthropic_message(**changes: Any) -> dict[str, Any]:
 
 def test_oracle_1_openai_total_includes_cache_and_output_includes_reasoning() -> None:
     cached = Configuration(actors={**DEFAULT_ACTORS, "agent": ChatActor("agent", "gpt-6-luna", "low", "30m")})
-    evidence = openai_evidence(openai_response(), prepared(configuration=cached), "30m")
+    usage = openai_response()["usage"] | {"input_tokens_details": {
+        "cached_tokens": 400, "cache_write_tokens": 200,
+        "cache_write_tokens_details": {"ttl_30m_tokens": 200, "ttl_12h_tokens": 0}}}
+    response = openai_response(usage=usage)
+    evidence = openai_evidence(response, prepared(configuration=cached), "30m")
     assert evidence.usage == Usage(1000, cache_read=400, cache_writes={"30m": 200}, output=120, reasoning=20)
     assert evidence.block is None
     assert cost(SNAPSHOT_2026_11_05.price("gpt-6-luna"), evidence.usage).usd == Decimal("0.000129")
     # The same writes under cache none are a known mismatch: the exact bill settles and progress is blocked.
-    assert openai_evidence(openai_response(), prepared(), "none").block == "cache_write_under_none"
+    assert openai_evidence(response, prepared(), "none").block == "cache_write_under_none"
+
+
+@pytest.mark.parametrize(("writes", "split", "reads", "expected"), [
+    (200, {"ttl_30m_tokens": 150, "ttl_12h_tokens": 50}, 400, "cache_ttl_unrequested"),
+    (200, {"ttl_30m_tokens": 150, "ttl_12h_tokens": 49}, 400, "cache_split_mismatch"),
+    (200, None, 400, "cache_ttl_unknown"),
+    (200, {"ttl_30m_tokens": 200, "ttl_12h_tokens": 0}, 801, "usage_inconsistent"),
+    (0, {"ttl_30m_tokens": 1, "ttl_12h_tokens": 0}, 0, "cache_split_mismatch"),
+])
+def test_openai_cache_buckets(
+        writes: int, split: dict[str, int] | None, reads: int, expected: str,
+) -> None:
+    usage = openai_response()["usage"] | {"input_tokens_details": {
+        "cached_tokens": reads, "cache_write_tokens": writes, "cache_write_tokens_details": split}}
+    cached = Configuration(actors={**DEFAULT_ACTORS, "agent": ChatActor("agent", "gpt-6-luna", "low", "30m")})
+    evidence = openai_evidence(openai_response(usage=usage), prepared(configuration=cached), "30m")
+    assert evidence.block == expected
+    if expected == "cache_ttl_unrequested":
+        assert evidence.usage == Usage(1000, cache_read=400, cache_writes={"30m": 150, "12h": 50},
+                                       output=120, reasoning=20)
+        assert cost(SNAPSHOT_2026_11_05.price("gpt-6-luna"), evidence.usage).usd == Decimal("0.00013525")
+    else:
+        assert evidence.usage is None
+        assert evidence.diagnostic is not None
+
+
+def test_openai_cache_read_under_none_has_a_known_bill() -> None:
+    usage = openai_response()["usage"] | {"input_tokens_details": {"cached_tokens": 400, "cache_write_tokens": 0}}
+    evidence = openai_evidence(openai_response(usage=usage), prepared(), "none")
+    assert evidence.block == "cache_read_under_none"
+    assert evidence.usage == Usage(1000, cache_read=400, output=120, reasoning=20)
 
 
 def test_oracle_2_anthropic_total_adds_reads_and_creation_and_checks_the_split() -> None:

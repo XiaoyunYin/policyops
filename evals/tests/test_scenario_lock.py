@@ -15,8 +15,8 @@ from policyops.providers.tokenizer import Tokenizer, load
 from policyops.providers.tool_diagnostics import NOTICE_TABLE
 from policyops_contracts.conversation import PolicyContext
 from policyops_contracts.policy import RETAIL_POLICY
-from policyops_evals.scenarios import n3
-from policyops_evals.scenarios.cases import STRATA, Stratum
+from policyops_evals.scenarios import n3, n7
+from policyops_evals.scenarios.cases import SCENARIOS, STRATA, Stratum
 from policyops_evals.scenarios.generator import REPO
 from policyops_evals.scenarios.lock import (
     ORACLE_PROFILES,
@@ -50,6 +50,16 @@ def test_evaluated_identities(identity_inputs: tuple[Engine, PolicyContext, Toke
     assert all(member == row.identity.profile for member, row in lock.profiles.items())
     assert lock.requests.keys() == set(ORACLE_PROFILES)
     assert all(strata.keys() == set(STRATA) for strata in lock.requests.values())
+
+
+def test_n7_binds_the_locked_config_and_a_distinct_30m_config(
+        identity_inputs: tuple[Engine, PolicyContext, Tokenizer],
+) -> None:
+    binding = n7.inputs((SCENARIOS[0],), *identity_inputs).binding
+    off, on = (binding["arms"][arm] for arm in n7.ARMS)
+    assert off["config_sha256"] == read_lock().profiles[n7.PROFILE].identity.config_sha256
+    assert off["config_sha256"] != on["config_sha256"]
+    assert off["first_requests_sha256"] != on["first_requests_sha256"]
 
 
 def test_registered_dev_verdicts() -> None:

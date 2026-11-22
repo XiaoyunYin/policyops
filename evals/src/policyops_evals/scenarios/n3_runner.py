@@ -93,10 +93,11 @@ def validate_cap(split: Split, maximum: Decimal) -> None:
         raise Refused("N3 aggregate cap is outside the split limit")
 
 
-def liability(states: Mapping[UUID, RunState]) -> Decimal:
-    slot_cap = configuration().caps.run_usd
+def liability(states: Mapping[UUID, RunState], *, caps: Mapping[UUID, Decimal] | None = None) -> Decimal:
+    default_cap = configuration().caps.run_usd
     total = Decimal(0)
-    for state in states.values():
+    for key, state in states.items():
+        slot_cap = default_cap if caps is None else caps[key]
         ledger = state.ledger
         if ledger is None or ledger.overrun or ledger.contract_block or ledger.upper > slot_cap:
             raise Refused("N3 app ledger cannot be admitted")
@@ -166,16 +167,30 @@ def refuse_existing(backend: Backend, frame: Sequence[Assignment], out: Path) ->
 def run_blocks(backend: Backend, blocks: Sequence[Sequence[Assignment]], out: Path, digest: str,
                maximum: Decimal, *, prior: Sequence[Assignment] = (),
                prior_settled: Decimal = Decimal(0),
-               check_lock: Callable[[], None], close: Callable[[str], None]) -> str:
+               check_lock: Callable[[], None], close: Callable[[str], None],
+               arm_caps: Mapping[Arm, Decimal] | None = None,
+               stop_on_accounting_issue: bool = False) -> str:
     """Use fixed case groups and close permanently at the first budget stop."""
     frame = [item for block in blocks for item in block]
     all_slots = [*prior, *frame]
+    caps = None if arm_caps is None else {item.slot.id: arm_caps[item.arm] for item in all_slots}
     deadline = time.monotonic() + WALL_SECONDS
     check_lock()
     live = backend.accounts(all_slots)
     results = _restore(backend, frame, out, digest, live)
     if not reconciles(results, live):
         raise Refused("N3 recorded liability differs from the app ledger")
+
+    def accounting_issue(state: RunState | None, result: Result) -> bool:
+        if not stop_on_accounting_issue:
+            return False
+        ledger = result.ledger if state is None else state.ledger
+        return (ledger is None or bool(ledger.held or ledger.overrun or ledger.contract_block)
+                or (state is not None and state.active))
+
+    if any(accounting_issue(live.get(key), result) for key, result in results.items()):
+        close("accounting_stop")
+        return "accounting_stop"
     streak = 0
     for block in blocks:
         pending = [item for item in block if item.slot.id not in results]
@@ -183,8 +198,10 @@ def run_blocks(backend: Backend, blocks: Sequence[Sequence[Assignment]], out: Pa
             check_lock()
             live = backend.accounts(all_slots)
             # Pending pre-dispatch app runs already occupy a full active reservation.
-            fresh = sum(item.slot.id not in live or not live[item.slot.id].active for item in pending)
-            if rolling_worst(live, fresh, prior_settled=prior_settled) > maximum:
+            fresh = [item.slot.id for item in pending if item.slot.id not in live or not live[item.slot.id].active]
+            worst = (rolling_worst(live, len(fresh), prior_settled=prior_settled) if caps is None else
+                     prior_settled + liability(live, caps=caps) + sum(caps[key] for key in fresh))
+            if worst > maximum:
                 close("budget_stop")
                 return "budget_stop"
         for item in block:
@@ -209,7 +226,10 @@ def run_blocks(backend: Backend, blocks: Sequence[Sequence[Assignment]], out: Pa
                 state = backend.accounts([item]).get(slot.id)
                 result = _record(out, item, digest, tape, state, terminal, interrupted=interrupted)
                 results[slot.id] = result
-                liability({slot.id: state} if state is not None else {})
+                if accounting_issue(state, result):
+                    close("accounting_stop")
+                    return "accounting_stop"
+                liability({slot.id: state} if state is not None else {}, caps=caps)
             streak = streak + 1 if result.failure_kind is not None else 0
             if streak >= MAX_FAILURE_STREAK:
                 close("failure_streak")

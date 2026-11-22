@@ -7,7 +7,7 @@
   tier and the model are confirmed). Then the call settles, with the exact bill, whatever the result's outcome:
   a refused, truncated or invalid answer still costs what it cost.
 - **A known contract mismatch with an exact price** sets `block` as well; the bill settles and progress stops. An
-  example is OpenAI cache writes under cache `none` (OpenAI writes only at the 30m TTL).
+  example is OpenAI cache activity under cache `none`.
 - **Missing or unpriceable evidence** leaves `usage` as None. The attempt stays unresolved with its hold, and
   nothing is invented.
   - Missing usage alone sets no block.
@@ -134,6 +134,8 @@ def openai_evidence(response: Mapping[str, Any], prepared: PreparedRequest, cach
     if not isinstance(usage, dict):
         return Evidence(None, UNKNOWN, rid, model)
     details, out_details = _object(usage.get("input_tokens_details")), _object(usage.get("output_tokens_details"))
+    raw_split = details.get("cache_write_tokens_details")
+    split = _object(raw_split)
     counts = {"input_tokens": _count(usage.get("input_tokens")), "cache_read": _count(details.get("cached_tokens")),
               "cache_creation": _count(details.get("cache_write_tokens")),
               "output": _count(usage.get("output_tokens")), "reasoning": _count(out_details.get("reasoning_tokens")),
@@ -143,18 +145,38 @@ def openai_evidence(response: Mapping[str, Any], prepared: PreparedRequest, cach
     if counts["total"] != (counts["input_tokens"] or 0) + (counts["output"] or 0):
         # Responses usage is inclusive: total = input + output. A contradiction is never resolved by guessing.
         return _unpriced(rid, model, "usage_inconsistent", counts)
+    writes = counts["cache_creation"] or 0
+    reads = counts["cache_read"] or 0
+    input_total = counts["input_tokens"] or 0
+    thirty, twelve = 0, 0
+    if writes or raw_split is not None:
+        counts["cache_creation_30m"] = _count(split.get("ttl_30m_tokens"))
+        counts["cache_creation_12h"] = _count(split.get("ttl_12h_tokens"))
+        if (short := counts["cache_creation_30m"]) is None or (long := counts["cache_creation_12h"]) is None:
+            return _unpriced(rid, model, "cache_ttl_unknown", counts)
+        if short + long != writes:
+            return _unpriced(rid, model, "cache_split_mismatch", counts)
+        thirty, twelve = short, long
+    if reads + writes > input_total:
+        return _unpriced(rid, model, "usage_inconsistent", counts)
     if response.get("service_tier") != EXPECTED_SERVICE_TIER["openai"]:
         return _unpriced(rid, model, "service_tier_unpriced", counts)
     if not _model_confirmed(prepared.model, response.get("model")):
         return _unpriced(rid, model, "model_unconfirmed", counts)
-    writes = counts["cache_creation"] or 0
     try:
-        priced = Usage(counts["input_tokens"] or 0, cache_read=counts["cache_read"] or 0,
-                       cache_writes={"30m": writes} if writes else {}, output=counts["output"] or 0,
+        priced = Usage(input_total, cache_read=reads,
+                       cache_writes={ttl: n for ttl, n in (("30m", thirty), ("12h", twelve)) if n},
+                       output=counts["output"] or 0,
                        reasoning=counts["reasoning"] or 0)
     except InvalidUsage:
         return _unpriced(rid, model, "usage_malformed", counts)
-    block = "cache_write_under_none" if writes and cache_mode == "none" else _limits(priced, prepared)
+    block: str | None
+    if cache_mode == "none" and (reads or writes):
+        block = "cache_write_under_none" if writes else "cache_read_under_none"
+    elif twelve and cache_mode != "12h":
+        block = "cache_ttl_unrequested"
+    else:
+        block = _limits(priced, prepared)
     return Evidence(priced, _reported(priced), rid, model, block)
 
 

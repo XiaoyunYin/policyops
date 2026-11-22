@@ -64,14 +64,14 @@ SMOKE_CAP = Decimal("0.03")
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
 
-def configuration() -> Configuration:
+def configuration(cache_mode: str = "none") -> Configuration:
     actors = dict(DEFAULT_ACTORS)
     for name in CHAT_ACTORS:
         actor = actors[name]
         if not isinstance(actor, ChatActor):
             raise TypeError("missing chat actor")
         actors[name] = replace(actor, max_input=10_000, max_output=1024)
-    actors["agent"] = ChatActor("agent", "gpt-6-luna", "low", cache_mode="none", max_input=10_000, max_output=1024)
+    actors["agent"] = ChatActor("agent", "gpt-6-luna", "low", cache_mode=cache_mode, max_input=10_000, max_output=1024)
     config = Configuration(actors=actors, caps=Caps(run_calls=MODEL_CALLS, request_max_input=10_000,
                                                    request_max_output=1024, active_seconds=ACTIVE_SECONDS))
     worst = config.reservation("agent").worst_usd * MODEL_CALLS
@@ -82,9 +82,10 @@ def scenario_spec(*, env: str, engine: Engine, policy: PolicyContext, tokenizer:
                   retail: Callable[[GatewayScope], RetailPort], providers: Callable[[], Providers],
                   bindings: tuple[CaseCustomerBinding, ...] = (), clock: LeaseClock | None = None,
                   wall_clock: Clock | None = None,
-                  profile: InvestigationProfile = InvestigationProfile.BASELINE) -> RuntimeSpec:
+                  profile: InvestigationProfile = InvestigationProfile.BASELINE,
+                  cache_mode: str = "none") -> RuntimeSpec:
     return build_investigation_spec(
-        env=env, engine=engine, configuration=configuration(), policy=policy,
+        env=env, engine=engine, configuration=configuration(cache_mode), policy=policy,
         retrieval_scope=SCOPE, retrieval_config=RETRIEVAL, limits=LIMITS, max_steps=MAX_STEPS,
         bindings=bindings, fixture_sha256=FIXTURE_SHA256, retail=retail,
         providers=providers, tokenizer=tokenizer, clock=clock, wall_clock=wall_clock, profile=profile,
@@ -233,17 +234,19 @@ class Profile:
     def run_scripted(self, scenario: Scenario, slot: Slot, tape: Tape, handler: Handler, *,
                      profile: InvestigationProfile = InvestigationProfile.BASELINE,
                      bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None,
-                     observe_queue: Callable[[Worker], None] | None = None) -> Summary:
+                     observe_queue: Callable[[Worker], None] | None = None,
+                     cache_mode: str = "none") -> Summary:
         token = secrets.token_urlsafe(24)
         return self._run(scenario, slot, tape, lambda: httpx2.MockTransport(handler),
                          env="test", credential=token, redactor=slot.redactor((token,)),
-                         profile=profile, bind_spec=bind_spec, observe_queue=observe_queue)
+                         profile=profile, bind_spec=bind_spec, observe_queue=observe_queue, cache_mode=cache_mode)
 
     def _run(self, scenario: Scenario, slot: Slot, tape: Tape, transport: Callable[[], httpx2.AsyncBaseTransport],
              *, env: str, credential: str, redactor: Redactor, expected_generation: UUID | None = None,
              profile: InvestigationProfile = InvestigationProfile.BASELINE,
              bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None,
-             observe_queue: Callable[[Worker], None] | None = None) -> Summary:
+             observe_queue: Callable[[Worker], None] | None = None,
+             cache_mode: str = "none") -> Summary:
         if env != "test" and in_test_context():
             raise ValueError("test scenarios require a mock provider transport")
         scenario.verify(self.retail.fixture.raw)
@@ -269,6 +272,7 @@ class Profile:
             spec = scenario_spec(
                 env=env, engine=self.app, policy=self.policy, bindings=(binding,), retail=lambda _: client,
                 providers=providers, tokenizer=self.tokenizer, clock=lease, wall_clock=wall, profile=profile,
+                cache_mode=cache_mode,
             )
             if bind_spec is not None:
                 spec = bind_spec(spec)

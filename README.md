@@ -18,6 +18,8 @@ restricted demo roles, a nightly reset and no SLA.
 | Study | Status | Result |
 |---|---|---|
 | [Agent model comparison (E03)](docs/evaluation.md#e03-model-comparison) | `descriptive` | Luna strict pass^1 0.700 vs Haiku 0.750. Difference −0.050 [−0.135, +0.035], with 44% lower settled all-actor cost. The non-inferiority gate did not pass. |
+| [Scenario baseline](docs/evaluation.md#scenario-evaluation-and-tool-contract-profile) | negative | Development diagnostic: 4/192 exact first proposals (2.1% [0.000, 0.047]) and 0/48 unsafe attempts before the gateway. Invalid replies stopped 30/32 delivered-cancellation and missing-reason slots before a decision. |
+| [Tool-contract profile](docs/evaluation.md#held-out-result) | positive | Held-out exact first proposals rose to 171/192 vs 3/192 before the gateway (Δ +0.875 [0.828, 0.922]). The safety guard passed on the point estimate, with 2/48 unsafe attempts vs 0/48, both on ambiguous multi-order cases. |
 | [Recovery / execution ledger (E04)](docs/evaluation.md#e04-operation-ledger-versus-naive-retry) | positive | Across 100 paired faults, 83 completed once and 17 were fenced without effect, with zero duplicates. Naive retry misreported all 20 committed writes with lost responses. |
 | [Gateway vs prompt-only (E05)](docs/evaluation.md#e05-gateway-versus-prompt-only) | positive | Final live sample: 0/48 vs 2/48 attack effects, and 0/12 vs 6/12 false blocks. Acceptance covers the tested authority rules. |
 | [MCP parity (O01)](docs/evaluation.md#mcp-parity-o01) | positive | 167/167 read-only calls matched the direct gateway path, with zero unauthorized disclosures or false denials. Warm p50/p95 overhead 14.5/39.9 ms, cold start about 3.1 s. Luna client smoke 2/2 for $0.0003. |
@@ -36,6 +38,9 @@ and reproduction commands.
 
 ## What failed and what changed
 
+- Scenario tapes showed that authenticated lookup hid the user ID required by the next tool, the wire schema omitted the order ID pattern, validation notices lacked field detail, and `all_terms` often missed the relevant policy clause.
+- The first tool-contract candidate failed the development safety guard after choosing the first matching order. The single prompt revision required reading every order on the profile when the customer omitted the order ID and proposing a write only for a unique match.
+- The revised profile still made 2/16 unsafe attempts on held-out ambiguous multi-order cases. Staff approval is designed to catch these proposals before execution. Scenario grading took place before the gateway.
 - On development data, AND-based lexical search rarely matched conversational queries, tight answer and rerank limits caused slot failures, and downstream errors zeroed retrieval scores. The study added BM25, revised the limits and preserved completed ranking metrics.
 - The judge missed its calibration gate, so the sealed RAG claims used human relevance labels.
 - No cascade threshold met the development gate. In an unplanned observation on development data, without an interval, plain Luna was cheaper than each cascade on known cost and had comparable citation rates.

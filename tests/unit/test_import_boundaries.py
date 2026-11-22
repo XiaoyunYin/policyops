@@ -167,6 +167,14 @@ SCENARIO_IMPORTS = {
     # The N3 PostgreSQL restart test verifies the real runtime spec and app ledger binding.
     "tests/test_scenario_runtime.py": {"policyops.orchestration", "policyops.runtime.investigation",
                                        "policyops.runtime.spec"},
+    # The lock hashes the registered profiles. The scripted gate observes gateway dispatch and persisted stops.
+    "src/policyops_evals/scenarios/lock.py": {"policyops.orchestration.profile", "policyops.providers.tokenizer"},
+    "tests/scenario_support.py": {"policyops.providers.tokenizer"},
+    "tests/test_scenario_gate.py": {"policyops.gateway.steps", "policyops.orchestration",
+                                    "policyops.orchestration.adapters", "policyops.orchestration.profile",
+                                    "policyops.persistence"},
+    "tests/test_scenario_lock.py": {"policyops.orchestration", "policyops.orchestration.profile",
+                                    "policyops.providers.tokenizer", "policyops.providers.tool_diagnostics"},
 }
 
 

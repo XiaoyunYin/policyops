@@ -252,6 +252,31 @@ See the [generator](../evals/src/policyops_evals/scenarios/generator.py),
 [grader](../evals/src/policyops_evals/scenarios/grading.py) and
 [registered rules](../evals/src/policyops_evals/scenarios/n3.py).
 
+### Scripted scenario CI gate
+
+CI uses the first development case in each of the eight strata to exercise
+the baseline and `tool-contract-v1r1` through the real workbench and retail
+simulator. Scripted replies use the visible opener and delivered tool results.
+The gate checks exact first proposals after the required reads, the three
+negative decisions, the handoff, and run state. Separate negative controls
+check pre-gateway grading, including a write on an ambiguous order.
+
+The [scenario lock](../evals/studies/scenario-lock-v1.json) binds the profile
+identities, registered evidence digests and aggregate counts. The PostgreSQL
+gate compares every recorded request against its ordered redacted-body digest
+and uses separate digests for instructions, tools and input to locate drift.
+It replays the scripted tapes against a second fresh database and compares
+the outcomes. An intentional change to evaluated request bytes requires a
+new profile and a fresh development evaluation before making a quality claim.
+
+The CI gate uses a scripted provider and measures workbench and grader
+behavior. Published rates apply to the locked identities on `gpt-6-luna`,
+under the alias as served at run time. Provider drift falls outside this
+gate. The held-out split was used once and is excluded from CI fixtures,
+tuning and subsequent evaluations. Default CI renders development text only.
+For private full-split generator reproducibility checks, the generator test
+provides the explicit `POLICYOPS_SCENARIO_FULL_GENERATION=1` opt-in.
+
 ### Baseline and first candidate
 
 Across two repeats of 128 development cases, the baseline produced 4/192 exact

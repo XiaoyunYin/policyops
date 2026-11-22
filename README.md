@@ -36,6 +36,8 @@ Brackets show 95% confidence intervals. E03 used the minimal agent with the full
 policy. The [evaluation report](docs/evaluation.md) gives denominators, failure codes, spend
 and reproduction commands.
 
+CI checks request bytes and grader outcomes on eight scripted retail development scenarios. [Scenario CI gate](docs/evaluation.md#scripted-scenario-ci-gate).
+
 ## What failed and what changed
 
 - Scenario tapes showed that authenticated lookup hid the user ID required by the next tool, the wire schema omitted the order ID pattern, validation notices lacked field detail, and `all_terms` often missed the relevant policy clause.

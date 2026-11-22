@@ -1,4 +1,4 @@
-"""Pinned-data checks; failures report invariants without printing manifests."""
+"""Check pinned dev data by default. Set POLICYOPS_SCENARIO_FULL_GENERATION=1 for private full-split checks."""
 
 from collections import Counter
 from dataclasses import replace
@@ -13,8 +13,7 @@ import pytest
 from policyops_contracts.policy import RETAIL_POLICY
 from policyops_contracts.retail import HANDOFF_MESSAGE, CancelPendingOrder, ModifyUserAddress, ReturnDeliveredOrderItems
 from policyops_contracts.retail_service import FIXTURE_SHA256
-from policyops_evals.retail_sim.fixture import DB_PATH, find_reviewed_tree
-from policyops_evals.scenarios.cases import POSITIVES, STRATA, Gold, VisibleCase
+from policyops_evals.scenarios.cases import POSITIVES, STRATA, Gold, Stratum, VisibleCase
 from policyops_evals.scenarios.generator import (
     GROUPS,
     REASONS,
@@ -30,24 +29,20 @@ from policyops_evals.scenarios.generator import (
     cancellation_proof,
     family_ids,
     generate,
+    generate_dev,
     quotas,
     selectors,
     verified_fixture,
     write_manifests,
 )
+from policyops_evals.scenarios.study import MANIFEST_SHA256
 
-
-@pytest.fixture(scope="module")
-def pinned() -> tuple[bytes, bytes]:
-    explicit = os.environ.get("POLICYOPS_RETAIL_FIXTURE_TREE")
-    tree = Path(explicit) if explicit else find_reviewed_tree(Path(os.environ.get("UV_CACHE_DIR", "")))
-    assert tree is not None, "the audited tau2 checkout is required"
-    return (tree / DB_PATH).read_bytes(), (tree / RETAIL_POLICY.path).read_bytes()
+from .scenario_support import pinned as pinned
 
 
 @pytest.fixture(scope="module")
 def generation(pinned: tuple[bytes, bytes]) -> Generation:
-    return generate(*pinned)
+    return generate_dev(*pinned)
 
 
 def test_reproducible_manifests_and_pinned_inputs(pinned: tuple[bytes, bytes], generation: Generation) -> None:
@@ -55,14 +50,22 @@ def test_reproducible_manifests_and_pinned_inputs(pinned: tuple[bytes, bytes], g
     assert sha256(db).hexdigest() == FIXTURE_SHA256
     assert sha256(policy).hexdigest() == RETAIL_POLICY.sha256
     with pytest.raises(ValueError, match="fixture digest"):
-        generate(db + b" ", policy)
+        generate_dev(db + b" ", policy)
     with pytest.raises(ValueError, match="policy bytes"):
-        generate(db, policy + b" ")
-    manifests = generation.manifests()
-    assert bool(manifests == generate(db, policy).manifests())
+        generate_dev(db, policy + b" ")
+    assert generation.cases.keys() == {"dev"}
+    assert bool(generation.manifests() == generate_dev(db, policy).manifests())
+    assert {name: sha256(raw).hexdigest() for name, raw in generation.manifests().items()} == {
+        name: digest for name, digest in MANIFEST_SHA256.items() if name.startswith("dev.")
+    }
     fixture = verified_fixture(db)
     assert len(fixture.users) == 500
     assert len(fixture.orders) == 1000
+    _check_manifest_schema(generation)
+
+
+def _check_manifest_schema(generation: Generation) -> None:
+    manifests = generation.manifests()
     visible_schema, gold_schema = TypeAdapter(VisibleCase), TypeAdapter(Gold)
     for split, cases in generation.cases.items():
         visible = manifests[f"{split}.visible.jsonl"].splitlines()
@@ -76,6 +79,10 @@ def test_reproducible_manifests_and_pinned_inputs(pinned: tuple[bytes, bytes], g
 
 
 def test_split_closure_family_quotas_and_census(generation: Generation) -> None:
+    _check_split_closure(generation)
+
+
+def _check_split_closure(generation: Generation) -> None:
     closures: dict[str, set[str]] = {}
     customers: set[str] = set()
     families: dict[str, set[str]] = {}
@@ -102,10 +109,11 @@ def test_split_closure_family_quotas_and_census(generation: Generation) -> None:
             closures[split].update(case.world.order_closure)
             customers.add(case.world.customer_id)
             keys.add(case.key)
-    assert bool(closures["dev"].isdisjoint(closures["held-out"]))
-    assert bool(families["dev"].isdisjoint(families["held-out"]))
     assert len(families["dev"]) == 20
-    assert len(families["held-out"]) == 40
+    if "held-out" in generation.cases:
+        assert bool(closures["dev"].isdisjoint(closures["held-out"]))
+        assert bool(families["dev"].isdisjoint(families["held-out"]))
+        assert len(families["held-out"]) == 40
     assert {
         name: (row.eligible, sum(row.rejected.values()), row.eligible_customers, row.outside_order_count)
         for name, row in generation.census.items()
@@ -117,7 +125,10 @@ def test_split_closure_family_quotas_and_census(generation: Generation) -> None:
 
 
 def test_openers_and_construction_witnesses(pinned: tuple[bytes, bytes], generation: Generation) -> None:
-    db, _ = pinned
+    _check_construction(pinned[0], generation)
+
+
+def _check_construction(db: bytes, generation: Generation) -> None:
     fixture = verified_fixture(db)
     for cases in generation.cases.values():
         for case in cases:
@@ -173,7 +184,7 @@ def test_cancel_status_flip_and_missing_reason(pinned: tuple[bytes, bytes], gene
     assert isinstance(case.gold.action, CancelPendingOrder)
     oid, reason = case.gold.action.order_id, case.gold.action.reason
     candidate = Candidate(case.world.customer_id, oid)
-    renderer = Rendering(0, 0, reason, 0, "hash")
+    renderer = Rendering(family_ids("cancel", "dev")[0], 0, reason, 0, "hash")
     delivery = {**fixture.orders[oid], "status": "delivered"}
     counterfactual = replace(fixture, orders={**fixture.orders, oid: delivery})
     spans = _spans(pinned[1])
@@ -191,7 +202,7 @@ def test_cancel_status_flip_and_missing_reason(pinned: tuple[bytes, bytes], gene
 def test_multi_attribute_flip_keeps_opener_byte_identical(pinned: tuple[bytes, bytes]) -> None:
     fixture = verified_fixture(pinned[0])
     customer, candidate, matched, other = _two_pending_distinct_cities(fixture)
-    renderer = Rendering(0, 0, REASONS[0], 0, "absent")
+    renderer = Rendering(family_ids("multi", "dev")[0], 0, REASONS[0], 0, "absent")
     modified = {**fixture.orders[other], "address": {**fixture.orders[other]["address"],
                                                     "city": fixture.orders[matched]["address"]["city"]}}
     counterfactual = replace(fixture, orders={**fixture.orders, other: modified})
@@ -228,6 +239,33 @@ def test_manifest_output_refuses_checkout_and_overwrite(generation: Generation, 
         assert bool((tmp_path / name).read_bytes() == payload)
     with pytest.raises(ValueError, match="already exists"):
         write_manifests(tmp_path, manifests)
+
+
+def test_dev_rendering_refuses_held_out(pinned: tuple[bytes, bytes], monkeypatch: pytest.MonkeyPatch) -> None:
+    render = Rendering.message
+
+    def dev_message(self: Rendering, stratum: Stratum, fixture: FixtureData, candidate: Candidate,
+                    *, masked: bool = False) -> str:
+        assert self.family in family_ids(GROUPS[stratum], "dev")
+        return render(self, stratum, fixture, candidate, masked=masked)
+
+    monkeypatch.setattr(Rendering, "message", dev_message)
+    with pytest.raises(ValueError, match="dev-only generation refuses"):
+        generate_dev(b"", b"", split="held-out")
+    assert generate_dev(*pinned).cases.keys() == {"dev"}
+
+
+@pytest.mark.skipif(os.environ.get("POLICYOPS_SCENARIO_FULL_GENERATION") != "1",
+                    reason="private full-split verification is opt-in")
+def test_full_split_reproducibility(pinned: tuple[bytes, bytes], tmp_path: Path) -> None:
+    full = generate(*pinned)
+    manifests = full.manifests()
+    assert {name: sha256(raw).hexdigest() for name, raw in manifests.items()} == MANIFEST_SHA256
+    assert bool(manifests == generate(*pinned).manifests())
+    _check_manifest_schema(full)
+    _check_split_closure(full)
+    _check_construction(pinned[0], full)
+    assert write_manifests(tmp_path, manifests) == MANIFEST_SHA256
 
 
 @pytest.mark.parametrize("leak", ["cancel.pending_only", "finish_answer", "cancel_pending_order", "respond in JSON",

@@ -466,6 +466,17 @@ class Generation:
 
 
 def generate(fixture_bytes: bytes, policy_bytes: bytes) -> Generation:
+    return _generate(fixture_bytes, policy_bytes, SPLITS)
+
+
+def generate_dev(fixture_bytes: bytes, policy_bytes: bytes, *, split: str = "dev") -> Generation:
+    """Preserve the registered allocation while rendering only development wording."""
+    if split != "dev":
+        raise ValueError("dev-only generation refuses a held-out split")
+    return _generate(fixture_bytes, policy_bytes, ("dev",))
+
+
+def _generate(fixture_bytes: bytes, policy_bytes: bytes, splits: Sequence[Split]) -> Generation:
     fixture = verified_fixture(fixture_bytes)
     spans = _spans(policy_bytes)
     pools, census = {}, {}
@@ -475,7 +486,8 @@ def generate(fixture_bytes: bytes, policy_bytes: bytes) -> Generation:
     masked_texts: set[str] = set()
     collisions = 0
     cases: dict[Split, tuple[Scenario, ...]] = {}
-    for split, chosen in allocated.items():
+    for split in splits:
+        chosen = allocated[split]
         by_stratum: Counter[Stratum] = Counter()
         rendered: list[Scenario] = []
         for stratum, candidate in sorted(chosen, key=lambda x: _rank(RENDER_SEED, split, x[1].customer)):
@@ -512,7 +524,9 @@ def _jsonl(rows: Sequence[object]) -> bytes:
 
 
 def write_manifests(out: Path, manifests: Mapping[str, bytes]) -> dict[str, str]:
-    if set(manifests) != {f"{split}.{kind}.jsonl" for split in SPLITS for kind in ("visible", "gold")}:
+    dev = {"dev.visible.jsonl", "dev.gold.jsonl"}
+    full = dev | {"held-out.visible.jsonl", "held-out.gold.jsonl"}
+    if set(manifests) not in (dev, full):
         raise ValueError("unexpected manifest filenames")
     target = out.resolve()
     if any(path == REPO or (path / ".git").exists() for path in (target, *target.parents)):

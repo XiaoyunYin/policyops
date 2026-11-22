@@ -1,75 +1,36 @@
 """Real PostgreSQL, retail ASGI, workbench, and provider adapters. Every model reply is scripted."""
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
-import json
-import os
 from pathlib import Path
 from uuid import UUID, uuid4
 
-import httpx2
 import pytest
 
 from policyops.orchestration import investigation_prompt
 from policyops.persistence.evaluation import EvaluationRepository
-from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME
-from policyops.providers.tokenizer import Tokenizer, load
+from policyops.persistence.roles import EVAL_RUNTIME
 from policyops.runtime.investigation import graph_digest
 from policyops.runtime.spec import RuntimeSpec
-from policyops_contracts.policy import RETAIL_POLICY
-from policyops_evals.retail_sim import bootstrap, fixture, migrate
 from policyops_evals.scenarios import n3, n3_runner
 from policyops_evals.scenarios.arms import identities
 from policyops_evals.scenarios.batch import AppBackend, read_result, run_batch, serial_lock
 from policyops_evals.scenarios.cases import SCENARIOS, Scenario, Stratum
-from policyops_evals.scenarios.recording import Replay, ReplayMismatch, Tape, phase_of
-from policyops_evals.scenarios.runtime import POLICY_CORPUS, Profile, Slot, Summary, load_policy, retail_store
+from policyops_evals.scenarios.recording import Replay, ReplayMismatch, Tape
+from policyops_evals.scenarios.runtime import Profile, Slot, Summary
 from policyops_evals.scenarios.study import assigned_slot, register
-from policyops_testing.app_database import AppCluster, AppDatabase
-from policyops_testing.postgres import OwnedPostgres
-from policyops_testing.retrieval_fixtures import World, luna_reply
-from policyops_testing.safety.retail import reviewed_tree
+from policyops_testing.app_database import AppDatabase
+from policyops_testing.retrieval_fixtures import World
+
+from .scenario_support import ABSTAIN, Script, call, no_authority_or_execution
+from .scenario_support import database as database
+from .scenario_support import profile as profile
 
 
 pytestmark = pytest.mark.postgres
 POSITIVE, NEGATIVE = SCENARIOS
-ABSTAIN = {"v": "policyops.grounded-answer/v1", "outcome": "abstain", "assertions": [],
-           "abstention": {"reason": "insufficient_evidence", "detail": None}}
 
-
-@pytest.fixture(scope="module")
-def database(postgres: OwnedPostgres, tmp_path_factory: pytest.TempPathFactory
-             ) -> Iterator[tuple[AppDatabase, Path, Path]]:
-    db = AppCluster.provision(postgres).create_database("scenario")
-    db.upgrade()
-    for role in bootstrap.ROLES:
-        if role not in postgres.passwords:
-            postgres.register_role(role)
-    with postgres.connect("postgres", db.name, autocommit=True) as connection:
-        bootstrap.provision(connection, db.name, {role: postgres.passwords[role] for role in bootstrap.ROLES})
-    with db.engine(bootstrap.MIGRATOR).connect() as connection:
-        migrate.upgrade(connection)
-    explicit = os.environ.get("POLICYOPS_RETAIL_FIXTURE_TREE")
-    source = Path(explicit) if explicit else reviewed_tree()
-    root = tmp_path_factory.mktemp("scenario-fixture") / "audited"
-    fixture.stage(source, root)
-    yield db, root, source / RETAIL_POLICY.path
-    db.dispose()
-
-
-@pytest.fixture
-def profile(database: tuple[AppDatabase, Path, Path], tmp_path: Path) -> tuple[Profile, World]:
-    db, root, policy_path = database
-    world = World(db, tmp_path)
-    world.publish({"policy": policy_path.read_bytes()}, key=POLICY_CORPUS, domain="retail", render="identity")
-    return Profile(db.engine(APP_RUNTIME), db.engine(AUTH_RUNTIME), retail_store(db.engine(bootstrap.RUNTIME), root),
-                   load_policy(policy_path), load()), world
-
-
-def call(name: str, arguments: Mapping[str, object] | str, index: int) -> dict[str, object]:
-    return {"type": "function_call", "name": name, "call_id": f"call_{index}",
-            "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments)}
 
 
 def reference(scenario: Scenario) -> list[dict[str, object]]:
@@ -80,41 +41,6 @@ def reference(scenario: Scenario) -> list[dict[str, object]]:
         (call("finish_answer", ABSTAIN, 4) if scenario.gold.action is None
          else call("cancel_pending_order", scenario.gold.action.model_dump(exclude={"tool"}), 4)),
     ]
-
-
-class Script:
-    def __init__(self, tokenizer: Tokenizer, replies: Sequence[dict[str, object] | str], prefix: str = "s1") -> None:
-        self.tokenizer, self.replies = tokenizer, iter(replies)
-        self.prefix = prefix
-        self.counts: list[int] = []
-        self.created = 0
-
-    def __call__(self, request: httpx2.Request) -> httpx2.Response:
-        if phase_of(request) == "count":
-            count = len(self.tokenizer.encoding.encode_ordinary(request.content.decode()))
-            self.counts.append(count)
-            return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": count})
-        reply = next(self.replies)
-        self.created += 1
-        # Match the existing Luna fixtures, but use a different fixed response ID per request.
-        tokens = self.counts[-1]
-        changes: dict[str, object] = {
-            "id": f"resp_{self.prefix}_{self.created}",
-            "usage": {"input_tokens": tokens, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
-                      "output_tokens": 40, "output_tokens_details": {"reasoning_tokens": 8},
-                      "total_tokens": tokens + 40},
-        }
-        if isinstance(reply, dict):
-            changes["output"] = [reply]
-        response = luna_reply(reply if isinstance(reply, str) else "", **changes)(request)
-        assert isinstance(response, httpx2.Response)
-        return response
-
-
-def no_authority_or_execution(world: World) -> None:
-    assert world.count("app.customer_consents") == 0
-    assert world.count("app.approval_decisions") == 0
-    assert world.count("app.tool_executions") == 0
 
 
 @pytest.mark.parametrize("mode", ["proposal", "delivered", "malformed", "confirmation",

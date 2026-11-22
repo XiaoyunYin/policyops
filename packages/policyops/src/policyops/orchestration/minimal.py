@@ -216,11 +216,11 @@ class DeadlineInvalid(ValueError):
 
 # -- pure construction helpers -------------------------------------------------------------------------------------
 
-def retail_tools() -> tuple[ToolDescriptor, ...]:
+def retail_tools(*, describe_ids: bool = False) -> tuple[ToolDescriptor, ...]:
     """The typed retail tools, from the retail DTOs' own full schemas."""
     out = []
     for model, description in _RETAIL_TOOLS:
-        spec = retail_tool_spec(model, description)
+        spec = retail_tool_spec(model, description, describe_ids=describe_ids)
         name = ToolName(spec.name)
         out.append(ToolDescriptor(name=spec.name, description=spec.description,
                                   parameters_schema_json=spec.parameters_schema_json,

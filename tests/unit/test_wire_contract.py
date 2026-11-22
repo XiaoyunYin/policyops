@@ -29,6 +29,8 @@ from policyops_contracts.conversation import (
 )
 from policyops_contracts.digest import canonical_bytes as original_canonical
 from policyops_contracts.digest import text_sha256
+from policyops_contracts.retail import ToolName
+from policyops_contracts.tool_diagnostics import ToolArgumentIssue
 
 
 WIRE = Path(W.__file__)
@@ -117,6 +119,18 @@ def test_every_body_round_trips_canonically_and_account_is_exact(frame: Any) -> 
         head, chunks[0] = chunks[0][:n], chunks[0][n:]
         return head
     assert W.read_frame(read_exact, type(frame)) == frame
+
+
+def test_runtime_notice_wire_bytes_support_both_legacy_and_detailed_notices() -> None:
+    legacy = frm(3, 3, ENDED)
+    assert b'"argument_issue"' not in payload(legacy)
+    issue = ToolArgumentIssue(tool=ToolName.GET_ORDER_DETAILS, field="order_id", constraint="pattern")
+    notice = RuntimeNotice(code="invalid_arguments", argument_issue=issue)
+    detailed = frm(3, 3, W.TurnEndedBody(outcome=outcome(appended=(notice,))))
+    raw = payload(detailed)
+    assert W.account(detailed) == len(raw)
+    assert b'"tool":"get_order_details"' in raw
+    assert W.decode_payload(raw, W.FromRuntime) == detailed
 
 
 def test_a_near_cap_frame_round_trips_and_one_over_is_refused_before_serialization(

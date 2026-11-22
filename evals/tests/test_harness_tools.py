@@ -442,6 +442,11 @@ def test_the_pinned_inventories_map_completely_without_data_execution_or_mutatio
         "policyops_contracts.conversation", "policyops_testing.network"})
     assert pinned["opens"] == [] and pinned["tool_calls"] == []
     inventory = pinned["inventory"]
+    assert {label: part["catalog_sha256"] for label, part in inventory.items()} == {
+        "retail": "81f711b32afdb7d6dbc27c7f707c6c44ca7ad461aac341de85b663f199698bc0",
+        "banking_agent": "f72abea31212879109d32f2cfcc423319e052d79666bbbf34cafe5df87d3882e",
+        "banking_user": "c3e126f7b48d08c1d6629563da5b553083704145d273a2a5c215b47904547548",
+    }
     assert {label: len(part["names"]) for label, part in inventory.items()} == \
         {"retail": 16, "banking_agent": 14, "banking_user": 6}
     for label, part in inventory.items():

@@ -22,6 +22,7 @@ from policyops.orchestration.context import fit
 from policyops.orchestration.facts import load_critical_facts
 from policyops.orchestration.graph import GRAPH_ENTRY, GRAPH_NODES, GRAPH_TARGETS, InvestigationGraph, failed
 from policyops.orchestration.ports import ModelPort, agent_model_port
+from policyops.orchestration.profile import InvestigationProfile
 from policyops.orchestration.state import (
     AwaitingApproval as ApprovalTerminal,
 )
@@ -81,16 +82,25 @@ from policyops_contracts.stops import StopDetails, StopReason
 GRAPH_VERSION = "policyops.investigation-graph/v2"
 
 
-def graph_digest() -> str:
+def graph_digest(profile: InvestigationProfile = InvestigationProfile.BASELINE) -> str:
     versions = codec.Envelope.model_json_schema()["properties"]
-    return canonical_sha256({
+    schema = InvestigationState.model_json_schema()
+    fields = {
         "version": GRAPH_VERSION,
         "nodes": GRAPH_NODES,
         "edges": [(START, GRAPH_ENTRY), *((source, target) for source in GRAPH_NODES for target in GRAPH_TARGETS)],
-        "state_schema": InvestigationState.model_json_schema(),
+        "state_schema": schema,
         "codec_version": versions["codec_version"]["const"],
         "framework_checkpoint_version": versions["framework_version"]["const"],
-    })
+    }
+    if profile is InvestigationProfile.BASELINE:
+        # The baseline never emits argument diagnostics. Hash its original checkpoint schema.
+        definitions = schema["$defs"]
+        del definitions["RuntimeNotice"]["properties"]["argument_issue"]
+        del definitions["ToolArgumentIssue"], definitions["ToolName"]
+    else:
+        fields["profile"] = profile
+    return canonical_sha256(fields)
 
 
 @dataclass(frozen=True)
@@ -115,6 +125,7 @@ class InvestigationExecutor:
     prompt_sha256: str
     config_sha256: str
     test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None
+    profile: InvestigationProfile = InvestigationProfile.BASELINE
 
     @observed("investigation")
     def execute(self, context: StepContext) -> Outcome:
@@ -205,7 +216,7 @@ class InvestigationExecutor:
                                        max_steps=self.max_steps, policy_sha256=self.policy.sha256,
                                        retrieval_sha256=self.retrieval_digest,
                                        actor_sha256=self.configuration.reservation("agent").config_sha256)
-            state = fit(state, self.policy, self.limits)
+            state = fit(state, self.policy, self.limits, profile=self.profile)
             if state.terminal is not None:
                 return outcome(state)
             initial = {"state": state.model_dump(mode="json")}
@@ -233,23 +244,26 @@ class InvestigationExecutor:
         deadline = observed_monotonic + runs.remaining_us(run, now) / 1_000_000
         ledger = build_app_ledger(env=self.env, engine=self.engine, workspace_id=context.workspace_id,
                                   configuration=self.configuration, clock=self.clock, claim_token=context.claim_token)
+        repaired = self.profile is InvestigationProfile.TOOL_CONTRACT_V1
         model = (self.test_model(ledger, RunBinding(context.run_id)) if self.test_model is not None else
-                 agent_model_port(ledger, RunBinding(context.run_id), self.providers))
+                 agent_model_port(ledger, RunBinding(context.run_id), self.providers, detailed_tool_errors=repaired))
         retriever = Retriever(self.engine, context.workspace_id,
                               embeddings=EmbeddingStore(self.engine, context.workspace_id, env=self.env),
                               ledger=ledger, providers=self.providers, tokenizer=self.tokenizer, env=self.env,
-                              rerank=self.retrieval_config.rerank is not None, stop_on_budget=True)
+                              rerank=self.retrieval_config.rerank is not None, stop_on_budget=True,
+                              lexical_mode=self.profile.lexical_mode)
         adapters = InvestigationAdapters(retriever, self.retrieval_scope, self.retrieval_config,
                                          Gateway(scope, retail=self.retail(scope), sessions=PgSessionStore(self.engine),
                                                  clock=self.wall_clock),
                                          ProposalService(self.engine, self.clock), context.claim_token,
                                          EvidenceValidator(self.engine, context.workspace_id),
                                          CitationRecorder(self.engine, context.workspace_id),
-                                         references={r.evidence_id: r for r in state.recorded_evidence})
+                                         references={r.evidence_id: r for r in state.recorded_evidence},
+                                         disclose_lookup_user_id=repaired)
         builder = InvestigationGraph(model, adapters, adapters, self.policy, self.limits, deadline,
                                    lambda: self.fence(context),
                                    lambda: (stop_reason(reason) if (reason := ledger.exhaustion(
-                                       RunBinding(context.run_id))) is not None else None))
+                                       RunBinding(context.run_id))) is not None else None), profile=self.profile)
         graph = builder.compile(saver)
         stop = asyncio.Event()
         heartbeat_error: list[BaseException] = []
@@ -301,8 +315,11 @@ class InvestigationExecutor:
 
     @property
     def retrieval_digest(self) -> str:
-        return canonical_sha256({"scope": self.retrieval_scope.model_dump(mode="json"),
-                                 "config": self.retrieval_config.model_dump(mode="json")})
+        fields: dict[str, object] = {"scope": self.retrieval_scope.model_dump(mode="json"),
+                                     "config": self.retrieval_config.model_dump(mode="json")}
+        if self.profile is InvestigationProfile.TOOL_CONTRACT_V1:
+            fields["lexical_mode"] = self.profile.lexical_mode
+        return canonical_sha256(fields)
 
 
 def outcome(state: InvestigationState) -> Outcome:
@@ -325,7 +342,8 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
                              tokenizer: Tokenizer, limits: AgentLimits | None = None, max_steps: int = 32,
                              clock: LeaseClock | None = None, wall_clock: Clock | None = None,
                              lease: timedelta = timedelta(seconds=30),
-                             test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None) -> RuntimeSpec:
+                             test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None,
+                             profile: InvestigationProfile = InvestigationProfile.BASELINE) -> RuntimeSpec:
     """Install the returned spec in the SAME catalog passed to the API runtime and worker."""
     if test_model is not None and env != "test":
         raise ValueError("test model factories require env=test")
@@ -333,28 +351,36 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
         raise ValueError("fictional policy requires env=test")
     if type(max_steps) is not int or not 1 <= max_steps <= 64:
         raise ValueError("max_steps must be 1..64")
+    if not isinstance(profile, InvestigationProfile):
+        raise ValueError("profile must be an InvestigationProfile")
     lease_clock = clock or DatabaseLeaseClock()
     require_test_environment(lease_clock, env)
     selected = limits or AgentLimits(knowledge_steps=16)
     if not 1 <= selected.knowledge_steps <= 16:
         raise ValueError("investigation knowledge_steps must be 1..16")
+    if profile is InvestigationProfile.TOOL_CONTRACT_V1 and selected.consecutive_invalid != 2:
+        raise ValueError("tool-contract-v1 requires consecutive_invalid=2")
     # Both provider capability checks are pure and run before any ledger/network work.
-    prepare(prompt.request(policy, selected, (UserMessage(text="x"),)), configuration, "agent")
-    config_sha = canonical_sha256({"v": "policyops.investigation-config/v2", "policy": policy.model_dump(mode="json"),
-                                   "request_bounds": dict(REQUEST_BOUNDS), "limits": selected.model_dump(mode="json"),
-                                   "max_steps": max_steps,
-                                   "lease_seconds": str(lease.total_seconds()),
-                                   "retrieval_scope": retrieval_scope.model_dump(mode="json"),
-                                   "retrieval_config": retrieval_config.model_dump(mode="json"),
-                                   "actors": {k: configuration.reservation(k).config_sha256
-                                              for k in configuration.actors},
-                                   "caps": {k: str(v) for k, v in asdict(configuration.caps).items()},
-                                   "fixture": fixture_sha256,
-                                   "bindings": [b.model_dump(mode="json") for b in bindings]})
+    prepare(prompt.request(policy, selected, (UserMessage(text="x"),), profile=profile), configuration, "agent")
+    config_fields: dict[str, object] = {
+        "v": "policyops.investigation-config/v2", "policy": policy.model_dump(mode="json"),
+        "request_bounds": dict(REQUEST_BOUNDS), "limits": selected.model_dump(mode="json"),
+        "max_steps": max_steps, "lease_seconds": str(lease.total_seconds()),
+        "retrieval_scope": retrieval_scope.model_dump(mode="json"),
+        "retrieval_config": retrieval_config.model_dump(mode="json"),
+        "actors": {k: configuration.reservation(k).config_sha256 for k in configuration.actors},
+        "caps": {k: str(v) for k, v in asdict(configuration.caps).items()},
+        "fixture": fixture_sha256,
+        "bindings": [b.model_dump(mode="json") for b in bindings],
+    }
+    if profile is InvestigationProfile.TOOL_CONTRACT_V1:
+        config_fields.update(profile=profile, lexical_mode=profile.lexical_mode)
+    config_sha = canonical_sha256(config_fields)
     executor = InvestigationExecutor(engine, env, configuration, policy, selected, retrieval_scope, retrieval_config,
                                      bindings, fixture_sha256, retail, providers, tokenizer, lease_clock,
-                                     wall_clock or SystemClock(), max_steps, lease, graph_digest(), prompt.digest(),
-                                     config_sha, test_model)
-    return RuntimeSpec("investigation.v2", executor.graph_sha256, executor.prompt_sha256, config_sha, executor,
+                                     wall_clock or SystemClock(), max_steps, lease, graph_digest(profile),
+                                     prompt.digest(profile), config_sha, test_model=test_model, profile=profile)
+    spec_id = "investigation.v2" if profile is InvestigationProfile.BASELINE else "investigation.tool-contract-v1"
+    return RuntimeSpec(spec_id, executor.graph_sha256, executor.prompt_sha256, config_sha, executor,
                        lease=lease, run_timeout=timedelta(seconds=configuration.caps.active_seconds),
                        test_only=env == "test")

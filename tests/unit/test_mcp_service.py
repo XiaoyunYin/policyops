@@ -20,7 +20,7 @@ from policyops.retrieval.rank import ChunkRow
 from policyops_contracts.clock import FixedClock
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.gateway import ReadObservation, ToolError
-from policyops_testing.gateway_cases import INJECTION, SCOPE, FakeRetail, W, authenticated_sessions, state
+from policyops_testing.gateway_cases import EMAIL, INJECTION, SCOPE, FakeRetail, W, authenticated_sessions, state
 
 
 class Auth:
@@ -87,6 +87,12 @@ def test_foreign_customer_is_denied_by_gateway(monkeypatch: pytest.MonkeyPatch) 
     result = service.call("get_user_details", {"user_id": W.other_user}).result
     assert isinstance(result, ToolError) and result.code == "customer_mismatch"
     assert not retail.calls
+
+
+def test_lookup_wire_output_stays_identity_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _, _ = setup(monkeypatch)
+    result = service.call("find_user_id_by_email", {"email": EMAIL}).result
+    assert result.model_dump_json() == '{"kind":"lookup","tool":"find_user_id_by_email","outcome":"authenticated"}'
 
 
 def test_retail_injection_stays_data(monkeypatch: pytest.MonkeyPatch) -> None:

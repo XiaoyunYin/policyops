@@ -62,6 +62,7 @@ class PreparedRequest:
     stream: bool
     max_input: int  # the actor's admitted maximum prompt
     max_output: int  # this request's max_output_tokens
+    detailed_tool_errors: bool = False
 
     def params(self) -> dict[str, Any]:
         """A fresh, independent decode of the body for the SDK call (never the source of truth)."""
@@ -200,7 +201,8 @@ def _anthropic_body(request: ModelRequest, actor: ChatActor, tools: Mapping[str,
 
 # -- preparation --------------------------------------------------------------------------------------------------
 
-def prepare(request: ModelRequest, configuration: Configuration, actor_name: str) -> PreparedRequest:
+def prepare(request: ModelRequest, configuration: Configuration, actor_name: str, *,
+            detailed_tool_errors: bool = False) -> PreparedRequest:
     if not isinstance(request, ModelRequest):
         raise TypeError("request must be a ModelRequest")
     preflight(request)
@@ -248,4 +250,4 @@ def prepare(request: ModelRequest, configuration: Configuration, actor_name: str
                            endpoint.count_path, endpoint.version_headers, body_bytes, count_bytes,
                            sha256_hex(envelope), MappingProxyType(tools), output,
                            None if request.output is None else request.output.name, request.stream,
-                           actor.max_input, request.max_output_tokens)
+                           actor.max_input, request.max_output_tokens, detailed_tool_errors)

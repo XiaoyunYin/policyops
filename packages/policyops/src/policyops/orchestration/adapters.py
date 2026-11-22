@@ -20,7 +20,7 @@ from policyops.retrieval.search import Retriever
 from policyops.services.proposals import WRITE_CALLS, Prepared, ProposalService
 from policyops_contracts.agent import AgentStep, ToolCallStep
 from policyops_contracts.conversation import AgentMessage, AgentToolCall, KnowledgeResult, ToolResult
-from policyops_contracts.gateway import ToolError
+from policyops_contracts.gateway import LookupObservation, ToolError
 from policyops_contracts.grounding import Assertion, CitationBundle, CitedQuote, GroundedAnswer, ValidatedAnswer
 from policyops_contracts.proposal import EvidenceRef
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalQuery, RetrievalRefused, RetrievalScope
@@ -35,15 +35,21 @@ class GatewayToolPort:
     gateway: Gateway
     previous: AgentStep | None
     sequence: int
+    disclose_lookup_user_id: bool = False
 
     async def execute(self, call: AgentToolCall, *, step: ToolCallStep, deadline: float) -> ToolResult:
         if time.monotonic() >= deadline:
             raise TimeoutError
         result = self.gateway.step(step, previous=self.previous, sequence=self.sequence)
-        if result.observation is None:
+        observation = result.observation
+        if observation is None:
             raise ValueError("missing gateway observation")
-        return ToolResult(call_id=call.call_id, content=result.observation.model_dump_json(),
-                          is_error=isinstance(result.observation, ToolError))
+        content = observation.model_dump_json()
+        if (self.disclose_lookup_user_id and isinstance(observation, LookupObservation)
+                and observation.outcome == "authenticated"):
+            content = json.dumps(observation.model_dump(mode="json") | {"user_id": self.gateway.scope.customer_user_id},
+                                 ensure_ascii=False, separators=(",", ":"))
+        return ToolResult(call_id=call.call_id, content=content, is_error=isinstance(observation, ToolError))
 
 
 @dataclass
@@ -58,6 +64,7 @@ class InvestigationAdapters:
     recorder: CitationRecorder
     references: dict[UUID, EvidenceRef] = field(default_factory=dict)
     by_step: dict[int, tuple[EvidenceRef, ...]] = field(default_factory=dict)
+    disclose_lookup_user_id: bool = False
 
     def __post_init__(self) -> None:
         run = self.gateway.scope.run
@@ -148,8 +155,9 @@ class InvestigationAdapters:
 
     async def read(self, state: InvestigationState, *, deadline: float) -> ToolResult:
         call, step = self._step(state)
-        return await GatewayToolPort(self.gateway, state.previous_step, state.step_count).execute(call,
-                                                                                     step=step, deadline=deadline)
+        port = GatewayToolPort(self.gateway, state.previous_step, state.step_count,
+                               disclose_lookup_user_id=self.disclose_lookup_user_id)
+        return await port.execute(call, step=step, deadline=deadline)
 
     async def propose(self, state: InvestigationState, *, deadline: float) -> AwaitingApproval | ToolResult:
         call, step = self._step(state)

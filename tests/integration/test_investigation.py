@@ -19,20 +19,31 @@ import pytest
 from policyops.budget.config import Configuration
 from policyops.domain.examples import World as RetailWorld
 from policyops.orchestration import investigation_prompt as prompt
+from policyops.orchestration.profile import InvestigationProfile
 from policyops.orchestration.state import InvestigationState
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs
 from policyops.persistence.checkpoints import InvestigationSaver
 from policyops.persistence.database import workspace_transaction
 from policyops.persistence.records import NewCase
+from policyops.providers.calls import CallReport
 from policyops.runtime import investigation as runtime
 from policyops.runtime.clock import FixedLeaseClock
 from policyops.runtime.investigation import InvestigationExecutor, build_investigation_spec
-from policyops.runtime.spec import AwaitingApproval, Failed, InvestigationCompleted, RuntimeCatalog, RuntimeSpec
+from policyops.runtime.spec import (
+    AwaitingApproval,
+    Failed,
+    InvestigationCompleted,
+    RuntimeCatalog,
+    RuntimeSpec,
+    binding,
+)
 from policyops.runtime.worker import Context, Worker
 from policyops.services.proposals import ProposalService
 from policyops_contracts.clock import FixedClock
 from policyops_contracts.conversation import AgentLimits, ToolResult
+from policyops_contracts.model import ModelRequest, ToolResultPart
+from policyops_contracts.retail import FindUserIdByEmail, GetOrderDetails, GetUserDetails
 from policyops_contracts.retail_service import FIXTURE_SHA256
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalScope
 from policyops_contracts.scalars import CaseScope, RunScope
@@ -107,6 +118,7 @@ def db(new_app_database: NewDatabase) -> AppDatabase:
 
 def scenario(db: AppDatabase, path: Path, mode: str = "answer", *, max_steps: int = 32,
              limits: AgentLimits | None = None, retrieval_config: RetrievalConfig | None = None,
+             profile: InvestigationProfile = InvestigationProfile.BASELINE,
              input_text: str = "Please help with my refund.") -> Scenario:
     world = World(db, path)
     world.publish(documents([("refunds", "Refund policy", TEXT)]))
@@ -134,7 +146,7 @@ def scenario(db: AppDatabase, path: Path, mode: str = "answer", *, max_steps: in
                                     fixture_sha256=FIXTURE_SHA256, retail=lambda scope: retail,
                                     providers=Embeddings().providers(), tokenizer=TOKENIZER,
                                     clock=FixedLeaseClock(clock), wall_clock=clock, max_steps=max_steps,
-                                    test_model=lambda ledger, run: model)
+                                    test_model=lambda ledger, run: model, profile=profile)
     catalog = RuntimeCatalog.of([spec], default=spec.spec_id)
     api = case_api.build(db, catalog=catalog)
     # API and executor share the controlled lease clock, including reclaim/deadline observations.
@@ -165,6 +177,52 @@ def test_worker_graph_terminal_paths(db: AppDatabase, tmp_path: Path, mode: str,
         assert test.world.count("app.action_proposals") == 1
         assert test.world.count("app.proposal_presentations") == 1
         assert test.world.count("app.customer_consents") == 0
+
+
+def test_tool_contract_profile_uses_the_bound_lookup_id_to_reach_a_proposal(db: AppDatabase, tmp_path: Path) -> None:
+    customer = RetailWorld()
+    test = scenario(db, tmp_path, profile=InvestigationProfile.TOOL_CONTRACT_V1)
+    lookup_read = FindUserIdByEmail(email=EMAIL)
+    profile_read = GetUserDetails(user_id=customer.user_id)
+
+    def observation(request: ModelRequest, call_id: str) -> dict[str, Any]:
+        assert request.instructions.startswith(prompt.PROMPT_V3)
+        part = request.messages[-1].parts[-1]
+        assert isinstance(part, ToolResultPart) and part.call_id == call_id
+        payload: dict[str, Any] = json.loads(part.content)
+        return payload
+
+    async def try_foreign_profile(request: ModelRequest) -> CallReport:
+        assert observation(request, "lookup") == {"kind": "lookup", "outcome": "authenticated",
+                                                  "tool": "find_user_id_by_email", "user_id": customer.user_id}
+        return calls("get_user_details", {"user_id": customer.other_user}, "foreign")
+
+    async def use_bound_profile(request: ModelRequest) -> CallReport:
+        assert observation(request, "foreign")["code"] == "customer_mismatch"
+        assert test.retail.calls == [lookup_read]
+        lookup = next(part for message in request.messages for part in message.parts
+                      if isinstance(part, ToolResultPart) and part.call_id == "lookup")
+        return calls("get_user_details", {"user_id": json.loads(lookup.content)["user_id"]}, "profile")
+
+    async def propose(request: ModelRequest) -> CallReport:
+        profile_result = observation(request, "profile")
+        assert profile_result["kind"] == "read" and profile_result["tool"] == "get_user_details"
+        user = profile_result["output"]["user"]
+        assert user["user_id"] == customer.user_id
+        assert test.retail.calls == [lookup_read, profile_read]
+        return calls("cancel_pending_order", {"order_id": user["order_ids"][0], "reason": "no longer needed"},
+                     "proposal")
+
+    test.model.script[:] = [calls("find_user_id_by_email", {"email": EMAIL}, "lookup"),
+                            try_foreign_profile, use_bound_profile, propose]
+    assert test.worker.run_once() == 1
+    assert test.state() == "waiting_approval" and not test.model.script
+    # The cancellation preview collects fresh customer and order facts before evaluating the write.
+    assert test.retail.calls == [
+        lookup_read, profile_read, profile_read, GetOrderDetails(order_id=customer.order_id),
+    ]
+    assert test.world.count("app.action_proposals") == 1
+    assert test.world.count("app.customer_consents") == 0
 
 
 def test_final_message_lost_commit_acknowledgement_reconciles_without_reexecution(
@@ -235,6 +293,25 @@ def test_crash_reclaim_resumes_without_duplicate_proposal_or_message(
         saved = asyncio.run(stale.aget_tuple(stale.config()))
         assert saved is not None
         asyncio.run(stale.aput(stale.config(), saved.checkpoint, saved.metadata, {}))
+    if boundary == "checkpoint":
+        executor = test.executor
+        repaired = InvestigationProfile.TOOL_CONTRACT_V1
+        candidate = build_investigation_spec(
+            env=executor.env, engine=executor.engine, configuration=executor.configuration,
+            policy=executor.policy, retrieval_scope=executor.retrieval_scope,
+            retrieval_config=executor.retrieval_config,
+            bindings=executor.bindings, fixture_sha256=executor.fixture_sha256, retail=executor.retail,
+            providers=executor.providers, tokenizer=executor.tokenizer, limits=executor.limits,
+            max_steps=executor.max_steps, clock=executor.clock, wall_clock=executor.wall_clock,
+            lease=executor.lease, test_model=executor.test_model, profile=repaired,
+        )
+        assert candidate.prompt_sha256 == prompt.digest(repaired)
+        assert all(old != new for old, new in zip(binding(test.spec), binding(candidate), strict=True))
+        assert RuntimeCatalog.of([candidate]).for_run(*binding(test.spec)) is None
+        assert isinstance(candidate.executor, InvestigationExecutor)
+        with pytest.raises(runs.Fenced, match="runtime_binding_changed"):
+            candidate.executor.execute(second)
+        assert len(test.model.keys) == calls_before
     monkeypatch.setattr(runtime, "InvestigationSaver", InvestigationSaver)
     monkeypatch.setattr(ProposalService, "create_once", create_once)
     # Rebuilding the executor discards every invocation-local adapter/session object.

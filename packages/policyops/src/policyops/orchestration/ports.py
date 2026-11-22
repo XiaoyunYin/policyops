@@ -64,6 +64,7 @@ class _AgentModelPort:
     binding: Binding
     providers: Callable[[], Providers]
     actor_config_sha256: str
+    detailed_tool_errors: bool = False
     test_only: bool = field(default=False, init=False)
 
     async def complete(self, request: ModelRequest, *, key: UUID, operation: str, deadline: float) -> CallReport:
@@ -71,21 +72,22 @@ class _AgentModelPort:
             return CallReport(None, "contract_gap", "actor_configuration_changed")
         try:
             return await call(self.ledger, self.providers(), self.binding, key, operation, request, "agent",
-                              deadline=deadline, limits=AGENT_LIMITS)
+                              deadline=deadline, limits=AGENT_LIMITS, detailed_tool_errors=self.detailed_tool_errors)
         except LedgerConflict:  # this key's attempt exists with another intent: no new key, no new attempt
             return CallReport(None, "failed", "ledger_conflict")
         except ScopeInactive:
             return CallReport(None, "failed", "scope_inactive")
 
 
-def agent_model_port(ledger: Ledger, binding: Binding, providers: Callable[[], Providers]) -> ModelPort:
+def agent_model_port(ledger: Ledger, binding: Binding, providers: Callable[[], Providers], *,
+                     detailed_tool_errors: bool = False) -> ModelPort:
     if not isinstance(ledger, Ledger):
         raise TypeError("ledger must be a Ledger")
     if not isinstance(binding, RunBinding | OperationBinding | EvalBinding):
         raise TypeError("binding must be an explicit ledger binding")
     if not callable(providers):
         raise TypeError("providers must be a factory")
-    return _AgentModelPort(ledger, binding, providers, _actor_sha256(ledger))  # no provider factory call
+    return _AgentModelPort(ledger, binding, providers, _actor_sha256(ledger), detailed_tool_errors)
 
 
 def is_agent_model_port(port: object) -> bool:

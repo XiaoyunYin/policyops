@@ -5,6 +5,7 @@ from typing import cast
 
 from policyops.orchestration import investigation_prompt as prompt
 from policyops.orchestration.mechanics import TranscriptInvariant
+from policyops.orchestration.profile import InvestigationProfile
 from policyops.orchestration.state import InvestigationState, InvestigationStopped, state_from_json
 from policyops.providers.canonical import CanonicalError, canonical_size
 from policyops.providers.contract import ContractGap
@@ -21,7 +22,8 @@ from policyops_contracts.stops import StopDetails, StopReason
 
 
 def fit(state: InvestigationState, policy: PolicyContext, limits: AgentLimits, *,
-        append: tuple[Entry, ...] = ()) -> InvestigationState:
+        append: tuple[Entry, ...] = (), profile: InvestigationProfile = InvestigationProfile.BASELINE
+        ) -> InvestigationState:
     entries = (*state.transcript, *append)
     pairs: list[tuple[int, int]] = []
     notices: list[tuple[int, ...]] = []
@@ -62,7 +64,7 @@ def fit(state: InvestigationState, policy: PolicyContext, limits: AgentLimits, *
             # The pending action is pinned but is not a provider history until its result exists.
             history = candidate[:-1] if candidate and isinstance(candidate[-1], AgentToolCall) else candidate
             prompt.request(policy, limits, history, facts_text=json.dumps(facts, ensure_ascii=False,
-                                                                         separators=(",", ":")))
+                                                                         separators=(",", ":")), profile=profile)
         except (CanonicalError, ContractGap, TranscriptInvariant, ValueError):
             return False
         return True

@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from policyops.domain.protocol import step_violation
 from policyops.providers.calls import CallReport
+from policyops.providers.tool_diagnostics import NOTICE_TABLE
 from policyops.providers.tools import StepRefused, to_agent_step
 from policyops_contracts.agent import AgentStep, MessageStep, ToolCallStep
 from policyops_contracts.conversation import (
@@ -36,6 +37,7 @@ from policyops_contracts.retail import (
     TransferToHumanAgents,
 )
 from policyops_contracts.retrieval import QueryText
+from policyops_contracts.tool_diagnostics import ToolArgumentIssue
 
 
 OPENING_MARKER = "[conversation start]"
@@ -102,7 +104,7 @@ def provider_messages(transcript: Sequence[Entry], *, opening: bool = False) -> 
             elif isinstance(entry, UserMessage):
                 user.append(TextPart(text=entry.text))
             elif isinstance(entry, RuntimeNotice):
-                user.append(TextPart(text=notice_text(entry.code)))
+                user.append(TextPart(text=notice_text(entry.code, entry.argument_issue)))
             elif isinstance(entry, AgentMessage | AgentToolCall):
                 if not user:
                     raise TranscriptInvariant("an agent action follows a user-side entry")
@@ -133,17 +135,20 @@ def entry_bytes(entry: Entry) -> int:
     elif isinstance(entry, ToolResult):
         text = entry.content
     else:
-        text = notice_text(entry.code)
+        text = notice_text(entry.code, entry.argument_issue)
     return len(text.encode("utf-8"))
 
 
-def notice_text(code: NoticeCode) -> str:
+def notice_text(code: NoticeCode, issue: ToolArgumentIssue | None = None) -> str:
+    if code == "invalid_arguments" and issue is not None:
+        return NOTICE_TABLE.get((issue.tool, issue.field, issue.constraint), NOTICE_TEXT[code])
     return TOOL_TEXT_DROPPED if code == "tool_text_dropped" else NOTICE_TEXT[code]
 
 
 @dataclass(frozen=True)
 class Notice:
     code: NoticeCode
+    argument_issue: ToolArgumentIssue | None = None
 
 
 @dataclass(frozen=True)
@@ -192,9 +197,11 @@ def report_terminal(report: CallReport) -> tuple[TerminalReason, str | None] | N
 
 
 def parse(result: ModelResult, *, names: dict[str, bool], retail: bool,
-          previous: AgentStep | None, drop_tool_text: bool = False) -> Notice | Say | Use:
+          previous: AgentStep | None, drop_tool_text: bool = False,
+          detailed_tool_errors: bool = False) -> Notice | Say | Use:
     if result.outcome == "invalid_output":
-        return Notice(_INVALID_OUTPUT.get(result.reason_code or "", "invalid_output"))
+        return Notice(_INVALID_OUTPUT.get(result.reason_code or "", "invalid_output"),
+                      result.argument_issue if detailed_tool_errors else None)
     if result.outcome != "completed":  # a structured answer was never requested
         return Notice("invalid_output")
     calls, text = result.tool_calls, result.text
@@ -225,9 +232,10 @@ def parse(result: ModelResult, *, names: dict[str, bool], retail: bool,
         try:
             # The gateway converter remains strict. Only this benchmark/minimal
             # parser passes it a reply with the accompanying text removed.
-            step = to_agent_step(result.model_copy(update={"text": None}) if drop_tool_text else result)
+            step = to_agent_step(result.model_copy(update={"text": None}) if drop_tool_text else result,
+                                 detailed=detailed_tool_errors)
         except StepRefused as refused:
-            return Notice(_STEP_REFUSED.get(refused.code, "invalid_output"))
+            return Notice(_STEP_REFUSED.get(refused.code, "invalid_output"), refused.argument_issue)
         if step_violation(previous, step) is not None:
             return Notice("protocol_violation")
         return Use(accepted, step, None, text_dropped=bool(text))

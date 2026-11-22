@@ -40,7 +40,10 @@ from policyops.providers.canonical import CanonicalError, output_bytes, strict_l
 from policyops.providers.contract import ALLOWED_INFERENCE_GEO, CONFIRMED_MODEL_IDS, EXPECTED_SERVICE_TIER
 from policyops.providers.schema import CheckedSchema, validation_errors
 from policyops.providers.serialize import PreparedRequest
+from policyops.providers.tool_diagnostics import argument_issue
+from policyops.providers.tools import refused_arguments
 from policyops_contracts.model import ModelResult, Outcome, ReportedUsage, ToolCall
+from policyops_contracts.tool_diagnostics import ToolArgumentIssue
 
 
 MAX_TEXT = 262_144
@@ -235,11 +238,14 @@ def _messages_evidence(message: Mapping[str, Any], prepared: PreparedRequest, *,
 
 # -- results ------------------------------------------------------------------------------------------------------
 
-def _result(prepared: PreparedRequest, evidence: Evidence, outcome: Outcome, **fields: Any) -> ModelResult:
+def _result(prepared: PreparedRequest, evidence: Evidence, outcome: Outcome, *,
+            argument_issue: ToolArgumentIssue | None = None, **fields: Any) -> ModelResult:
     stop = fields.pop("stop_reason", None)
     if stop is not None and stop not in STOP_REASONS:
         stop = None
         fields.setdefault("reason_code", "stop_reason_unrecognised")
+    if argument_issue is not None:
+        fields["argument_issue"] = argument_issue
     return ModelResult(outcome=outcome, provider=prepared.provider, requested_model=prepared.model,
                        returned_model=evidence.returned_model, provider_request_id=evidence.provider_request_id,
                        usage=evidence.reported, stop_reason=stop, **fields)
@@ -312,7 +318,17 @@ def _finish(prepared: PreparedRequest, evidence: Evidence, text: str, calls: lis
     if calls:
         tool_calls, problem = _tool_calls(prepared, calls)
         if problem is not None:
-            return _result(prepared, evidence, "invalid_output", reason_code=problem, stop_reason=stop_reason)
+            issue = None
+            if prepared.detailed_tool_errors and len(calls) == 1:
+                _, name, arguments = calls[0]
+                if problem == "tool_arguments_schema":
+                    issue = refused_arguments(name, arguments)
+                elif problem == "tool_arguments_not_json":
+                    issue = argument_issue(name)
+                elif problem == "tool_arguments_too_large":
+                    issue = argument_issue(name, constraint="too_long")
+            return _result(prepared, evidence, "invalid_output", reason_code=problem, stop_reason=stop_reason,
+                           argument_issue=issue)
         return _result(prepared, evidence, "completed", text=text or None, tool_calls=tool_calls,
                        stop_reason=stop_reason)
     if prepared.output is not None:
@@ -353,7 +369,10 @@ def openai_result(response: Mapping[str, Any], prepared: PreparedRequest, eviden
         elif item.get("type") == "function_call":
             call_id, name, arguments = item.get("call_id"), item.get("name"), item.get("arguments")
             if not (isinstance(call_id, str) and isinstance(name, str) and isinstance(arguments, str)):
-                return _result(prepared, evidence, "invalid_output", reason_code="tool_call_malformed")
+                issue = (argument_issue(name) if prepared.detailed_tool_errors and isinstance(name, str)
+                         and name in prepared.tools and not isinstance(arguments, str) else None)
+                return _result(prepared, evidence, "invalid_output", reason_code="tool_call_malformed",
+                               argument_issue=issue)
             calls.append((call_id, name, arguments))
         elif item.get("type") == "reasoning":
             continue  # reasoning summaries are never carried into results or logs
@@ -387,7 +406,10 @@ def anthropic_result(message: Mapping[str, Any], prepared: PreparedRequest, evid
         elif block.get("type") == "tool_use":
             call_id, name, arguments = block.get("id"), block.get("name"), block.get("input")
             if not isinstance(call_id, str) or not isinstance(name, str) or not isinstance(arguments, dict):
-                return _result(prepared, evidence, "invalid_output", reason_code="tool_call_malformed")
+                issue = (argument_issue(name) if prepared.detailed_tool_errors and isinstance(name, str)
+                         and name in prepared.tools and not isinstance(arguments, dict) else None)
+                return _result(prepared, evidence, "invalid_output", reason_code="tool_call_malformed",
+                               argument_issue=issue)
             try:  # `arguments` came from the exact raw-JSON parse, so its numbers are exact decimals
                 arguments_json = output_bytes(arguments).decode()
             except (CanonicalError, UnicodeError):

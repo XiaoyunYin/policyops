@@ -27,6 +27,7 @@ from policyops.orchestration import investigation_prompt as prompt
 from policyops.orchestration.adapters import InvestigationAdapters
 from policyops.orchestration.graph import ABSTENTION, InvestigationGraph, failed, update
 from policyops.orchestration.minimal import prompt_sha256
+from policyops.orchestration.profile import InvestigationProfile
 from policyops.orchestration.state import (
     AwaitingApproval,
     CheckpointStateVersionError,
@@ -41,9 +42,9 @@ from policyops.providers.calls import CallReport
 from policyops.providers.serialize import prepare
 from policyops.runtime import investigation as runtime
 from policyops.runtime.spec import Outcome, Retry, StepContext
-from policyops_contracts.conversation import AgentLimits, ToolResult, UserMessage
+from policyops_contracts.conversation import AgentLimits, RuntimeNotice, ToolResult, UserMessage
 from policyops_contracts.grounding import CitedQuote, ReconcileOutcome, RecordOutcome
-from policyops_contracts.model import ModelRequest, ToolCall
+from policyops_contracts.model import ModelRequest, TextPart, ToolCall
 from policyops_contracts.proposal import EvidenceRef
 from policyops_contracts.stops import StopReason
 from policyops_testing.agent_fakes import FakeKnowledge, ScriptedModel, calls, fictional_policy, report, result, says
@@ -105,10 +106,12 @@ class Actions:
 
 
 def graph(model: ScriptedModel, actions: Actions | None = None, *, limits: AgentLimits | None = None,
-          saver: BaseCheckpointSaver[int] | None = None) -> tuple[InvestigationGraph, Actions]:
+          saver: BaseCheckpointSaver[int] | None = None,
+          profile: InvestigationProfile = InvestigationProfile.BASELINE) -> tuple[InvestigationGraph, Actions]:
     actions = actions or Actions()
     return InvestigationGraph(model, FakeKnowledge(), actions, fictional_policy(),
-                               limits or AgentLimits(knowledge_steps=16), time.monotonic() + 60, lambda: None), actions
+                               limits or AgentLimits(knowledge_steps=16), time.monotonic() + 60, lambda: None,
+                               profile=profile), actions
 
 
 def run(model: ScriptedModel, state: InvestigationState | None = None, actions: Actions | None = None,
@@ -163,6 +166,35 @@ def test_invalid_ceiling_and_plain_prose_abstains() -> None:
     assert final.model_calls == final.invalid_count == 2 and not actions.nodes
     final, _ = run(ScriptedModel([says("Uncited policy assertion must not be delivered.")]))
     assert final.final_text == ABSTENTION
+
+
+def test_detailed_notices_roundtrip_and_keep_the_consecutive_invalid_cap() -> None:
+    model = ScriptedModel([calls("get_order_details", {"order_id": "W9876543"}, "rejected_id"),
+                           calls("calculate", {"expression": "1"}),
+                           calls(prompt.FINISH, ABSTAIN | {"outcome": "discard-this"}),
+                           calls("get_user_details", {})])
+    final, actions = run(model, profile=InvestigationProfile.TOOL_CONTRACT_V1)
+    assert isinstance(final.terminal, InvestigationStopped) and final.terminal.details.reason == StopReason.INVALID_CAP
+    assert final.model_calls == 4 and final.invalid_count == 2 and actions.nodes == ["read"]
+    issues = [entry.argument_issue for entry in final.transcript if isinstance(entry, RuntimeNotice)]
+    assert all(issue is not None for issue in issues)
+    assert [issue.model_dump(mode="json") for issue in issues if issue is not None] == [
+        {"tool": "get_order_details", "field": "order_id", "constraint": "pattern"},
+        {"tool": "finish_answer", "field": "outcome", "constraint": "enum"},
+        {"tool": "get_user_details", "field": "user_id", "constraint": "missing"},
+    ]
+    expected = [
+        "[runtime notice] get_order_details.order_id (pattern). For order IDs, include the leading #, e.g. #W0000000.",
+        "[runtime notice] finish_answer.outcome (enum). Use one of the listed values.",
+    ]
+    sent = [part.text for part in model.requests[-1].messages[-1].parts if isinstance(part, TextPart)]
+    assert sent == expected[1:]
+    assert isinstance(delivered := model.requests[1].messages[-1].parts[-1], TextPart)
+    assert delivered.text == expected[0]
+    assert all(secret not in final.model_dump_json() for secret in ("W9876543", "rejected_id", "discard-this"))
+    legacy = initial().model_dump(mode="json")
+    legacy["transcript"].append({"kind": "notice", "code": "invalid_arguments"})
+    assert state_from_json(legacy).model_dump(mode="json") == legacy
 
 
 def test_transfer_requires_exact_handoff_and_is_not_a_proposal() -> None:

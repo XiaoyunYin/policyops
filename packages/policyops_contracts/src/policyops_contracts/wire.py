@@ -60,7 +60,9 @@ from policyops_contracts.conversation import (
     UserMessage,
 )
 from policyops_contracts.digest import canonical_bytes
+from policyops_contracts.retail import ToolName
 from policyops_contracts.scalars import Sha256Hex
+from policyops_contracts.tool_diagnostics import ToolArgumentIssue
 
 
 WIRE_VERSION = "policyops.wire/v1"
@@ -190,6 +192,7 @@ WHITELIST: frozenset[type[BaseModel]] = frozenset({
     ToRuntime, FromRuntime, OpenSessionBody, UserTurnBody, ToolReturnBody, CloseSessionBody, SessionOpenedBody,
     ToolRequestBody, TurnEndedBody, SessionClosedBody, RefusedBody, PolicyContext, ToolCatalog, ToolDescriptor,
     AgentMessage, UserMessage, ToolResult, AgentToolCall, TurnOutcome, PendingToolOutcome, RuntimeNotice,
+    ToolArgumentIssue,
 })
 
 
@@ -221,7 +224,7 @@ def _types(annotation: Any) -> Allowed:
         return frozenset({tuple}), _types(args[0])[0]
     if annotation is type(None) or annotation is None:
         return frozenset({type(None)}), None
-    if annotation in (str, int, bool, UUID) or annotation in WHITELIST:
+    if annotation in (str, int, bool, UUID, ToolName) or annotation in WHITELIST:
         return frozenset({annotation}), None
     raise TypeError(f"unsupported field annotation {annotation!r}")
 
@@ -266,7 +269,7 @@ def account(frame: object) -> int:
         kind = type(value)
         if kind not in allowed and not (kind is list and tuple in allowed):  # a constructed list stands for a tuple
             raise WireRefused("encode_invalid")  # e.g. a str where a UUID is declared, a dict, a float
-        if kind is str:
+        if kind is str or kind is ToolName:
             text: str = value  # type: ignore[assignment]
             if len(text) > MAX_RAW_STRING:
                 raise WireRefused("string_too_long")
@@ -306,11 +309,14 @@ def account(frame: object) -> int:
             for name in fields:  # bounded by the declared (trusted) field count
                 if name not in data:
                     raise WireRefused("encode_invalid")
-            nodes += len(fields)  # keys count as nodes, as the decoder's pre-scan counts them
-            total += 2 + max(len(fields) - 1, 0) + sum(len(name) + 3 for name in fields)  # {}, commas, "k":
+            # A legacy notice omits the optional diagnostic in its canonical bytes.
+            names = tuple(name for name in fields
+                          if not (kind is RuntimeNotice and name == "argument_issue" and data[name] is None))
+            nodes += len(names)  # keys count as nodes, as the decoder's pre-scan counts them
+            total += 2 + max(len(names) - 1, 0) + sum(len(name) + 3 for name in names)  # {}, commas, "k":
             inner = ancestors | {id(model)}
             try:
-                declared = [(name, *_field_types(kind, name)) for name in fields]
+                declared = [(name, *_field_types(kind, name)) for name in names]
             except TypeError:  # pragma: no cover - every whitelisted field annotation is supported
                 raise WireRefused("encode_invalid") from None
             stack.extend((data[name], depth + 1, inner, value_types, items_of)

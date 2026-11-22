@@ -12,7 +12,7 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import field_validator
+from pydantic import ValidationError, field_validator
 from pydantic_core import to_jsonable_python
 from sqlalchemy.exc import DBAPIError
 
@@ -21,6 +21,7 @@ from policyops.orchestration.context import fit
 from policyops.orchestration.mechanics import Notice, Say, Use, after_transfer, parse, report_terminal
 from policyops.orchestration.minimal import AGENT_NAMESPACE, AGENT_OPERATION
 from policyops.orchestration.ports import KnowledgePort, ModelPort
+from policyops.orchestration.profile import InvestigationProfile
 from policyops.orchestration.state import (
     AwaitingApproval,
     InvestigationAction,
@@ -34,6 +35,7 @@ from policyops.orchestration.stops import InvestigationStop, stop_reason
 from policyops.persistence.database import PersistenceError
 from policyops.persistence.runs import Fenced
 from policyops.providers.accounting import AccountingUnconfirmed
+from policyops.providers.tool_diagnostics import argument_issue
 from policyops.runtime.spec import Stopped, investigation_message_id, unconfirmed_stop
 from policyops.telemetry import annotate, count, observed
 from policyops_contracts.base import WireModel
@@ -110,9 +112,10 @@ class InvestigationGraph:
     fence: Callable[[], None]
     resource_stop: Callable[[], StopReason | None] = lambda: None
     accounting: Stopped | None = None
+    profile: InvestigationProfile = InvestigationProfile.BASELINE
 
     def fitted(self, state: InvestigationState, entries: tuple[Entry, ...] = ()) -> InvestigationState:
-        return fit(state, self.policy, self.limits, append=entries)
+        return fit(state, self.policy, self.limits, append=entries, profile=self.profile)
 
     @observed("graph.node")
     async def node(self, name: str, data: GraphEnvelope) -> dict[str, Any]:
@@ -172,7 +175,7 @@ class InvestigationGraph:
         try:
             report = await self.model.complete(prompt.request(self.policy, self.limits, state.transcript,
                 facts_text=json.dumps([f.model_dump(mode="json") for f in state.critical_facts], ensure_ascii=False,
-                                      separators=(",", ":"))),
+                                      separators=(",", ":")), profile=self.profile),
                                                key=key, operation=AGENT_OPERATION, deadline=self.deadline)
         except asyncio.CancelledError:
             # A provider-originated cancellation is typed; external task cancellation is owned by the executor.
@@ -204,7 +207,8 @@ class InvestigationGraph:
         if not isinstance(report.result, ModelResult):
             return failed(state, InvestigationFailed(kind="provider_error"))
         result = report.result
-        names = {t.name: t.read_only for t in prompt.catalog().all_tools()}
+        names = {t.name: t.read_only for t in prompt.catalog(self.profile).all_tools()}
+        detailed = self.profile is InvestigationProfile.TOOL_CONTRACT_V1
         action: Notice | Say | Use
         # Control tools use the same one-call gate, then their own schema (never retail to_agent_step).
         if (result.outcome == "completed" and len(result.tool_calls) == 1 and not result.text
@@ -214,15 +218,17 @@ class InvestigationGraph:
             else:
                 try:
                     answer = GroundedAnswer.model_validate_json(result.tool_calls[0].arguments_json)
-                except ValueError:
-                    action = Notice("invalid_arguments")
+                except ValidationError as error:
+                    action = Notice("invalid_arguments", argument_issue(prompt.FINISH, error) if detailed else None)
                 else:
                     return update(state, invalid_count=0,
                                   next_action=InvestigationAction(kind="finalize", answer=answer))
         else:
-            action = parse(result, names=names, retail=True, previous=state.previous_step)
+            action = parse(result, names=names, retail=True, previous=state.previous_step,
+                           detailed_tool_errors=detailed)
         if isinstance(action, Notice):
-            notice = RuntimeNotice(code=action.code)
+            notice = (RuntimeNotice(code=action.code) if action.argument_issue is None else
+                      RuntimeNotice(code=action.code, argument_issue=action.argument_issue))
             state = update(state, invalid_count=state.invalid_count + 1,
                            next_action=None)
             state = self.fitted(state, (notice,))

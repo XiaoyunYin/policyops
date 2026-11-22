@@ -31,6 +31,7 @@ from policyops_contracts.model import CallId, JsonText, Name
 from policyops_contracts.policy import RETAIL_POLICY
 from policyops_contracts.retrieval import MAX_QUERY_CODE_POINTS
 from policyops_contracts.scalars import MessageText, Sha256Hex, Slug
+from policyops_contracts.tool_diagnostics import ToolArgumentIssue
 
 
 CONFIG_VERSION = "policyops.agent-config/v2"
@@ -213,6 +214,7 @@ class RuntimeNotice(WireModel):
 
     kind: Literal["notice"] = "notice"
     code: NoticeCode
+    argument_issue: ToolArgumentIssue | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 Entry = Annotated[UserMessage | AgentMessage | AgentToolCall | ToolResult | RuntimeNotice,

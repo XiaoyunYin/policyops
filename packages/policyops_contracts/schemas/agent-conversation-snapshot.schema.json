@@ -95,6 +95,17 @@
       "additionalProperties": false,
       "description": "A fixed runtime diagnostic; it never quotes discarded model output.\n\n`tool_text_dropped` is informational and does not count as an invalid reply.",
       "properties": {
+        "argument_issue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolArgumentIssue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "code": {
           "enum": [
             "several_tool_calls",
@@ -121,6 +132,107 @@
       ],
       "title": "RuntimeNotice",
       "type": "object"
+    },
+    "ToolArgumentIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "constraint": {
+          "enum": [
+            "pattern",
+            "missing",
+            "extra_field",
+            "type",
+            "enum",
+            "too_long",
+            "too_short",
+            "range",
+            "shape"
+          ],
+          "title": "Constraint",
+          "type": "string"
+        },
+        "field": {
+          "enum": [
+            "arguments",
+            "email",
+            "first_name",
+            "last_name",
+            "zip",
+            "user_id",
+            "order_id",
+            "product_id",
+            "item_id",
+            "expression",
+            "summary",
+            "reason",
+            "address1",
+            "address2",
+            "city",
+            "state",
+            "country",
+            "payment_method_id",
+            "item_ids",
+            "new_item_ids",
+            "v",
+            "outcome",
+            "assertions",
+            "assertions.text",
+            "assertions.policy_dependent",
+            "assertions.citations",
+            "assertions.citations.step",
+            "assertions.citations.evidence_id",
+            "assertions.citations.quote",
+            "assertions.citations.start",
+            "assertions.citations.end",
+            "abstention",
+            "abstention.reason",
+            "abstention.detail"
+          ],
+          "title": "Field",
+          "type": "string"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolName"
+            },
+            {
+              "const": "finish_answer",
+              "type": "string"
+            }
+          ],
+          "title": "Tool"
+        }
+      },
+      "required": [
+        "tool",
+        "field",
+        "constraint"
+      ],
+      "title": "ToolArgumentIssue",
+      "type": "object"
+    },
+    "ToolName": {
+      "enum": [
+        "find_user_id_by_email",
+        "find_user_id_by_name_zip",
+        "get_user_details",
+        "get_order_details",
+        "get_product_details",
+        "get_item_details",
+        "list_all_product_types",
+        "calculate",
+        "transfer_to_human_agents",
+        "cancel_pending_order",
+        "modify_pending_order_address",
+        "modify_pending_order_payment",
+        "modify_pending_order_items",
+        "return_delivered_order_items",
+        "exchange_delivered_order_items",
+        "modify_user_address"
+      ],
+      "title": "ToolName",
+      "type": "string"
     },
     "ToolResult": {
       "additionalProperties": false,

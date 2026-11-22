@@ -366,10 +366,10 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
 
 async def _run(ledger: Ledger, providers: Providers, binding: Binding, key: UUID, operation: str,
                request: ModelRequest, actor: Actor, limits: CallLimits, deadline: float,
-               pending: list[_Pending | None], report: CallReport) -> CallReport:
+               pending: list[_Pending | None], report: CallReport, *, detailed_tool_errors: bool) -> CallReport:
     for repair in range(1 + limits.repairs):
         try:
-            prepared = prepare(request, ledger.configuration, actor)
+            prepared = prepare(request, ledger.configuration, actor, detailed_tool_errors=detailed_tool_errors)
         except ContractGap as error:
             return CallReport(None, "contract_gap", str(error)[:200], report.attempts)
         if prepared.provider == "bedrock":
@@ -404,20 +404,20 @@ async def _run(ledger: Ledger, providers: Providers, binding: Binding, key: UUID
 
 @observed("provider.request")
 async def call(ledger: Ledger, providers: Providers, binding: Binding, invocation_key: UUID, operation: str,
-               request: ModelRequest, actor: Actor, *, deadline: float, limits: CallLimits | None = None
-               ) -> CallReport:
+               request: ModelRequest, actor: Actor, *, deadline: float, limits: CallLimits | None = None,
+               detailed_tool_errors: bool = False) -> CallReport:
     """`deadline` is an absolute `time.monotonic()` instant (the event loop's clock)."""
     if isinstance(binding, RunBinding):
         annotate(run_id=binding.run_id)
     result = await _call(ledger, providers, binding, invocation_key, operation, request, actor,
-                         deadline=deadline, limits=limits)
+                         deadline=deadline, limits=limits, detailed_tool_errors=detailed_tool_errors)
     annotate(outcome=result.status)
     return result
 
 
 async def _call(ledger: Ledger, providers: Providers, binding: Binding, invocation_key: UUID, operation: str,
-                request: ModelRequest, actor: Actor, *, deadline: float, limits: CallLimits | None = None
-                ) -> CallReport:
+                request: ModelRequest, actor: Actor, *, deadline: float, limits: CallLimits | None = None,
+                detailed_tool_errors: bool = False) -> CallReport:
     if isinstance(deadline, bool) or not isinstance(deadline, float | int) or not math.isfinite(deadline):
         raise ValueError("deadline is a finite time.monotonic() instant")
     if deadline <= time.monotonic():
@@ -427,7 +427,8 @@ async def _call(ledger: Ledger, providers: Providers, binding: Binding, invocati
     try:
         async with asyncio.timeout_at(deadline):
             return await _run(ledger, providers, binding, invocation_key, operation, request, actor,
-                              limits or CallLimits(), float(deadline), pending, report)
+                              limits or CallLimits(), float(deadline), pending, report,
+                              detailed_tool_errors=detailed_tool_errors)
     except _Stop as stop:
         return stop.report
     except (TransactionOutcomeUnknown, AccountingUnconfirmed):

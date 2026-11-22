@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StringConstraints, model_validator
 
 from policyops_contracts.base import WireModel
+from policyops_contracts.tool_diagnostics import ToolArgumentIssue
 
 
 Name = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")]
@@ -149,3 +150,4 @@ class ModelResult(WireModel):
     stop_reason: Annotated[str, StringConstraints(max_length=64)] | None = None
     reason_code: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")] | None = None
     usage: ReportedUsage
+    argument_issue: ToolArgumentIssue | None = Field(default=None, exclude_if=lambda value: value is None)

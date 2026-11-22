@@ -25,7 +25,8 @@ import httpx
 import psycopg
 from sqlalchemy import Engine, create_engine, text
 
-from policyops.settings import REFUSED_LIBPQ_ENV, validate_sslrootcert
+from policyops.settings import REFUSED_LIBPQ_ENV, TelemetrySettings, validate_sslrootcert
+from policyops.telemetry import configure
 
 
 if TYPE_CHECKING:
@@ -313,6 +314,9 @@ def worker(*, execution_hooks: Any = None) -> None:
     signal.signal(signal.SIGTERM, lambda _number, _frame: stop.set())
     signal.signal(signal.SIGINT, lambda _number, _frame: stop.set())
     with ExitStack() as owned:
+        telemetry = configure(TelemetrySettings(), role="worker")
+        if telemetry is not None:
+            owned.callback(telemetry.close)
         app = owned.enter_context(own_engine("policyops_app_runtime"))
         discovery = owned.enter_context(own_engine("policyops_worker_discovery"))
         review = build_review_runtime(env="local", app_engine=app, bindings=demo_bindings(app),

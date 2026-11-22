@@ -33,6 +33,9 @@ dependencies = [
     "uvicorn>=0.40,<0.60",
 ]
 
+[project.optional-dependencies]
+otlp = ["opentelemetry-exporter-otlp-proto-http==1.45.1"]
+
 [tool.uv.sources]
 policyops-contracts = { workspace = true }
 

@@ -232,16 +232,18 @@ class Profile:
 
     def run_scripted(self, scenario: Scenario, slot: Slot, tape: Tape, handler: Handler, *,
                      profile: InvestigationProfile = InvestigationProfile.BASELINE,
-                     bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None) -> Summary:
+                     bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None,
+                     observe_queue: Callable[[Worker], None] | None = None) -> Summary:
         token = secrets.token_urlsafe(24)
         return self._run(scenario, slot, tape, lambda: httpx2.MockTransport(handler),
                          env="test", credential=token, redactor=slot.redactor((token,)),
-                         profile=profile, bind_spec=bind_spec)
+                         profile=profile, bind_spec=bind_spec, observe_queue=observe_queue)
 
     def _run(self, scenario: Scenario, slot: Slot, tape: Tape, transport: Callable[[], httpx2.AsyncBaseTransport],
              *, env: str, credential: str, redactor: Redactor, expected_generation: UUID | None = None,
              profile: InvestigationProfile = InvestigationProfile.BASELINE,
-             bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None) -> Summary:
+             bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None,
+             observe_queue: Callable[[Worker], None] | None = None) -> Summary:
         if env != "test" and in_test_context():
             raise ValueError("test scenarios require a mock provider transport")
         scenario.verify(self.retail.fixture.raw)
@@ -276,7 +278,11 @@ class Profile:
             if result.run_id != slot.run:
                 raise ValueError("slot run identity mismatch")
             worker = Worker(self.app, self.app, lease, catalog)
+            if observe_queue is not None:
+                observe_queue(worker)
             stop, latency = self._work(worker, slot, tape, lease)
+            if observe_queue is not None:
+                observe_queue(worker)
         if self.corpus_generation(slot.workspace) != generation:
             raise ValueError("policy generation changed during the slot")
         accounting = usage(self.app, slot)

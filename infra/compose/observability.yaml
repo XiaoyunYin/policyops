@@ -1,0 +1,17 @@
+# Standalone loopback profile. Invoke this file on its own.
+name: policyops-observability
+services:
+  observability:
+    image: grafana/otel-lgtm@sha256:4c8056c9c05fcb3c8fd93800e85334bfd79b4d0271b47a54a121a64af41fe1fe
+    ports:
+      - "127.0.0.1:${POLICYOPS_OBSERVABILITY_GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${POLICYOPS_OBSERVABILITY_OTLP_PORT:-4318}:4318"
+    mem_limit: 2g
+    environment:
+      # Editor is the lowest basic role with Explore access for the Tempo link on this disposable loopback stack.
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      - ../observability/datasources.yaml:/otel-lgtm/grafana/conf/provisioning/datasources/grafana-datasources.yaml:ro
+      - ../observability/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/grafana-dashboards.yaml:ro
+      - ../observability/dashboard.json:/otel-lgtm/policyops-dashboard.json:ro

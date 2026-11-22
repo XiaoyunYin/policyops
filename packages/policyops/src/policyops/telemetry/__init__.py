@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import wraps
 import inspect
+import time
 from typing import TYPE_CHECKING, Any, Literal, ParamSpec, Protocol, TypeVar, Unpack
 from uuid import UUID
 
@@ -32,7 +33,9 @@ SpanName = Literal["http.request", "worker.job", "worker.claim", "worker.execute
                    "execution.batch", "execution.reserve", "execution.step", "execution.dispatch",
                    "execution.reconcile", "sql.failure"]
 MetricName = Literal["provider.calls", "provider.input_tokens", "provider.output_tokens", "provider.cost_usd",
+                     "provider.dispatch_duration",
                      "errors", "jobs", "reviews", "executions", "queue.depth", "queue.oldest_due_age"]
+ServiceRole = Literal["api", "worker", "demo"]
 
 
 class Span(Protocol):
@@ -57,16 +60,17 @@ def enabled() -> bool:
     return _backend is not None
 
 
-def configure(settings: TelemetrySettings, **exporters: Any) -> Backend | None:
+def configure(settings: TelemetrySettings, *, role: ServiceRole = "api", **exporters: Any) -> Backend | None:
     """Process owner calls once and owns close(). Custom exporters are trusted, server-owned code."""
     global _backend
+    settings.require_safe_environment()
     if not settings.enabled:
         return None
     if _backend is not None:
         raise RuntimeError("telemetry already configured")
     from policyops.telemetry.sdk import Backend
 
-    backend = Backend(settings, **exporters)
+    backend = Backend(settings, role=role, **exporters)
     _backend = backend
     return backend
 
@@ -89,6 +93,19 @@ def count(name: MetricName, value: int | float = 1, **attributes: Unpack[Attribu
     backend = _backend
     if backend is not None:
         backend.measure(name, value, clean(attributes, metric=True))
+
+
+@contextmanager
+def provider_dispatch(provider: str, model: str) -> Iterator[None]:
+    """Time one adapter send, including its response/cleanup, outside accounting and backoff."""
+    if _backend is None:
+        yield
+        return
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        count("provider.dispatch_duration", time.monotonic() - started, provider=provider, model=model)
 
 
 def correlation() -> dict[str, str]:

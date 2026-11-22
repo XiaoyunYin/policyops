@@ -9,8 +9,24 @@ The application installs `opentelemetry-sdk` 1.45.1, `opentelemetry-api` 1.45.1 
 metadata declares `License-Expression: Apache-2.0`; each distribution includes `licenses/LICENSE` containing
 the Apache License, Version 2.0. No OpenTelemetry source is vendored here. Preserve these distribution license
 files when redistributing an installed environment or image. The SDK is a direct dependency; the matching API
-and semantic-conventions packages are dependencies of the SDK. No OTLP exporter or automatic instrumentation
-package is added for Core telemetry.
+and semantic-conventions packages are dependencies of the SDK.
+
+The local `otlp` extra adds the Apache-2.0 OpenTelemetry HTTP/protobuf exporter 1.45.1 and its
+OpenTelemetry transport, encoding and protocol packages, with Requests, Google API common protos and
+protobuf in the dependency graph. Preserve the installed license files when redistributing an
+environment with the extra. The deployment image installs the Core dependency set.
+[Exporter package metadata](https://pypi.org/project/opentelemetry-exporter-otlp-proto-http/1.45.1/).
+
+The license audit flags `protobuf` 7.36.2 for its legacy metadata declaration, “3-Clause BSD License”
+(BSD-3-Clause). The reviewed Windows x86-64 wheel includes `.dist-info/LICENSE` and has no
+`License-File` metadata field. When redistributing, retain the copyright notice, conditions and
+disclaimer from the pinned upstream license.
+[Protocol Buffers v36.2 license](https://github.com/protocolbuffers/protobuf/blob/v36.2/LICENSE).
+
+The local Grafana LGTM image is pulled by digest from its upstream distribution. Its bundled projects
+retain their licenses, including AGPL-3.0 Grafana, Loki, Tempo and Pyroscope and Apache-2.0 Prometheus
+and OpenTelemetry Collector. PolicyOps distributes configuration for the local image.
+[Image source and notices](https://github.com/grafana/docker-otel-lgtm/tree/v0.39.0).
 
 ## tiktoken and the cl100k_base vocabulary
 

@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: PolicyOps
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /otel-lgtm/policyops-dashboard.json

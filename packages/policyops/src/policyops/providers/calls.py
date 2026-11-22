@@ -73,7 +73,7 @@ from policyops.providers.adapters import CountFailed, Invocation, as_contract_ga
 from policyops.providers.contract import ContractGap, Provider, require_clean_environment
 from policyops.providers.results import Evidence
 from policyops.providers.serialize import PreparedRequest, prepare
-from policyops.telemetry import annotate, enabled, observed, provider_usage
+from policyops.telemetry import annotate, enabled, observed, provider_dispatch, provider_usage
 from policyops_contracts.model import Message, ModelRequest, ModelResult, TextPart
 from policyops_contracts.provider_failures import failure_code
 
@@ -329,11 +329,13 @@ async def _attempt(ledger: Ledger, providers: Providers, binding: Binding, key: 
 
             if providers.bedrock is None:
                 raise ContractGap("bedrock.credentials_missing")
-            invocation = await _capped(bedrock_invoke(prepared, providers.transport(prepared.provider),
-                                                     providers.bedrock), deadline, limits)
+            with provider_dispatch(prepared.provider, prepared.model):
+                invocation = await _capped(bedrock_invoke(prepared, providers.transport(prepared.provider),
+                                                         providers.bedrock), deadline, limits)
         else:
-            invocation = await _capped(invoke(prepared, providers.transport(prepared.provider), credential,
-                                              cache_mode=cache_mode), deadline, limits)
+            with provider_dispatch(prepared.provider, prepared.model):
+                invocation = await _capped(invoke(prepared, providers.transport(prepared.provider), credential,
+                                                  cache_mode=cache_mode), deadline, limits)
     except _AttemptExpired:
         # Possibly sent and billed: the hold stays. Its close was never observed, so it is not claimed.
         invocation = Invocation(sent=True, error="timeout", cleanup_confirmed=False)

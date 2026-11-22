@@ -508,3 +508,46 @@ Retain that directory across processes and use one environment for registration,
 dev and sealed runs. Serialize ingestion and QA execution in this dedicated database.
 
 See [QA study runner](evaluation.md#qa-study-runner) for execution and reports.
+
+## Local observability profile
+
+Use a local Docker engine with Compose, a prepared tokenizer, and the pinned evaluator fixture tree. Set
+`POLICYOPS_TEMP_DIR` to an external workspace as in the [quickstart](../README.md#quickstart).
+Install the evaluator's local exporter extra and run the driver from the repository root.
+
+```powershell
+python -B scripts/fetch_tokenizer_vocab.py
+$env:PYTHONPATH = (Resolve-Path tests/support).Path
+python -B scripts/devenv.py uv --project evals run --frozen --extra otlp -- python -B scripts/observability_demo.py
+```
+
+The routed evaluator cache supplies the pinned τ² fixture tree. To use an existing reviewed checkout, set
+`POLICYOPS_RETAIL_FIXTURE_TREE` to its root. With the prepared evaluator interpreter active and `tests/support`
+on `PYTHONPATH`, the driver command is `python -B scripts/observability_demo.py`. Use the absolute fixture-tree
+variable for a direct launch. The first setup can download locked dependencies and container images.
+
+The host-side driver starts the standalone `infra/compose/observability.yaml` stack. Grafana and OTLP HTTP
+bind to `127.0.0.1` on host ports 3000 and 4318 by default. If a port is busy, set
+`POLICYOPS_OBSERVABILITY_GRAFANA_PORT` or `POLICYOPS_OBSERVABILITY_OTLP_PORT` in the shell that runs the
+driver and Compose. Both take decimal integers from 1 to 65535. The driver uses a disposable PostgreSQL
+server with the pinned pgvector image.
+The trace starts with a harness-owned `investigation` span. Under that root, `review.execute` and `review.finish`
+with a proposal ID and `outcome=recorded` mark staff-entered consent and reviewer approval. Worker review and
+execution spans show the deterministic continuation. The dashboard link selects the fresh run's time range
+and links to its trace in Tempo through Grafana Explore. This disposable loopback instance uses anonymous
+`Editor`, the lowest basic role with Explore access. Fixture cost uses configured prices, and adapter
+timings include local scripted responses. The ledgers are authoritative for usage and effects.
+
+The profile is a local diagnostic tool. Keep it off the public Compose stack and the Lightsail host.
+When finished inspecting the dashboard, remove the local backend and its disposable storage.
+
+```sh
+docker compose -f infra/compose/observability.yaml down --volumes
+```
+
+The host-side driver is the only OTLP sender for this profile. Numeric loopback URLs resolve inside
+the sending process's network namespace, so a Compose application container's loopback cannot reach the
+host's published collector port. The Compose worker configures telemetry for `console` (stdout) and
+`memory` (process-local inspection). Leave all `OTEL_*` variables unset. The profile uses the standard
+OpenTelemetry exporter and the image's Prometheus OTLP receiver.
+[Pinned collector config](https://github.com/grafana/docker-otel-lgtm/blob/v0.39.0/docker/otelcol-config.yaml).

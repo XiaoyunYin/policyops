@@ -146,7 +146,7 @@ def load_config() -> ServeConfig:
         telemetry = TelemetrySettings()
     except ValidationError as error:
         problems.extend(_problems(error, "POLICYOPS_TELEMETRY_"))
-        telemetry = TelemetrySettings(enabled=False)
+        telemetry = None
     problems += [f"{name}: must not be set for the API server (libpq would take connection parameters from it)"
                  for name in REFUSED_LIBPQ_ENV if os.environ.get(name)]
     if auth is not None and auth.env == "test":
@@ -156,7 +156,7 @@ def load_config() -> ServeConfig:
             problems.append("POLICYOPS_DB_SSLMODE: deployment requires verify-full")
         if database.sslrootcert is None:
             problems.append("POLICYOPS_DB_SSLROOTCERT: deployment requires an explicit sslrootcert")
-    if problems or auth is None or database is None:
+    if problems or auth is None or database is None or telemetry is None:
         raise ServeConfigError(problems)
     return ServeConfig(auth, database, telemetry)
 
@@ -266,6 +266,8 @@ class SafeErrorFilter(logging.Filter):
     """Retain only a type name; never evaluate arbitrary objects or render message/argument text."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        if record.name.startswith("opentelemetry.exporter."):
+            return False
         error = record.exc_info[1] if record.exc_info else None
         if error is None and isinstance(record.msg, BaseException):
             error = record.msg
@@ -296,7 +298,8 @@ def open_runtime(config: ServeConfig) -> ServedRuntime:
     runtime = ServedRuntime()
     stage = "auth runtime engine"
     try:
-        telemetry = configure(config.telemetry)
+        config.telemetry.require_safe_environment(deployment=config.auth.env == "deployment")
+        telemetry = configure(config.telemetry, role="api")
         if telemetry is not None:
             runtime.own("telemetry", telemetry.close)
         engines = {}

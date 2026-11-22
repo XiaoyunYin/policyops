@@ -35,6 +35,13 @@
       "digest": "sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5",
       "contents": "Caddy 2.11.7 (release 2026-10-03), Alpine variant",
       "source": "https://hub.docker.com/_/caddy"
+    },
+    "observability": {
+      "image": "grafana/otel-lgtm",
+      "tag": "0.39.0",
+      "digest": "sha256:4c8056c9c05fcb3c8fd93800e85334bfd79b4d0271b47a54a121a64af41fe1fe",
+      "contents": "Local Grafana, OpenTelemetry Collector, Prometheus, Tempo, Loki and Pyroscope (2026-10-30 index)",
+      "source": "https://github.com/grafana/docker-otel-lgtm/releases/tag/v0.39.0"
     }
   }
 }

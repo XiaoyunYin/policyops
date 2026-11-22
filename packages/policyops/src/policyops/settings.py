@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import ipaddress
+import os
 from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Annotated, Literal, Self
@@ -31,12 +32,32 @@ ClientId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9._-]{1,128}$")]
 
 
 class TelemetrySettings(BaseSettings):
-    """Core manual telemetry. No remote endpoint, environment detectors or automatic instrumentation."""
+    """Manual telemetry with explicit, local-only OTLP HTTP destinations."""
 
     model_config = SettingsConfigDict(env_prefix="POLICYOPS_TELEMETRY_", env_file=None, extra="forbid", frozen=True,
                                       hide_input_in_errors=True)
     enabled: bool = False
-    exporter: Literal["console", "memory"] = "memory"
+    exporter: Literal["console", "memory", "otlp"] = "memory"
+    traces_url: str | None = None
+    metrics_url: str | None = None
+
+    def require_safe_environment(self, *, deployment: bool = False) -> None:
+        # The SDK has ambient configuration for exporters, resources, readers and processors.
+        if any(name.upper().startswith("OTEL_") for name in os.environ):
+            raise SettingsError("OTEL_* variables must be unset")
+        if self.exporter == "otlp" and (deployment or os.environ.get("POLICYOPS_ENV") == "deployment"):
+            raise SettingsError("OTLP export is local only")
+
+    @model_validator(mode="after")
+    def _safe_export(self) -> Self:
+        self.require_safe_environment()
+        if self.exporter == "otlp":
+            for signal, value in (("traces", self.traces_url), ("metrics", self.metrics_url)):
+                # Use numeric loopback addresses so name resolution cannot change the destination.
+                match = re.fullmatch(rf"http://(127\.0\.0\.1|\[::1\]):([0-9]{{1,5}})/v1/{signal}", value or "")
+                if match is None or not 1 <= int(match[2]) <= 65535:
+                    raise SettingsError(f"{signal}_url must be an explicit loopback HTTP /v1/{signal} URL with a port")
+        return self
 
 
 class SettingsError(ValueError):

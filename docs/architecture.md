@@ -1344,9 +1344,10 @@ Legacy pending proposals predating review continuation are not migrated, and dea
 Core telemetry is off by default. For the served API, set `POLICYOPS_TELEMETRY_ENABLED=true` and
 `POLICYOPS_TELEMETRY_EXPORTER=console` (JSON to stdout) or `memory` (bounded, process-local inspection).
 Library/worker hosts explicitly call `policyops.telemetry.configure(TelemetrySettings())` once before composing
-the worker and own the returned backend's `close()` at shutdown. Install `policyops.api.logging.LOG_CONFIG`
-with `logging.config.dictConfig` for the same safe JSON logs in a worker host. The supported API command installs
-it automatically. Default instrumentation does not construct SDK providers or exporters.
+the worker and own the returned backend's `close()` at shutdown. The Compose worker supports console and
+memory telemetry. The API and Compose worker install the served JSON log configuration. The fixed resource uses
+the service name `policyops-api`, `policyops-worker` or
+`policyops-demo`, with no resource detectors. Default instrumentation skips SDK provider and exporter construction.
 
 Manual spans cover route templates, job claim/execute/finish, graph nodes, provider attempts, retrieval, tool
 steps, review, execution reservation/dispatch/reconciliation and SQL failure phases. Only allowlisted enums,
@@ -1369,12 +1370,24 @@ leases) use a separate best-effort read with the discovery role's existing sched
 closed provider/model/outcome/kind/code sets, with no UUIDs. A bounded 256-job cache links previous attempts within
 one worker process; after restart/eviction, use run and operation UUIDs to correlate separate traces.
 
+`policyops.provider.dispatch_duration` is an additive histogram in `policyops.telemetry/v1`. It records adapter
+send/response/cleanup elapsed seconds with provider and model labels for chat and embedding requests. Its fixed
+bucket boundaries are 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30 and 60 seconds. Token
+counting, ledger accounting and retry backoff sit outside the timed boundary.
+
 The SDK batches at most 256 queued spans, 32 per batch, and reads metrics periodically. Exporters run on one
 daemon lane with 32 pending batches; overflow is dropped. A blocked exporter may retain one active batch until it
 returns or the process exits. Shutdown detaches immediately, drains in the background and never waits on exporter
 code. Memory mode retains the last 256 spans and 16 metric batches (`backend.spans.get_finished_spans()` and
-`backend.metrics.items`); it is intended for local inspection/tests, and is erased on process exit. Collector,
-OTLP, Prometheus, dashboards and automatic instrumentation are deferred to collector/dashboard work.
+`backend.metrics.items`) for local inspection and tests. A short-lived driver can call `backend.flush(seconds)`
+before shutdown. A successful flush confirms the SDK handed data through the lane without observed lane losses.
+The demo also queries Grafana to confirm ingestion.
+
+The optional `policyops[otlp]` extra uses the pinned OpenTelemetry HTTP/protobuf exporter. OTLP requires explicit
+numeric loopback HTTP traces and metrics URLs and refuses deployment. Startup refuses every `OTEL_*` variable.
+The session ignores ambient proxy and credential settings, rejects redirects, and discards collector response
+bodies. The host-side demo driver sends the existing manual signals to the local Grafana stack.
+[Local profile operations](operations.md#local-observability-profile).
 
 
 ## Operator workbench

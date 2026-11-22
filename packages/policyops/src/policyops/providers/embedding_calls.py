@@ -125,7 +125,7 @@ from policyops.providers.embeddings import (
     usage_of,
 )
 from policyops.providers.tokenizer import COUNT_SOURCE, InputRefused, Tokenizer
-from policyops.telemetry import annotate, enabled, observed, provider_usage
+from policyops.telemetry import annotate, enabled, observed, provider_dispatch, provider_usage
 from policyops_contracts.embedding import EmbeddedInput, EmbeddingJob
 
 
@@ -479,9 +479,10 @@ class _Run:
         arrived: list[Fetched] = []
         try:
             cap = min(self.deadline, time.monotonic() + self.limits.attempt_seconds)
-            async with asyncio.timeout_at(cap):
-                fetched = await fetch(prepared, lambda: self.providers.transport("openai"), credential,
-                                      observe=arrived.append)
+            with provider_dispatch("openai", prepared.model):
+                async with asyncio.timeout_at(cap):
+                    fetched = await fetch(prepared, lambda: self.providers.transport("openai"), credential,
+                                          observe=arrived.append)
         except TimeoutError:
             if arrived:
                 self.complete(lease, plan, prepared, arrived[0], cleanup=False, note="timeout_after_body")

@@ -170,6 +170,8 @@ SCENARIO_IMPORTS = {
     # The lock hashes the registered profiles. The scripted gate observes gateway dispatch and persisted stops.
     "src/policyops_evals/scenarios/lock.py": {"policyops.orchestration.profile", "policyops.providers.tokenizer"},
     "tests/scenario_support.py": {"policyops.providers.tokenizer"},
+    # The local driver smoke verifies the application v1 schema in the memory exporter.
+    "tests/test_observability_demo.py": {"policyops.settings", "policyops.telemetry", "policyops.telemetry.sdk"},
     "tests/test_scenario_gate.py": {"policyops.gateway.steps", "policyops.orchestration",
                                     "policyops.orchestration.adapters", "policyops.orchestration.profile",
                                     "policyops.persistence"},

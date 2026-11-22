@@ -85,6 +85,25 @@ evidence of real customer consent or a model-driven browser investigation.
 See [runtime composition](docs/architecture.md#investigation-graph-and-checkpoints) and
 [the browser acceptance scope](docs/operations.md#real-browser-workbench-acceptance).
 
+## Local observability profile
+
+Run `python -B scripts/observability_demo.py` in the prepared evaluator environment to open a
+fresh investigation in Grafana. The worker, retrieval, approval and simulated execution paths
+run against local PostgreSQL. Provider replies and token usage come from fixtures, with zero
+paid calls and no provider credentials. The host-side driver sends telemetry to the local stack
+and checks for both the trace and metrics before printing its run ID and dashboard link.
+
+This development profile runs only on loopback and is excluded from the public demo host.
+Its dashboard shows diagnostic observations for the scripted run. The harness owns the root
+span. Jobs in separate processes can produce separate traces, correlated by run ID.
+[Setup and teardown](docs/operations.md#local-observability-profile).
+
+![Trace waterfall of one scripted investigation: worker job, graph nodes, provider requests, gateway and retrieval steps](docs/assets/observability-trace.png)
+
+![Grafana dashboard for the same run: provider attempts, tokens, fixture usage at configured prices, dispatch latency, job, review and execution outcomes, and queue depth](docs/assets/observability-dashboard.png)
+
+*One local scripted cancellation, captured 2026-11-22: 42 spans in one trace across investigation, review and simulated execution; four fixture-backed chat calls and one embedding call; one simulator receipt. Provider replies and usage came from fixtures. No paid call was made. The local image used about 1.2 GiB of its 2 GiB limit.*
+
 ## Engineering decisions
 
 | Decision | Trade-off and rejected alternative | Evidence |

@@ -101,7 +101,9 @@ jobs:
       - name: Type check
         run: ${{ matrix.py }} -B scripts/devenv.py uv run --frozen mypy
       - name: Tests
-        run: ${{ matrix.py }} -B scripts/devenv.py uv run --frozen pytest
+        env:
+          POLICYOPS_REQUIRE_OTLP_TESTS: "1"
+        run: ${{ matrix.py }} -B scripts/devenv.py uv run --frozen --all-packages --extra otlp pytest
       - name: Evaluator environment (separate frozen lock)
         run: ${{ matrix.py }} -B scripts/devenv.py uv sync --project evals --frozen
       - name: Evaluator type check and tests

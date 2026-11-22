@@ -185,6 +185,15 @@ def test_real_provider_retry_preserves_parent_trace_and_counts_known_bills(backe
     assert any(n.endswith("provider.calls") and a["outcome"] == "failed" and v == 1 for n, a, v in points)
     assert any(n.endswith("provider.input_tokens") and v == 900 for n, a, v in points)
     assert any(n.endswith("provider.cost_usd") and v == pytest.approx(0.00011) for n, a, v in points)
+    assert isinstance(backend.metrics, MemoryMetrics)
+    last = backend.metrics.items[-1]
+    dispatch = next(metric for resource in last.resource_metrics for scope in resource.scope_metrics
+                    for metric in scope.metrics if metric.name == "policyops.provider.dispatch_duration")
+    from opentelemetry.sdk.metrics.export import Histogram
+
+    assert isinstance(dispatch.data, Histogram)
+    [duration] = dispatch.data.data_points
+    assert duration.count == 2 and duration.attributes == {"provider": "openai", "model": "gpt-6-luna"}
     assert CANARY not in rendered(backend)
 
 

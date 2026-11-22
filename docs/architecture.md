@@ -549,8 +549,9 @@ price.
     headers are never part of it, or of anything stored or logged.
 - **Wire contract:**
   - **Luna:** effort `low`, `service_tier="default"`, `store=false`, no parallel tool calls, `truncation="disabled"`.
-    Cache `none` is sent as `prompt_cache_options.mode=explicit` with no breakpoints; cache `30m` is implicit at 30m;
-    `12h` is refused (the SDK documents 30m as the only supported TTL).
+    Cache `none` sends `prompt_cache_options.mode=explicit` with no breakpoints. Cache `30m` sends implicit mode
+    with a 30-minute TTL. The adapter refuses requests for `12h`. If OpenAI reports a 12-hour write with
+    otherwise priceable usage, the adapter settles it at the 12-hour rate and blocks the run.
   - **Haiku:** `thinking={"type": "disabled"}` with `output_config.effort="low"`, `standard_only` tier,
     no `speed` field (optional; omitting it keeps the standard default, and some models refuse any `speed` value
     without a beta header), no sampling parameters, no `inference_geo`. A returned `usage.speed` other than standard
@@ -577,12 +578,19 @@ price.
   - A known prompt larger than the count plus that headroom settles and blocks (`count_underestimate`).
   - Count units are finite per scope and never returned.
 - **Usage evidence** (`results.py`):
-  - **OpenAI** `input_tokens` includes cached tokens. **Anthropic** `input_tokens` excludes the cache reads and the
-    cache creation, so the whole prompt is their sum, and the 5m/1h split must account for the creation total.
+  - **OpenAI** `input_tokens` includes both cache reads and writes. Reads plus writes above that total are
+    `usage_inconsistent`. When writes are nonzero or a split is present, both TTL counts in
+    `input_tokens_details.cache_write_tokens_details` must be valid and sum to `cache_write_tokens`. Each bucket
+    uses its own rate. Missing or malformed TTL counts (`cache_ttl_unknown`) and a split that disagrees with the
+    write total (`cache_split_mismatch`) leave usage unpriced and held.
+  - **Anthropic** `input_tokens` excludes cache reads and writes. Add them to get the whole prompt. The 5m/1h split
+    must account for the creation total.
   - **Known, fully priced usage settles exactly**, whatever the answer's outcome.
   - **A known contract mismatch** settles the exact bill and contract-blocks every charged scope; the result becomes
-    a `contract_gap` with no payload. Examples: cache writes under cache `none`, a prompt above the admitted maximum,
-    output above `max_output_tokens`, a thinking block.
+    a `contract_gap` with no payload. For OpenAI, any read or write under cache `none` blocks after settlement
+    (`cache_write_under_none` if there are writes, `cache_read_under_none` for reads alone). Otherwise a reported
+    12-hour write blocks as `cache_ttl_unrequested`. Other examples include a prompt above the admitted maximum,
+    output above `max_output_tokens`, and a thinking block.
   - **Unpriceable evidence** stays unresolved with its hold and a small allowlisted diagnostic, and is blocked the
     same way; no bill or TTL is invented. Examples: no TTL split, a non-standard tier, speed or geo, a returned model
     ID outside the explicit confirmed list, malformed counts.

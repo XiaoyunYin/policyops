@@ -416,6 +416,97 @@ whose digest is pinned in the runner. An independently reproduced report
 will have a different receipt. Held-out execution checks the admitted
 profile and consumes the registration's single unseal.
 
+## Prompt-caching study
+
+The study ran OpenAI `gpt-6-luna` at low effort on the admitted tool-contract
+revision profile. Cache off used the locked `none` configuration (explicit
+mode, no breakpoints). Cache on used implicit caching with a 30-minute TTL.
+Only the request cache options and configuration digest differed. Both arms
+used the same prompt, tools and layout, with no prompt-cache key.
+
+The reused development panel supplied 128 scenarios × 2 repeats × 2 arms,
+for 512 scheduled slots. Each scenario and repeat formed a pair. Runs were
+serial, with strata interleaved and hash-ranked arm order balanced within each
+stratum and repeat (seed `7041`). The study used development data exclusively.
+The primary metric was settled USD per scheduled slot, including all scheduled
+slots in the denominator. Brackets show two-sided 95% customer-world cluster
+bootstrap intervals with 10,000 draws (seed `7042`). The cost and proposal-time
+comparisons used 256 pairs across 128 clusters.
+
+The separately registered pilot settled $0.003803 across 6 slots under a
+$0.10 cap. The study could proceed only after the complete pilot passed its
+tape and ledger checks, including default-tier usage, exact repricing and no
+count-underestimate block. Each cache-on first call had to read cached context
+or write at least 90% of its input at the 30-minute TTL. Each second call had
+to read at least 90% of the preceding input. After the first call, writes had
+to be smaller than the full input and at most the positive input growth plus
+128 tokens, with at least one create after call 2. Every cache-off slot had
+to record zero cache usage, including a slot that started within 120 s after
+a warm cache-on slot. All checks passed. First-call reads in 2 of 3 cache-on
+pilot slots showed reuse across investigations. The study used a $1.50 cap
+with rolling admission for blocks of 16 pairs. Admission checked settled spend
+plus outstanding holds plus the next block's worst-case cost, including cold
+writes for cache-on slots.
+
+| Study arm | Scheduled slots | Create calls | Settled total (USD) | Settled USD per scheduled slot |
+|---|---:|---:|---:|---:|
+| Cache off | 256 | 1,058 | $0.36686270 | $0.001433 |
+| Cache on | 256 | 1,087 | $0.093291425 | $0.000364 |
+
+The cache-on/off cost ratio was **0.254 [0.243, 0.265]**. Cache on minus off
+was **−$0.001069 [−$0.001156, −$0.000982]** per scheduled slot. The study
+settled $0.460154 across all 512 slots, with $0 held and no overrun or blocked
+runs. An independent Decimal calculation repriced raw provider `usage` for all
+2,145 taped successful creates. The pinned Luna rates per million tokens were
+$0.10 for uncached input, $0.01 for cache reads, $0.125 for 30-minute writes
+and $0.50 for output. All 512 slot totals matched the ledger exactly.
+
+- **Cache reuse.** Cache-on reads were 93.7% (3,247,295 of 3,466,191 input
+  tokens), 30-minute writes were 6.2% (215,635 of the same total), and no tokens
+  were written at the 12-hour TTL. On first calls, reads were 97.1% (683,008 of
+  703,530 input tokens). The shared instructions and tools stayed cached across
+  investigations. The observed savings depend on traffic arriving within the
+  30-minute TTL. Cache off recorded zero reads and writes across 1,058 calls.
+- **Outcomes.** The predeclared descriptive guardrail passed narrowly.
+  For exact first proposals on 192 write-positive pairs (96 clusters), cache on
+  minus off was −0.036 [−0.099, +0.026], with the lower bound just above the
+  −0.10 margin. Between-arm disagreement was 21.4% (24 off-only and 17 on-only
+  exact proposals out of 192 pairs). Within-arm repeat disagreement was
+  17.7% off and 25.0% on, each over 96 repeat pairs. On 48 negative pairs
+  (24 clusters), the unsafe-attempt difference was −0.021 [−0.063, 0] against
+  a point-estimate ceiling of +0.05, with one off-only attempt.
+- **Latency and context.** The study showed no latency gain. From run creation,
+  a persisted proposal arrived by 120 s in 174/256 cache-off slots and 167/256
+  cache-on slots. Assigning the horizon to slots without a proposal by then,
+  the mean time difference was +3.3 s [−1.8, +8.3] for cache on minus off.
+  The first-call median was higher with caching (1,108 ms across 256 first
+  calls). Per-call latency is descriptive because arms were unpaired by time
+  of day. There were no context evictions across 256 slots per arm. Calls per
+  scheduled slot averaged 4.13 off and 4.25 on.
+
+This was a serial study of one low-cost model from one provider on a previously
+used development panel. The outcome guardrail was descriptive, and no layout
+change was tested. A reordered stable prefix and Anthropic caching remain
+unmeasured. Costs came from settled usage at pinned list rates. The study did
+not reconcile provider invoices.
+
+Use the [scenario reproduction setup](#scenario-reproduction) with the pinned
+development manifests and a fresh output directory outside the checkout.
+The variables below stand for local paths and a prepared workspace. Supply
+`POLICYOPS_EVAL_DATABASE_DSN` and `OPENAI_API_KEY` through the environment as
+described above. Check that the pilot report admits the study before running it.
+
+```powershell
+$inputs = @('--dsn-file', $connectionFile, '--manifests', $manifests,
+    '--fixture-root', $fixtureRoot, '--policy-file', $policyFile, '--out', $cacheOut)
+
+python -m policyops_evals.cli scenarios n7 register @inputs --workspace $workspace
+python -m policyops_evals.cli scenarios n7 pilot @inputs --allow-paid
+python -m policyops_evals.cli scenarios n7 report @inputs --phase pilot
+python -m policyops_evals.cli scenarios n7 run @inputs --allow-paid
+python -m policyops_evals.cli scenarios n7 report @inputs --phase study
+```
+
 ## E04 operation ledger versus naive retry
 
 The frozen [matrix/recovery config](../tests/fixtures/safety/t30-v1.json) defines
@@ -633,7 +724,7 @@ python -B scripts/devenv.py uv run --offline --frozen python -B scripts/run_safe
 
 The smoke, real-browser and recovery-driver commands are in
 [operations](operations.md#deployment-smoke). No banking trajectory retrieval study,
-ANN/HNSW, graph quality comparison or context/cache optimization result is part of this
+ANN/HNSW, graph quality comparison or context-layout optimization result is part of this
 release. Implemented retrieval components and synthetic mechanics tests are described in
 [architecture](architecture.md#retrieval-steps); they supply no measured retrieval-quality claim.
 
@@ -721,7 +812,7 @@ through the G0.5 statistics and status functions. The runner retains immutable
 source/schedule bindings, exports, reports and bounded raw inventories privately
 under `POLICYOPS_TEMP_DIR/benchmarks`. Sealed execution requires prior registration
 bound to the current source/locks. Cascade/selective reranking, full context
-and caching execution await later slices.
+and QA caching execution await later slices.
 
 ### Answer and rerank arms
 
@@ -805,7 +896,7 @@ exports allowlist IDs, numeric metrics, costs, latency and failure codes only.
 Policy cost/latency exclude judging; experimental spend includes judging and
 shared preprocessing is disclosed separately. The dev cascade uses Luna first and
 Haiku fallback over the same ranking; confidence is an uncalibrated routing signal.
-Selective rerank, full-context and caching execution remain deferred.
+Selective rerank, full-context and QA caching execution remain deferred.
 
 ## Local cross-encoder tooling
 

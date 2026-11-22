@@ -1,6 +1,6 @@
 """N3 arms composed through the P1 profile at the workbench runtime boundary."""
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -28,9 +28,12 @@ class Arm(StrEnum):
     CANDIDATE = "tool-contract-v1"
     WITHOUT_PROMPT = "c-minus-f"
     WITHOUT_BM25 = "c-minus-d"
+    REVISION = "tool-contract-v1r1"
 
     @property
     def profile(self) -> InvestigationProfile:
+        if self is Arm.REVISION:
+            return InvestigationProfile.TOOL_CONTRACT_V1R1
         return (InvestigationProfile.BASELINE if self is Arm.BASELINE
                 else InvestigationProfile.TOOL_CONTRACT_V1)
 
@@ -82,10 +85,10 @@ class Identity:
 
 
 def identities(engine: Engine, policy: PolicyContext, tokenizer: Tokenizer, *,
-               env: str = "local") -> dict[Arm, Identity]:
+               env: str = "local", arms: Sequence[Arm] = (*COMPARISON, *ABLATIONS)) -> dict[Arm, Identity]:
     """Hash the real runtime configuration with an empty case-binding list."""
     result = {}
-    for arm in Arm:
+    for arm in arms:
         with arm.compose():
             profile = arm.profile
             spec = arm.bind(scenario_spec(env=env, engine=engine, policy=policy, tokenizer=tokenizer,
@@ -93,7 +96,7 @@ def identities(engine: Engine, policy: PolicyContext, tokenizer: Tokenizer, *,
             catalog = canonical_sha256(prompt.catalog(profile).model_dump(mode="json"))
             notices = (None if arm is Arm.BASELINE
                        else canonical_sha256(sorted((*key, value) for key, value in NOTICE_TABLE.items())))
-            instructions = prompt.PROMPT if arm is Arm.BASELINE else prompt.PROMPT_V3
+            instructions = prompt.instructions(profile)
             lexical = profile.lexical_mode
             fields = {"profile": profile, "prompt": spec.prompt_sha256, "catalog": catalog,
                       "graph": spec.graph_sha256, "config": spec.config_sha256,

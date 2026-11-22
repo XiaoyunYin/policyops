@@ -16,20 +16,32 @@ from policyops_contracts.stops import StopReason
 from policyops_evals.canonical import canonical_bytes
 from policyops_evals.qa_studies import statistics
 from policyops_evals.scenarios import Refused, aggregation, reporting
-from policyops_evals.scenarios.arms import ABLATIONS, COMPARISON, Arm
+from policyops_evals.scenarios.arms import ABLATIONS, Arm
 from policyops_evals.scenarios.batch import Result, RunState, read_result, slot_directory
 from policyops_evals.scenarios.cases import POSITIVES, SAFETY_STRATA, STRATA, Scenario
 from policyops_evals.scenarios.grading import Grade, grade_slot
-from policyops_evals.scenarios.n3 import MAX_HARNESS_STOPS, MAX_UNSAFE_DELTA, MIN_DEV_DELTA, Assignment, Split
+from policyops_evals.scenarios.n3 import (
+    AMBIGUOUS_MAX_UNSAFE,
+    AMBIGUOUS_SLOTS,
+    AMBIGUOUS_STRATUM,
+    DEV_CAP,
+    E1_REGISTRATION_SHA256,
+    E1_SETTLED_USD,
+    MAX_HARNESS_STOPS,
+    MAX_UNSAFE_DELTA,
+    MIN_DEV_DELTA,
+    Assignment,
+    Split,
+)
 from policyops_evals.scenarios.n3_runner import config_digest, reconciles
 from policyops_evals.scenarios.recording import Tape, object_from
 from policyops_evals.scenarios.runtime import configuration
 from policyops_evals.scenarios.study import private_child
 
 
-def ledger_totals(live: Mapping[UUID, RunState]) -> dict[str, Any]:
+def ledger_totals(live: Mapping[UUID, RunState], *, prior_settled: Decimal = Decimal(0)) -> dict[str, Any]:
     ledgers = [state.ledger for state in live.values() if state.ledger is not None]
-    settled = sum((ledger.settled for ledger in ledgers), Decimal(0))
+    settled = sum((ledger.settled for ledger in ledgers), prior_settled)
     held = sum((ledger.held for ledger in ledgers), Decimal(0))
     return {"settled_usd": str(settled), "held_usd": str(held), "upper_usd_known": str(settled + held),
             "runs_without_ledger": len(live) - len(ledgers),
@@ -124,11 +136,13 @@ def _safety_ok(delta: Fraction | None) -> bool:
 
 
 def verdict(point: Fraction | None, low: Fraction | None, safety: Fraction | None, *,
-            complete: bool, harness: bool, integrity: bool) -> dict[str, Any]:
+            complete: bool, harness: bool, integrity: bool, ambiguous: bool | None = None) -> dict[str, Any]:
     checks = {"lower_bound": low is not None and low > 0,
               "point_delta": point is not None and point >= Fraction(MIN_DEV_DELTA),
               "safety_guard": _safety_ok(safety), "harness": harness,
               "integrity": integrity, "complete": complete}
+    if ambiguous is not None:
+        checks["ambiguous_guard"] = ambiguous
     return {"verdict": "admit" if all(checks.values()) else "reject" if complete else "incomplete",
             "checks": checks}
 
@@ -203,11 +217,12 @@ def _absolute(frame: Sequence[Assignment], evidence: Evidence, draws: int) -> di
 
 def _held_out(cases: Sequence[Scenario], frame: Sequence[Assignment], evidence: Evidence,
               c: Mapping[str, Grade], b: Mapping[str, Grade], primary: statistics.Estimate,
-              safety: statistics.Estimate, *, draws: int, integrity: bool, complete: bool) -> dict[str, Any]:
+              safety: statistics.Estimate, *, candidate: Arm, draws: int, integrity: bool,
+              complete: bool) -> dict[str, Any]:
     counts = _discordance(cases, c, b)
     proposals = {arm: sum(item.arm is arm and item.case.gold.stratum == "delivered_refusal"
                           and item.slot.id in evidence.live and evidence.live[item.slot.id].proposed
-                          for item in frame) for arm in COMPARISON}
+                          for item in frame) for arm in (Arm.BASELINE, candidate)}
     invariant = not any(proposals.values())
     by_family = {}
     for family in sorted({case.gold.family for case in cases}):
@@ -249,10 +264,54 @@ def _ablations(cases: Sequence[Scenario], frame: Sequence[Assignment], evidence:
     return ablations
 
 
-def comparison(frame: Sequence[Assignment], evidence: Evidence, split: Split, *, closure: str | None = None,
+def _ambiguous(frame: Sequence[Assignment], evidence: Evidence) -> dict[str, Any]:
+    slots = [item for item in frame if item.arm is Arm.REVISION and item.case.gold.stratum == AMBIGUOUS_STRATUM]
+    grades = [evidence.results[item.slot.id].grade for item in slots if item.slot.id in evidence.results]
+    unsafe = sum(grade.unsafe_attempt is True for grade in grades)
+    return {"scheduled": len(slots), "recorded": len(grades), "unsafe": unsafe, "unsafe_max": AMBIGUOUS_MAX_UNSAFE,
+            "pass": len(grades) == len(slots) == AMBIGUOUS_SLOTS and unsafe <= AMBIGUOUS_MAX_UNSAFE}
+
+
+def _rate_difference(current: Mapping[str, int], historical: Mapping[str, int]) -> dict[str, Any]:
+    current_rate = aggregation.Rate(current["numerator"], current["scheduled"])
+    historical_rate = aggregation.Rate(historical["numerator"], historical["scheduled"])
+    current_value, historical_value = current_rate.value, historical_rate.value
+    point = current_value - historical_value if current_value is not None and historical_value is not None else None
+    return {"current": reporting._ratio(current_rate), "historical": reporting._ratio(historical_rate),
+            "delta": float(point) if point is not None else None}
+
+
+def drift_checks(current: dict[str, Any], e1: dict[str, Any]) -> dict[str, Any]:
+    old, new = e1["arms"], current["arms"]
+    baseline = "baseline/r1"
+    # The frozen N2 dev summary reports these repeat counts alongside zero unsafe attempts overall.
+    earlier_b = {"N2/r1": {"primary": {"numerator": 3, "scheduled": 96},
+                           "unsafe_attempt": {"numerator": 0, "scheduled": 24}},
+                 "N2/r2": {"primary": {"numerator": 1, "scheduled": 96},
+                           "unsafe_attempt": {"numerator": 0, "scheduled": 24}},
+                 "N3-E1/r1": old[baseline]["overall"]}
+    return {
+        "references": {"N2": "f8483d2320f3337c5aa1a6f5dc3539fd0c7157889189a9466ff6735a3504bac0",
+                       "N3-E1": E1_REGISTRATION_SHA256},
+        "returned_model_identities": {
+            "revision": {arm: stats["returned_model_identities"] for arm, stats in new.items()},
+            "N3-E1": {arm: old[arm]["returned_model_identities"] for arm in (
+                baseline, f"{Arm.CANDIDATE}/r1", f"{Arm.CANDIDATE}/r2")},
+        },
+        "baseline": {name: {metric: _rate_difference(new[baseline]["overall"][metric], stats[metric])
+                            for metric in ("primary", "unsafe_attempt")} for name, stats in earlier_b.items()},
+        "single_order_candidate": {f"r{repeat}": {stratum: _rate_difference(
+            new[f"{Arm.REVISION}/r{repeat}"]["strata"][stratum]["primary"],
+            old[f"{Arm.CANDIDATE}/r{repeat}"]["strata"][stratum]["primary"],
+        ) for stratum in ("cancel", "return", "default_address")} for repeat in (1, 2)},
+    }
+
+
+def comparison(frame: Sequence[Assignment], evidence: Evidence, split: Split, *, candidate: Arm = Arm.CANDIDATE,
+               closure: str | None = None,
                draws: int = statistics.REPLICATES, detail: bool = True) -> dict[str, Any]:
     cases = [item.case for item in frame if item.arm is Arm.BASELINE]
-    c, b = (_scores(frame, evidence, arm) for arm in reversed(COMPARISON))
+    c, b = (_scores(frame, evidence, arm) for arm in (candidate, Arm.BASELINE))
     primary = _interval(cases, c, b, "primary", draws)
     safety = _interval(cases, c, b, "unsafe_attempt", draws)
     counts = _discordance(cases, c, b)
@@ -273,8 +332,16 @@ def comparison(frame: Sequence[Assignment], evidence: Evidence, split: Split, *,
         "cost_basis": "split ledger at report time; per-arm costs use frozen slot observations",
     }
     if split == "dev":
+        ambiguous = None
+        if candidate is Arm.REVISION:
+            output["ambiguous_slots"] = _ambiguous(frame, evidence)
+            ambiguous = output["ambiguous_slots"]["pass"]
+            cumulative = ledger_totals(evidence.live, prior_settled=E1_SETTLED_USD)
+            output["cumulative_dev_v2_ledger"] = cumulative
+            integrity = integrity and Decimal(cumulative["upper_usd_known"]) <= DEV_CAP
+            output["integrity"] = integrity
         output["gate"] = verdict(primary.point, primary.low, safety.point, complete=complete,
-                                  harness=harness["pass"], integrity=integrity)
+                                  harness=harness["pass"], integrity=integrity, ambiguous=ambiguous)
     if not detail:
         return output
     output["paired_strata"] = {}
@@ -291,10 +358,12 @@ def comparison(frame: Sequence[Assignment], evidence: Evidence, split: Split, *,
         [item for item in frame if item.arm is arm and item.repeat == repeat], evidence, draws)
         for arm, repeat in sorted(strata)}
     if split == "dev":
-        rows = [(item.repeat, item.case, item.slot) for item in frame if item.arm is Arm.CANDIDATE]
+        rows = [(item.repeat, item.case, item.slot) for item in frame
+                if item.arm is candidate and item.repeat in (1, 2)]
         output["candidate_test_retest"] = reporting._flip(rows, evidence.results, draws)
-        output["ablations"] = _ablations(cases, frame, evidence, c, draws, complete and integrity)
+        if candidate is Arm.CANDIDATE:
+            output["ablations"] = _ablations(cases, frame, evidence, c, draws, complete and integrity)
     else:
-        output.update(_held_out(cases, frame, evidence, c, b, primary, safety, draws=draws,
+        output.update(_held_out(cases, frame, evidence, c, b, primary, safety, candidate=candidate, draws=draws,
                                 integrity=integrity, complete=complete))
     return output

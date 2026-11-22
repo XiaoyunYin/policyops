@@ -14,7 +14,12 @@ if TYPE_CHECKING:
 class InvestigationProfile(StrEnum):
     BASELINE = "baseline"
     TOOL_CONTRACT_V1 = "tool-contract-v1"
+    TOOL_CONTRACT_V1R1 = "tool-contract-v1r1"
+
+    @property
+    def tool_contract(self) -> bool:
+        return self in (InvestigationProfile.TOOL_CONTRACT_V1, InvestigationProfile.TOOL_CONTRACT_V1R1)
 
     @property
     def lexical_mode(self) -> LexicalMode:
-        return "bm25" if self is InvestigationProfile.TOOL_CONTRACT_V1 else "all_terms"
+        return "bm25" if self.tool_contract else "all_terms"

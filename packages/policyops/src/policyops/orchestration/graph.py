@@ -208,7 +208,7 @@ class InvestigationGraph:
             return failed(state, InvestigationFailed(kind="provider_error"))
         result = report.result
         names = {t.name: t.read_only for t in prompt.catalog(self.profile).all_tools()}
-        detailed = self.profile is InvestigationProfile.TOOL_CONTRACT_V1
+        detailed = self.profile.tool_contract
         action: Notice | Say | Use
         # Control tools use the same one-call gate, then their own schema (never retail to_agent_step).
         if (result.outcome == "completed" and len(result.tool_calls) == 1 and not result.text

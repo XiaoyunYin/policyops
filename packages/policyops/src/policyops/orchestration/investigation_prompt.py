@@ -33,6 +33,12 @@ to abstain or give a cited decline.
 An empty search result is no reason to drop a write the facts support.
 - After a runtime notice, reply with one valid action. Transfer only when policy requires it, then send exactly \
 the required handoff message."""
+_ORDER_SELECTION = (
+    "- If the customer does not give the ID of the order to act on, read the profile and then every order on it "
+    "before choosing. Write only if exactly one order matches everything the customer said. If none or several "
+    "match, do not write; use finish_answer to abstain with reason insufficient_evidence.\n"
+)
+PROMPT_V3_R1 = PROMPT_V3.replace("- If an argument is missing", _ORDER_SELECTION + "- If an argument is missing", 1)
 FINISH_TOOL = ToolDescriptor(name=FINISH, description="Finish with cited assertions or abstain. Control only.",
                              parameters_schema_json=json.dumps(GroundedAnswer.model_json_schema(), sort_keys=True),
                              read_only=True)
@@ -41,28 +47,33 @@ _CATALOG_V3 = ToolCatalog(mode="retail", tools=(*retail_tools(describe_ids=True)
 
 
 def catalog(profile: InvestigationProfile = InvestigationProfile.BASELINE) -> ToolCatalog:
-    return _CATALOG_V3 if profile is InvestigationProfile.TOOL_CONTRACT_V1 else _CATALOG
+    return _CATALOG_V3 if profile.tool_contract else _CATALOG
+
+
+def instructions(profile: InvestigationProfile) -> str:
+    if profile is InvestigationProfile.TOOL_CONTRACT_V1R1:
+        return PROMPT_V3_R1
+    return PROMPT_V3 if profile.tool_contract else PROMPT
 
 
 def digest(profile: InvestigationProfile = InvestigationProfile.BASELINE) -> str:
     fields: dict[str, object] = {"version": VERSION, "prompt": PROMPT, "heading": POLICY_HEADING,
                                  "notices": NOTICE_TEXT, "catalog": catalog(profile).model_dump(mode="json")}
-    if profile is InvestigationProfile.TOOL_CONTRACT_V1:
-        fields.update(version=VERSION_V3, prompt=PROMPT_V3, profile=profile,
+    if profile.tool_contract:
+        fields.update(version=VERSION_V3, prompt=instructions(profile), profile=profile,
                       argument_notices=sorted((*key, text) for key, text in NOTICE_TABLE.items()))
     return sha256_hex(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode())
 
 
 def request(policy: PolicyContext, limits: AgentLimits, transcript: tuple[Entry, ...], *,
             facts_text: str = "[]", profile: InvestigationProfile = InvestigationProfile.BASELINE) -> ModelRequest:
-    instructions = PROMPT_V3 if profile is InvestigationProfile.TOOL_CONTRACT_V1 else PROMPT
-    instructions += POLICY_HEADING + policy.text
+    text = instructions(profile) + POLICY_HEADING + policy.text
     if facts_text != "[]":
-        instructions += "\n[Trusted row facts, labeled data only; deterministic services authorize]\n" + facts_text
+        text += "\n[Trusted row facts, labeled data only; deterministic services authorize]\n" + facts_text
     messages = provider_messages(transcript)
     tools = tuple(ToolSpec(name=t.name, description=t.description,
                                              parameters_schema_json=t.parameters_schema_json)
                                     for t in catalog(profile).all_tools())
-    preflight_fields(instructions, messages, tools)
-    return ModelRequest(instructions=instructions, messages=messages, tools=tools,
+    preflight_fields(text, messages, tools)
+    return ModelRequest(instructions=text, messages=messages, tools=tools,
                         tool_choice="auto", max_output_tokens=limits.max_output_tokens, stream=False)

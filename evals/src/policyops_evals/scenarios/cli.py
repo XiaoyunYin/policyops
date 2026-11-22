@@ -78,6 +78,8 @@ def add_parser(group: argparse.ArgumentParser) -> None:
     n3_commands = n3.add_subparsers(dest="n3_command", required=True)
     for name in ("register", "run", "report"):
         subcommand = n3_commands.add_parser(name)
+        subcommand.add_argument("--revision", type=int, choices=(1,), help="select revision 1 of 1")
+        subcommand.add_argument("--e1-report", type=Path, help="frozen E1 dev report required by revision 1")
         subcommand.add_argument("--manifests", type=Path, required=True)
         subcommand.add_argument("--fixture-root", type=Path, required=True)
         subcommand.add_argument("--policy-file", type=Path, required=True)

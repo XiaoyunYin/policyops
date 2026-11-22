@@ -37,6 +37,7 @@ from policyops_testing.gateway_cases import EMAIL, NAME_ZIP, SCOPE, FakeRetail, 
 
 
 PROFILE = InvestigationProfile.TOOL_CONTRACT_V1
+REVISION = InvestigationProfile.TOOL_CONTRACT_V1R1
 
 
 def test_baseline_and_minimal_digests_at_9fbefc4() -> None:
@@ -79,6 +80,45 @@ def test_runtime_fingerprint_binds_the_profile() -> None:
         make_spec(PROFILE, AgentLimits(consecutive_invalid=3, knowledge_steps=16))
 
 
+def test_revision_binds_new_digests_and_refuses_mixed_version_resume() -> None:
+    baseline = make_spec(InvestigationProfile.BASELINE)
+    original = make_spec(PROFILE)
+    revised = make_spec(REVISION)
+    assert baseline.config_sha256 == "07cfbc6e01b83c6e007b912aa4bdf8776596c72c4280a7040fe6cb96048ad2ae"
+    assert binding(original) == (
+        "4a0441e8c8b5612f1401d8ad91f9660b19ab3c68db4498b9c7b060e42555982d",
+        "17c96f02332972ab349cb001518165ec51abdb2dfa9e163fc8627ee21ce8e7ca",
+        "5d3accd4379234d6984bf918ee4caa026b91d734dbf9b8d95d8dc245ab0dca68",
+    )
+    assert binding(revised) == (
+        "e298000e6f573742dc3be460229e379c565063f5a4bebf4cba850c418e3c4292",
+        "98c9f5149e66a0dec235d0f6482af480984bdfc53c8b3616b4e6d528d6d54d30",
+        "c7c51b1b062d515ba409e22c24f15f510da09352ba48dbf1601d378e9e8b21ad",
+    )
+    assert revised.prompt_sha256 == prompt.digest(REVISION) and revised.graph_sha256 == graph_digest(REVISION)
+    catalog = RuntimeCatalog.of([baseline, original, revised], default=revised.spec_id)
+    assert catalog.start_spec is revised and catalog.for_run(*binding(revised)) is revised
+    assert catalog.for_run(*binding(original)) is original
+    assert RuntimeCatalog.of([revised]).for_run(*binding(original)) is None
+    assert RuntimeCatalog.of([original]).for_run(*binding(revised)) is None
+    assert catalog.for_run(revised.graph_sha256, original.prompt_sha256, revised.config_sha256) is None
+
+
+def test_revision_adds_exactly_the_order_selection_bullet() -> None:
+    original = prompt.PROMPT_V3.splitlines()
+    revised = prompt.PROMPT_V3_R1.splitlines()
+    index = next(i for i, line in enumerate(original) if line.startswith("- Call the write once")) + 1
+    assert revised.pop(index) == (
+        "- If the customer does not give the ID of the order to act on, read the profile and then every order on it "
+        "before choosing. Write only if exactly one order matches everything the customer said. If none or several "
+        "match, do not write; use finish_answer to abstain with reason insufficient_evidence."
+    )
+    assert revised == original
+    assert REVISION.lexical_mode == PROFILE.lexical_mode == "bm25"
+    assert prompt.catalog(REVISION).digest() == prompt.catalog(PROFILE).digest() == (
+        "d2ca96be2c7b2cf1cf3183863df458dcc8c9f58f214ddbbca92ac1425146625f")
+
+
 @pytest.mark.parametrize("configuration,parameters_key", [
     (Configuration(), "parameters"),
     (Configuration(actors={**DEFAULT_ACTORS, "agent": ChatActor("agent", "claude-haiku-5-5", "low")}),
@@ -90,7 +130,8 @@ def test_id_descriptions_survive_serialized_provider_request(configuration: Conf
     for profile in InvestigationProfile:
         request = prompt.request(policy, AgentLimits(), messages, profile=profile)
         prepared = prepare(request, configuration, "agent")
-        instructions = prompt.PROMPT_V3 if profile is PROFILE else prompt.PROMPT
+        instructions = {InvestigationProfile.BASELINE: prompt.PROMPT, PROFILE: prompt.PROMPT_V3,
+                        REVISION: prompt.PROMPT_V3_R1}[profile]
         assert request.instructions == instructions + "\n\n# Policy\n\n" + policy.text
         descriptions = {"order_id": "For order IDs, include the leading #, e.g. #W0000000.",
                         "user_id": "For user IDs, use the user_id returned by the authenticated lookup."}
@@ -99,7 +140,7 @@ def test_id_descriptions_survive_serialized_provider_request(configuration: Conf
         assert {key for key, _ in fields} == descriptions.keys()
         for key, field in fields:
             assert "pattern" not in field
-            assert field.get("description") == (descriptions[key] if profile is PROFILE else None)
+            assert field.get("description") == (descriptions[key] if profile.tool_contract else None)
 
 
 def observe(gateway: Gateway, name: str, arguments: dict[str, Any], enabled: bool | None = True) -> dict[str, Any]:
@@ -246,12 +287,12 @@ def test_provider_schema_refusal_keeps_only_a_profile_gated_diagnostic(name: str
     evidence = Evidence(None, UNKNOWN, None, None)
     for profile in InvestigationProfile:
         request = prompt.request(fictional_policy(), AgentLimits(), (UserMessage(text="Review."),), profile=profile)
-        prepared = prepare(request, Configuration(), "agent", detailed_tool_errors=profile is PROFILE)
+        prepared = prepare(request, Configuration(), "agent", detailed_tool_errors=profile.tool_contract)
         result = openai_result(response, prepared, evidence)
         assert result.outcome == "invalid_output" and result.reason_code == "tool_arguments_schema"
         assert not result.tool_calls and result.text is None
         assert "discard" not in result.model_dump_json()
-        if profile is PROFILE:
+        if profile.tool_contract:
             assert result.argument_issue is not None and result.argument_issue.field == field
         else:
             assert "argument_issue" not in result.model_dump(mode="json")

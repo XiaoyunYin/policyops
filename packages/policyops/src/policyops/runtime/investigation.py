@@ -244,7 +244,7 @@ class InvestigationExecutor:
         deadline = observed_monotonic + runs.remaining_us(run, now) / 1_000_000
         ledger = build_app_ledger(env=self.env, engine=self.engine, workspace_id=context.workspace_id,
                                   configuration=self.configuration, clock=self.clock, claim_token=context.claim_token)
-        repaired = self.profile is InvestigationProfile.TOOL_CONTRACT_V1
+        repaired = self.profile.tool_contract
         model = (self.test_model(ledger, RunBinding(context.run_id)) if self.test_model is not None else
                  agent_model_port(ledger, RunBinding(context.run_id), self.providers, detailed_tool_errors=repaired))
         retriever = Retriever(self.engine, context.workspace_id,
@@ -317,7 +317,7 @@ class InvestigationExecutor:
     def retrieval_digest(self) -> str:
         fields: dict[str, object] = {"scope": self.retrieval_scope.model_dump(mode="json"),
                                      "config": self.retrieval_config.model_dump(mode="json")}
-        if self.profile is InvestigationProfile.TOOL_CONTRACT_V1:
+        if self.profile.tool_contract:
             fields["lexical_mode"] = self.profile.lexical_mode
         return canonical_sha256(fields)
 
@@ -358,8 +358,8 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
     selected = limits or AgentLimits(knowledge_steps=16)
     if not 1 <= selected.knowledge_steps <= 16:
         raise ValueError("investigation knowledge_steps must be 1..16")
-    if profile is InvestigationProfile.TOOL_CONTRACT_V1 and selected.consecutive_invalid != 2:
-        raise ValueError("tool-contract-v1 requires consecutive_invalid=2")
+    if profile.tool_contract and selected.consecutive_invalid != 2:
+        raise ValueError(f"{profile} requires consecutive_invalid=2")
     # Both provider capability checks are pure and run before any ledger/network work.
     prepare(prompt.request(policy, selected, (UserMessage(text="x"),), profile=profile), configuration, "agent")
     config_fields: dict[str, object] = {
@@ -373,14 +373,14 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
         "fixture": fixture_sha256,
         "bindings": [b.model_dump(mode="json") for b in bindings],
     }
-    if profile is InvestigationProfile.TOOL_CONTRACT_V1:
+    if profile.tool_contract:
         config_fields.update(profile=profile, lexical_mode=profile.lexical_mode)
     config_sha = canonical_sha256(config_fields)
     executor = InvestigationExecutor(engine, env, configuration, policy, selected, retrieval_scope, retrieval_config,
                                      bindings, fixture_sha256, retail, providers, tokenizer, lease_clock,
                                      wall_clock or SystemClock(), max_steps, lease, graph_digest(profile),
                                      prompt.digest(profile), config_sha, test_model=test_model, profile=profile)
-    spec_id = "investigation.v2" if profile is InvestigationProfile.BASELINE else "investigation.tool-contract-v1"
+    spec_id = f"investigation.{profile}" if profile.tool_contract else "investigation.v2"
     return RuntimeSpec(spec_id, executor.graph_sha256, executor.prompt_sha256, config_sha, executor,
                        lease=lease, run_timeout=timedelta(seconds=configuration.caps.active_seconds),
                        test_only=env == "test")

@@ -105,10 +105,11 @@ def liability(states: Mapping[UUID, RunState]) -> Decimal:
     return total
 
 
-def rolling_worst(states: Mapping[UUID, RunState], next_slots: int) -> Decimal:
+def rolling_worst(states: Mapping[UUID, RunState], next_slots: int, *, prior_settled: Decimal = Decimal(0)
+                  ) -> Decimal:
     if not 0 <= next_slots <= 2 * BLOCK_PAIRS:
         raise Refused("N3 block exceeds its registered size")
-    return liability(states) + next_slots * configuration().caps.run_usd
+    return prior_settled + liability(states) + next_slots * configuration().caps.run_usd
 
 
 def _record(out: Path, item: Assignment, digest: str, tape: Tape, state: RunState | None,
@@ -164,6 +165,7 @@ def refuse_existing(backend: Backend, frame: Sequence[Assignment], out: Path) ->
 
 def run_blocks(backend: Backend, blocks: Sequence[Sequence[Assignment]], out: Path, digest: str,
                maximum: Decimal, *, prior: Sequence[Assignment] = (),
+               prior_settled: Decimal = Decimal(0),
                check_lock: Callable[[], None], close: Callable[[str], None]) -> str:
     """Use fixed case groups and close permanently at the first budget stop."""
     frame = [item for block in blocks for item in block]
@@ -182,7 +184,7 @@ def run_blocks(backend: Backend, blocks: Sequence[Sequence[Assignment]], out: Pa
             live = backend.accounts(all_slots)
             # Pending pre-dispatch app runs already occupy a full active reservation.
             fresh = sum(item.slot.id not in live or not live[item.slot.id].active for item in pending)
-            if rolling_worst(live, fresh) > maximum:
+            if rolling_worst(live, fresh, prior_settled=prior_settled) > maximum:
                 close("budget_stop")
                 return "budget_stop"
         for item in block:

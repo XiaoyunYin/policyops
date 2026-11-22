@@ -27,6 +27,8 @@ PUBLIC_ROOTS = {"apps", "packages", "tests", "scripts", "evals", "reranker", "in
 PUBLIC_DOCS = {
     "docs/architecture.md", "docs/evaluation.md", "docs/deployment.md",
     "docs/security.md", "docs/data-provenance.md",
+    # Public pilot boundaries and a reproducible pre-production failure analysis.
+    "docs/pilot-scope.md", "docs/rca-ambiguous-order-selection.md",
     # T06: public reference for the database role matrix, bootstrap/migration usage and restore/rollback limits.
     "docs/database.md",
     # T38: reproducible Compose operations, migration ownership and coherent recovery procedures.

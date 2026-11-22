@@ -41,7 +41,7 @@ CI checks request bytes and grader outcomes on eight scripted retail development
 ## What failed and what changed
 
 - Scenario tapes showed that authenticated lookup hid the user ID required by the next tool, the wire schema omitted the order ID pattern, validation notices lacked field detail, and `all_terms` often missed the relevant policy clause.
-- The first tool-contract candidate failed the development safety guard after choosing the first matching order. The single prompt revision required reading every order on the profile when the customer omitted the order ID and proposing a write only for a unique match.
+- The first tool-contract candidate failed the development safety guard after choosing the first matching order. The single prompt revision required reading every order on the profile when the customer omitted the order ID and proposing a write only for a unique match. [Ambiguous order selection RCA](docs/rca-ambiguous-order-selection.md).
 - The revised profile still made 2/16 unsafe attempts on held-out ambiguous multi-order cases. Staff approval is designed to catch these proposals before execution. Scenario grading took place before the gateway.
 - On development data, AND-based lexical search rarely matched conversational queries, tight answer and rerank limits caused slot failures, and downstream errors zeroed retrieval scores. The study added BM25, revised the limits and preserved completed ranking metrics.
 - The judge missed its calibration gate, so the sealed RAG claims used human relevance labels.
@@ -240,9 +240,10 @@ on Ubuntu. The default checks make no model calls.
 - Banking trajectory retrieval (E01) is outside this release: ingestion, search, reranking
   and offline metric machinery exist, but its study controller/evaluator contract and
   quality results do not. Retail E03 uses full policy context.
-- The context and caching study and field engineering scoping and incident-analysis
-  artifacts remain open. ANN/HNSW scaling, graph-versus-loop quality, an evaluation
-  explorer and a collector/dashboard stack are also outside the current evidence.
+- The context and caching study remains open. ANN/HNSW scaling, graph-versus-loop
+  quality, an evaluation explorer and a production collector/dashboard stack are also
+  outside the current evidence. The supervised retail pilot and the RCA follow-up actions
+  are proposed.
 - The Bedrock adapter is verified offline only. Live access was declined for this new
   AWS account for now. [Bedrock adapter](docs/evaluation.md#bedrock-adapter).
 - No hard end-to-end deadline guarantee: synchronous SQL, in-flight remote calls and
@@ -261,6 +262,8 @@ on Ubuntu. The default checks make no model calls.
 [Database and restore](docs/database.md) ·
 [Authentication](docs/authentication.md) ·
 [Security and tests](docs/security.md) ·
+[Retail pilot scope](docs/pilot-scope.md) ·
+[Ambiguous order selection RCA](docs/rca-ambiguous-order-selection.md) ·
 [Data provenance](docs/data-provenance.md).
 
 PolicyOps is [MIT licensed](LICENSE). Bulk benchmark data, task payloads and document text

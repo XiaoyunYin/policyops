@@ -112,8 +112,12 @@ EVAL_TEST_ONLY_IMPORTS = {"policyops.persistence.database", "policyops.persisten
 SCENARIO_IMPORTS = {
     "src/policyops_evals/scenarios/cli.py": {
         "policyops.persistence.database", "policyops.persistence.roles", "policyops.providers.tokenizer",
+        "policyops.persistence.evaluation",
     },
-    "src/policyops_evals/scenarios/grading.py": {"policyops.providers.canonical"},
+    "src/policyops_evals/scenarios/grading.py": {
+        "policyops.providers.canonical", "policyops.orchestration.investigation_prompt",
+        "policyops.orchestration.minimal",
+    },
     "src/policyops_evals/scenarios/recording.py": {"policyops.providers.results", "policyops.providers.transport"},
     "src/policyops_evals/scenarios/runtime.py": {
         "policyops.adapters.retail_client", "policyops.auth.service", "policyops.budget.config",
@@ -128,6 +132,21 @@ SCENARIO_IMPORTS = {
         "policyops.persistence.repositories", "policyops.persistence.roles", "policyops.providers.calls",
         "policyops.providers.tokenizer", "policyops.retrieval.ingest",
     },
+    # N2-S2/S3: labels are proven with the deterministic retail rules and session binding; the grader reads the
+    # graph and minimal-agent control-tool constants so it parses exactly what the agent emitted.
+    "src/policyops_evals/scenarios/generator.py": {"policyops.domain.retail_rules", "policyops.domain.session"},
+    # N2-S4/S5: registration, slot fencing and ledger reconciliation reuse the evaluation, budget, record and
+    # checkpoint persistence APIs; the study binds the runtime/prompt digests it registers.
+    "src/policyops_evals/scenarios/batch.py": {
+        "policyops.persistence", "policyops.persistence.checkpoints", "policyops.persistence.database",
+        "policyops.persistence.evaluation", "policyops.persistence.records",
+    },
+    "src/policyops_evals/scenarios/reporting.py": {"policyops.budget.config"},
+    "src/policyops_evals/scenarios/study.py": {
+        "policyops.orchestration", "policyops.persistence.budget", "policyops.persistence.evaluation",
+        "policyops.persistence.records", "policyops.retrieval.parse", "policyops.runtime.investigation",
+    },
+    "tests/test_scenario_runtime.py": {"policyops.orchestration", "policyops.runtime.investigation"},
 }
 
 

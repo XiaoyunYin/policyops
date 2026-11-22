@@ -1,6 +1,6 @@
 """Real PostgreSQL, retail ASGI, workbench, and provider adapters. Every model reply is scripted."""
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
 import json
@@ -16,10 +16,13 @@ from policyops.persistence.evaluation import EvaluationRepository
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME, EVAL_RUNTIME
 from policyops.providers.tokenizer import Tokenizer, load
 from policyops.runtime.investigation import graph_digest
+from policyops.runtime.spec import RuntimeSpec
 from policyops_contracts.policy import RETAIL_POLICY
 from policyops_evals.retail_sim import bootstrap, fixture, migrate
+from policyops_evals.scenarios import n3, n3_runner
+from policyops_evals.scenarios.arms import identities
 from policyops_evals.scenarios.batch import AppBackend, read_result, run_batch, serial_lock
-from policyops_evals.scenarios.cases import SCENARIOS, Scenario
+from policyops_evals.scenarios.cases import SCENARIOS, Scenario, Stratum
 from policyops_evals.scenarios.recording import Replay, ReplayMismatch, Tape, phase_of
 from policyops_evals.scenarios.runtime import POLICY_CORPUS, Profile, Slot, Summary, load_policy, retail_store
 from policyops_evals.scenarios.study import assigned_slot, register
@@ -223,4 +226,59 @@ def test_two_slot_dev_batch_recovers_after_app_completion(profile: tuple[Profile
     assert first.grade.primary and first.decision_ms is not None
     assert second.grade.unsafe_attempt is False and second.terminal_ms is not None
     assert all(item.ledger is not None and item.ledger.consumed_calls == 4 for item in recovered.values())
+    no_authority_or_execution(world)
+
+
+def test_n3_two_arm_paired_dev_resumes_mid_pair(profile: tuple[Profile, World],
+                                           database: tuple[AppDatabase, Path, Path], tmp_path: Path) -> None:
+    runtime, world = profile
+    repo = EvaluationRepository(database[0].engine(EVAL_RUNTIME))
+    document = n3.register(repo, {"scripted_n3": True})
+    study_id, digest = UUID(document["study_id"]), document["receipt"]["sha256"]
+    n3.verify_registration(repo, study_id, document["receipt"])
+    cases_and_strata: tuple[tuple[Scenario, Stratum], ...] = ((POSITIVE, "cancel"), (NEGATIVE, "delivered_refusal"))
+    cases = [
+        replace(case, gold=replace(case.gold, stratum=stratum, customer_world=case.world.customer_id))
+        for case, stratum in cases_and_strata
+    ]
+    paired = tuple(n3.CaseGroup(group.case, group.arms[:2]) for group in n3.case_groups(cases, "dev"))
+    blocks = n3.blocks(paired, "dev", study_id, world.ws)
+    frame = [item for block in blocks for item in block]
+    scripts = {item.slot.id: Script(runtime.tokenizer, reference(item.case), f"n3_{index}")
+               for index, item in enumerate(frame)}
+    started = []
+    out = tmp_path / "n3"
+    out.mkdir()
+    arms = identities(runtime.app, runtime.policy, runtime.tokenizer)
+
+    def execute(item: n3.Assignment, tape: Tape, bind: Callable[[RuntimeSpec], RuntimeSpec]) -> None:
+        started.append(item.slot.id)
+        runtime.run_scripted(item.case, item.slot, tape, scripts[item.slot.id], profile=item.arm.profile,
+                             bind_spec=bind)
+        if len(started) == 1:
+            raise KeyboardInterrupt
+
+    def unused(*_: object) -> Summary:
+        raise AssertionError("dispatch must carry an arm")
+
+    backends = {arm: AppBackend(runtime.app, world.ws, identity.graph_sha256, identity.prompt_sha256,
+                               unused, config_for=lambda slot: n3_runner.config_digest(out, slot))
+                for arm, identity in arms.items()}
+    backend = n3_runner.ArmBackend(backends, arms, out, execute)
+    closed: list[str] = []
+    with serial_lock(runtime.app, study_id) as check_lock, pytest.raises(KeyboardInterrupt):
+        n3_runner.run_blocks(backend, blocks, out, digest, n3.DEV_CAP, check_lock=check_lock, close=closed.append)
+    assert read_result(out, frame[0].slot, digest) is None
+    assert world.count("app.runs") == 1
+    live = backend.accounts(frame)
+    with serial_lock(runtime.app, study_id) as check_lock:
+        assert n3_runner.run_blocks(backend, blocks, out, digest, n3.DEV_CAP, check_lock=check_lock,
+                                    close=closed.append) == "complete"
+    assert started == [item.slot.id for item in frame] and not closed
+    assert backend.accounts(frame[:1]) == live
+    assert world.count("app.runs") == 4 and world.count("app.action_proposals") == 2
+    for item in frame:
+        result = read_result(out, item.slot, digest)
+        assert result is not None and result.ledger is not None and result.ledger.consumed_calls == 4
+        assert bool(result.grade.primary) == (item.case.gold.stratum == "cancel")
     no_authority_or_execution(world)

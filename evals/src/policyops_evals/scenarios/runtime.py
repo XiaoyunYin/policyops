@@ -19,6 +19,8 @@ from policyops.adapters.retail_client import RetailClient
 from policyops.auth.service import Authorized, SessionContext
 from policyops.budget.config import CHAT_ACTORS, DEFAULT_ACTORS, Caps, ChatActor, Configuration
 from policyops.domain.roles import Role
+from policyops.gateway.ports import GatewayScope, RetailPort
+from policyops.orchestration.profile import InvestigationProfile
 from policyops.persistence.database import transaction, workspace_transaction
 from policyops.persistence.records import Membership, NewCase, Principal
 import policyops.persistence.repositories as repo
@@ -27,12 +29,12 @@ from policyops.providers.calls import Providers
 from policyops.providers.contract import Provider
 from policyops.providers.tokenizer import Tokenizer
 from policyops.retrieval.parse import CHUNK_CONFIG
-from policyops.runtime.clock import DatabaseLeaseClock
+from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock
 from policyops.runtime.investigation import build_investigation_spec
-from policyops.runtime.spec import RuntimeCatalog
+from policyops.runtime.spec import RuntimeCatalog, RuntimeSpec
 from policyops.runtime.worker import Worker
 from policyops.services.runs import RunService
-from policyops_contracts.clock import SystemClock
+from policyops_contracts.clock import Clock, SystemClock
 from policyops_contracts.conversation import AgentLimits, PolicyContext
 from policyops_contracts.events import ErrorRaised, EventEnvelope, RunStopped
 from policyops_contracts.policy import RETAIL_POLICY
@@ -74,6 +76,19 @@ def configuration() -> Configuration:
                                                    request_max_output=1024, active_seconds=ACTIVE_SECONDS))
     worst = config.reservation("agent").worst_usd * MODEL_CALLS
     return replace(config, caps=replace(config.caps, run_usd=worst))
+
+
+def scenario_spec(*, env: str, engine: Engine, policy: PolicyContext, tokenizer: Tokenizer,
+                  retail: Callable[[GatewayScope], RetailPort], providers: Callable[[], Providers],
+                  bindings: tuple[CaseCustomerBinding, ...] = (), clock: LeaseClock | None = None,
+                  wall_clock: Clock | None = None,
+                  profile: InvestigationProfile = InvestigationProfile.BASELINE) -> RuntimeSpec:
+    return build_investigation_spec(
+        env=env, engine=engine, configuration=configuration(), policy=policy,
+        retrieval_scope=SCOPE, retrieval_config=RETRIEVAL, limits=LIMITS, max_steps=MAX_STEPS,
+        bindings=bindings, fixture_sha256=FIXTURE_SHA256, retail=retail,
+        providers=providers, tokenizer=tokenizer, clock=clock, wall_clock=wall_clock, profile=profile,
+    )
 
 
 def preflight(config: Configuration, slots: int) -> Decimal:
@@ -215,13 +230,18 @@ class Profile:
             raise ValueError("a digest-matched retail policy corpus is required in the dedicated workspace")
         return generation
 
-    def run_scripted(self, scenario: Scenario, slot: Slot, tape: Tape, handler: Handler) -> Summary:
+    def run_scripted(self, scenario: Scenario, slot: Slot, tape: Tape, handler: Handler, *,
+                     profile: InvestigationProfile = InvestigationProfile.BASELINE,
+                     bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None) -> Summary:
         token = secrets.token_urlsafe(24)
         return self._run(scenario, slot, tape, lambda: httpx2.MockTransport(handler),
-                         env="test", credential=token, redactor=slot.redactor((token,)))
+                         env="test", credential=token, redactor=slot.redactor((token,)),
+                         profile=profile, bind_spec=bind_spec)
 
     def _run(self, scenario: Scenario, slot: Slot, tape: Tape, transport: Callable[[], httpx2.AsyncBaseTransport],
-             *, env: str, credential: str, redactor: Redactor, expected_generation: UUID | None = None) -> Summary:
+             *, env: str, credential: str, redactor: Redactor, expected_generation: UUID | None = None,
+             profile: InvestigationProfile = InvestigationProfile.BASELINE,
+             bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None) -> Summary:
         if env != "test" and in_test_context():
             raise ValueError("test scenarios require a mock provider transport")
         scenario.verify(self.retail.fixture.raw)
@@ -244,12 +264,12 @@ class Profile:
             return Providers({"openai": SecretStr(credential)}, recording_transport)
 
         with retail_client(self.retail, slot, scenario) as client:
-            spec = build_investigation_spec(
-                env=env, engine=self.app, configuration=configuration(), policy=self.policy,
-                retrieval_scope=SCOPE, retrieval_config=RETRIEVAL, limits=LIMITS, max_steps=MAX_STEPS,
-                bindings=(binding,), fixture_sha256=FIXTURE_SHA256, retail=lambda _: client,
-                providers=providers, tokenizer=self.tokenizer, clock=lease, wall_clock=wall,
+            spec = scenario_spec(
+                env=env, engine=self.app, policy=self.policy, bindings=(binding,), retail=lambda _: client,
+                providers=providers, tokenizer=self.tokenizer, clock=lease, wall_clock=wall, profile=profile,
             )
+            if bind_spec is not None:
+                spec = bind_spec(spec)
             catalog = RuntimeCatalog.of([spec], default=spec.spec_id)
             service = RunService(self.app, lease, catalog, wall, run_id_factory=lambda: slot.run)
             result = service.start(authorized, key=str(slot.id), case_id=slot.case, expected_version=1)

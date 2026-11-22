@@ -120,6 +120,8 @@ SCENARIO_IMPORTS = {
     },
     "src/policyops_evals/scenarios/recording.py": {"policyops.providers.results", "policyops.providers.transport"},
     "src/policyops_evals/scenarios/runtime.py": {
+        # N3 composes the P1 profile through the same workbench entry point.
+        "policyops.gateway.ports", "policyops.orchestration.profile",
         "policyops.adapters.retail_client", "policyops.auth.service", "policyops.budget.config",
         "policyops.domain.roles", "policyops.persistence.database", "policyops.persistence.records",
         "policyops.persistence.repositories", "policyops.persistence.runs", "policyops.providers.calls",
@@ -146,7 +148,25 @@ SCENARIO_IMPORTS = {
         "policyops.orchestration", "policyops.persistence.budget", "policyops.persistence.evaluation",
         "policyops.persistence.records", "policyops.retrieval.parse", "policyops.runtime.investigation",
     },
-    "tests/test_scenario_runtime.py": {"policyops.orchestration", "policyops.runtime.investigation"},
+    # N3 binds the P1 runtime, prompt, catalog, tokenizer and diagnostics in each arm.
+    "src/policyops_evals/scenarios/arms.py": {
+        "policyops.orchestration", "policyops.orchestration.profile", "policyops.providers.tokenizer",
+        "policyops.providers.tool_diagnostics", "policyops.runtime.investigation", "policyops.runtime.spec",
+    },
+    # N3 uses evaluation receipts and the existing retrieval chunk identity.
+    "src/policyops_evals/scenarios/n3.py": {
+        "policyops.persistence.budget", "policyops.persistence.evaluation", "policyops.persistence.records",
+        "policyops.retrieval.parse",
+    },
+    # The N3 CLI opens the evaluation receipt store and binds each app runtime spec before dispatch.
+    "src/policyops_evals/scenarios/n3_cli.py": {"policyops.persistence.evaluation", "policyops.runtime.spec"},
+    # The rolling runner validates exact app-ledger amounts and pins the dispatched runtime spec.
+    "src/policyops_evals/scenarios/n3_runner.py": {"policyops.persistence.records", "policyops.runtime.spec"},
+    # N3 offline tests exercise the P1 prompt composition and reference spec preflight.
+    "tests/test_scenario_n3.py": {"policyops.orchestration", "policyops.providers.tokenizer"},
+    # The N3 PostgreSQL restart test verifies the real runtime spec and app ledger binding.
+    "tests/test_scenario_runtime.py": {"policyops.orchestration", "policyops.runtime.investigation",
+                                       "policyops.runtime.spec"},
 }
 
 

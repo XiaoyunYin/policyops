@@ -74,6 +74,33 @@ def add_parser(group: argparse.ArgumentParser) -> None:
     run.set_defaults(handler=command_run)
     report.set_defaults(handler=command_report)
 
+    n3 = commands.add_parser("n3", help="Registered baseline and tool-contract scenario study")
+    n3_commands = n3.add_subparsers(dest="n3_command", required=True)
+    for name in ("register", "run", "report"):
+        subcommand = n3_commands.add_parser(name)
+        subcommand.add_argument("--manifests", type=Path, required=True)
+        subcommand.add_argument("--fixture-root", type=Path, required=True)
+        subcommand.add_argument("--policy-file", type=Path, required=True)
+        subcommand.add_argument("--out", type=Path, required=True)
+        subcommand.add_argument("--dsn-file", type=Path, required=True)
+        if name == "register":
+            subcommand.add_argument("--workspace", type=UUID, required=True)
+        else:
+            subcommand.add_argument("--split", choices=("dev", "held-out"), required=True)
+        if name == "run":
+            subcommand.add_argument("--max-usd", type=Decimal, required=True, help="dev or all-in USD ceiling")
+            subcommand.add_argument("--allow-paid", action="store_true")
+        subcommand.set_defaults(handler=command_n3)
+
+
+def command_n3(args: argparse.Namespace) -> int:
+    try:
+        from policyops_evals.scenarios.n3_cli import run
+
+        return run(args)
+    except Exception as error:
+        return _error("n3 " + args.n3_command, error)
+
 
 def command_setup(args: argparse.Namespace) -> int:
     from policyops_evals.scenarios.setup import SetupRefused, run_setup

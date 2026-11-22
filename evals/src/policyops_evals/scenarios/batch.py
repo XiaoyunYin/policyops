@@ -78,6 +78,7 @@ class Result(BaseModel):
 class RunState:
     ledger: Ledger | None
     active: bool = False
+    proposed: bool = False
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ class AppBackend:
     graph_sha256: str
     prompt_sha256: str
     execute_slot: Callable[[Scenario, Slot, Tape], Summary]
+    config_for: Callable[[Slot], str | None] | None = None
 
     def execute(self, scenario: Scenario, slot: Slot, tape: Tape) -> Summary:
         return self.execute_slot(scenario, slot, tape)
@@ -127,9 +129,12 @@ class AppBackend:
         reservation = config.reservation("agent")
         with workspace_transaction(self.engine, self.workspace) as connection:
             rows = connection.execute(text("""
-                SELECT r.id, r.case_id, r.graph_sha256, r.prompt_sha256, r.state, s.id AS scope,
+                SELECT r.id, r.case_id, r.graph_sha256, r.prompt_sha256, r.config_sha256, r.state, s.id AS scope,
                     s.spent_usd, s.held_usd, s.calls_consumed, s.calls_held, s.counts_used,
-                    s.cap_usd, s.cap_calls, s.cap_counts, s.overrun, s.contract_block, a.*
+                    s.cap_usd, s.cap_calls, s.cap_counts, s.overrun, s.contract_block, a.*,
+                    CASE WHEN :check_config THEN EXISTS (
+                        SELECT 1 FROM app.action_proposals p WHERE p.workspace_id = r.workspace_id AND p.run_id = r.id
+                    ) ELSE FALSE END AS proposed
                 FROM app.runs r
                 LEFT JOIN app.budget_scopes s ON s.workspace_id = r.workspace_id AND s.run_id = r.id
                 CROSS JOIN LATERAL (
@@ -147,7 +152,7 @@ class AppBackend:
                 WHERE r.workspace_id = :workspace AND r.id = ANY(:ids)
             """), {"ids": list(by_run), "workspace": self.workspace, "model": reservation.model,
                    "price": reservation.price_revision, "config": reservation.config_sha256,
-                   "request_usd": reservation.worst_usd}).mappings().all()
+                   "request_usd": reservation.worst_usd, "check_config": self.config_for is not None}).mappings().all()
 
         result = {}
         for row in rows:
@@ -156,6 +161,8 @@ class AppBackend:
                 slot.case, self.graph_sha256, self.prompt_sha256,
             ):
                 raise Refused("app run identity or runtime digest mismatch")
+            if self.config_for is not None and row["config_sha256"] != self.config_for(slot):
+                raise Refused("app runtime config digest mismatch")
             ledger = None
             if row["scope"] is not None:
                 if (
@@ -173,7 +180,7 @@ class AppBackend:
                     overrun=row["overrun"], contract_block=row["contract_block"] is not None,
                 )
             active = row["state"] not in runs.TERMINAL_STATES and row["state"] != "waiting_approval"
-            result[slot.id] = RunState(ledger, active=active)
+            result[slot.id] = RunState(ledger, active=active, proposed=row["proposed"])
         return result
 
 

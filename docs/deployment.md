@@ -684,8 +684,17 @@ instruction is consumed once and applies only to that SHA before expiry.
 From an off-host network, run `python -B scripts/deploy_probe.py <hostname> --duration 900`
 with Python and curl, and redirect stdout to an external JSONL report. The
 report records readiness and release samples, observation gaps, and each SHA's
-first and last sightings. A sampled failure window measures the observation
-period of the drill.
+first and last sightings. Use the readiness series (`/api/v1/health/ready`) to
+measure the sampled outage. `/release` tracks release identity. Failures there
+before the first sighting of a release that serves the route do not count as
+downtime.
+
+During the 2026-11-23 manual baseline deploy, the off-host operator workstation
+on the admin network collected 5,400 samples over one hour: 1,800 readiness
+samples every 2 seconds and 3,600 release samples every second, with no gaps in
+either series. The longest readiness failure window spanned 32 seconds across
+17 consecutive failed samples (20:11:59–20:12:31 UTC). The legacy release did not
+serve `/release`, which accounts for the 271-second release failure window.
 
 Anyone who can push to `main` controls the root-run release on this demo host.
 Protect `main`, require review of workflow and host-control changes, and

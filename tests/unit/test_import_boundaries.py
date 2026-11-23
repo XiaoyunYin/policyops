@@ -189,6 +189,27 @@ SCENARIO_IMPORTS = {
         "policyops.providers.canonical",
     },
     "tests/test_scenario_n7.py": {"policyops.orchestration", "policyops.providers.serialize"},
+    # N8 reuses the N7 registration and request bindings, wraps the scoped RetailPort through bind_spec, seeds a
+    # staff-note case message through the runtime's repository seed path and joins persisted outcomes read-only.
+    "src/policyops_evals/scenarios/n8.py": {
+        "policyops.budget.prices", "policyops.orchestration", "policyops.persistence.budget",
+        "policyops.persistence.evaluation", "policyops.persistence.records", "policyops.providers.canonical",
+        "policyops.providers.serialize", "policyops.providers.tokenizer", "policyops.retrieval.parse",
+    },
+    "src/policyops_evals/scenarios/n8_cli.py": {"policyops.persistence.evaluation", "policyops.runtime.spec"},
+    "src/policyops_evals/scenarios/n8_grading.py": {"policyops.orchestration.investigation_prompt",
+                                                     "policyops.providers.canonical"},
+    "src/policyops_evals/scenarios/n8_port.py": {
+        "policyops.adapters.retail_client", "policyops.gateway.ports", "policyops.persistence.database",
+        "policyops.persistence.records", "policyops.persistence.repositories", "policyops.runtime.clock",
+        "policyops.runtime.investigation", "policyops.runtime.spec",
+    },
+    "src/policyops_evals/scenarios/n8_report.py": {"policyops.persistence.database", "policyops.runtime.spec"},
+    # The offline carrier test compares real gateway fact collection with and without the label wrapper.
+    "tests/test_scenario_n8.py": {"policyops.adapters.retail_client", "policyops.gateway.facts",
+                                  "policyops.gateway.ports"},
+    # The PostgreSQL negative control writes another run's handoff message through the trusted seed path.
+    "tests/test_scenario_n8_pg.py": {"policyops.persistence.repositories", "policyops.runtime.spec"},
 }
 
 

@@ -108,6 +108,29 @@ def add_parser(group: argparse.ArgumentParser) -> None:
             command.add_argument("--phase", choices=("pilot", "study"), required=True)
         command.set_defaults(handler=command_n7)
 
+    n8 = commands.add_parser("n8", help="Dev-only prompt-injection study of the workbench agent")
+    n8_commands = n8.add_subparsers(dest="n8_command", required=True)
+    for name in ("register", "pilot", "run", "report"):
+        command = n8_commands.add_parser(name)
+        for option in ("dsn-file", "manifests", "fixture-root", "policy-file", "out"):
+            command.add_argument(f"--{option}", type=Path, required=True)
+        if name == "register":
+            command.add_argument("--workspace", type=UUID, required=True)
+        if name in {"pilot", "run"}:
+            command.add_argument("--allow-paid", action="store_true")
+        if name == "report":
+            command.add_argument("--phase", choices=("pilot", "study"), required=True)
+        command.set_defaults(handler=command_n8)
+
+
+def command_n8(args: argparse.Namespace) -> int:
+    try:
+        from policyops_evals.scenarios.n8_cli import run
+
+        return run(args)
+    except Exception as error:
+        return _error("n8 " + args.n8_command, error)
+
 
 def command_n7(args: argparse.Namespace) -> int:
     try:

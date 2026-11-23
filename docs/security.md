@@ -72,6 +72,13 @@ cannot be replayed). Both E05 sensitivity controls detected their defects. Promp
 server facts about authority; the two stale races happened after its decision. These small, fixture-bound
 counts do not establish general prompt-injection resistance or compare models' overall security.
 
+In the [prompt-injection red-team study](evaluation.md#prompt-injection-red-team),
+Luna emitted the attacker action in 0/672 exposed development runs across tool
+results and staff notes. The deterministic gateway is the authorization
+control. Model abstention was the measured behavior, and no attacker action
+reached the gateway to exercise that control. Enforcement evidence comes from
+the separate [gateway-versus-prompt-only study](evaluation.md#e05-gateway-versus-prompt-only).
+
 ## Reproduce the offline audit
 
 Set `POLICYOPS_TEMP_DIR` to an absolute external scratch root. Use the pinned Python/uv and Node versions
@@ -109,6 +116,9 @@ Advisory databases change daily; these are dated observations, not a standing gu
 
 ## Residual risks and explicit exclusions
 
+- The prompt-injection study left retrieved-policy poisoning and the trusted
+  presentation-text path untested. It also excluded Haiku and exfiltration
+  beyond canary text.
 - Local Compose attaches only Caddy to the non-internal `edge` network to make its published loopback port
   reachable on Docker Desktop. API shares Caddy's network namespace, so both have potential internet egress.
   PostgreSQL, retail, Dex, worker and one-shots stay on the internal default network with no external egress.

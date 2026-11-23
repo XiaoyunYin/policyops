@@ -413,7 +413,8 @@ $sshOptions = @('-o', 'StrictHostKeyChecking=yes', '-o', ('UserKnownHostsFile="{
 ssh -i $key @sshOptions "ubuntu@$ip" 'sudo cloud-init status --wait && sudo test ! -e /var/lib/policyops/bootstrap/failure && sudo grep -qx 0 /var/lib/policyops/bootstrap/success'
 if ($LASTEXITCODE -ne 0) { throw 'Bootstrap incomplete or failed; inspect the root-only bootstrap log' }
 scp -i $key @sshOptions infra/deploy/deploy.sh "ubuntu@${ip}:/home/ubuntu/policyops-deploy"
-ssh -i $key @sshOptions "ubuntu@$ip" 'sudo install -m 0755 /home/ubuntu/policyops-deploy /usr/local/sbin/policyops-deploy'
+scp -i $key @sshOptions infra/deploy/cd_agent.py "ubuntu@${ip}:/home/ubuntu/cd_agent.py"
+ssh -i $key @sshOptions "ubuntu@$ip" 'sudo install -m 0644 /home/ubuntu/cd_agent.py /usr/local/sbin/cd_agent.py && sudo install -m 0755 /home/ubuntu/policyops-deploy /usr/local/sbin/policyops-deploy'
 ssh -i $key @sshOptions "ubuntu@$ip" "sudo bash /usr/local/sbin/policyops-deploy $commitA $hostName"
 python -B scripts/devenv.py uv run --offline --frozen python -B scripts/deploy_verify.py $hostName --allow-admin-ssh
 # Run again from a non-admin network without --allow-admin-ssh to establish anonymous 22 denial.
@@ -562,6 +563,138 @@ a failed reset requires operator intervention. Never run this against retained r
   `hostname` before initial seeding and point its A record to the static IP. Changing an
   existing issuer requires a fresh disposable volume and new sessions.
 
+## Continuous deployment
+
+The host timer checks `main` every ten minutes with up to one minute of jitter.
+The agent binds the full Git tip to the newest completed, successful GitHub
+`ci.yml` push attempt for the pinned repository. It compares the tip with the
+last gated release, so an intervening runtime change is eligible even when the
+tip only edits documentation. The agent builds on the host, at least three
+hours apart and at most four times per UTC day. Low free disk space (under
+8 GiB on `/var/lib`) holds the build. CPU steal above 20% over a three-second
+sample defers it. Builds leave the current stack serving.
+
+### Install and adopt
+
+From a reviewed release checkout, use a root shell on the existing host. The
+baseline must already serve its full SHA at `/release`, with its app, retail,
+web, PostgreSQL and Dex images retained locally. For a legacy deployment, use
+the manual runbook to deploy the reviewed baseline and seed its fixture first.
+For the first install, the reset markers in `/var/lib/policyops/cd`
+(`reset-missed`, `reset-pending`, `reset-progress`) must be absent or have
+been created only by the current `reset.sh`.
+Disable the CD timer and remove `/var/lib/policyops/cd/enabled` before a manual
+deploy or tooling reinstall. Allow any running CD invocation to finish, then
+hold the deploy lock during installation.
+
+```bash
+umask 077
+install -d -m 0700 /var/lib/policyops/cd /usr/local/lib/policyops-cd
+(
+  flock -w 10 9 || exit
+  install -m 0755 infra/deploy/cd_agent.py /usr/local/lib/policyops-cd/policyops-cd
+  ln -sfn /usr/local/lib/policyops-cd/policyops-cd /usr/local/sbin/policyops-cd
+  install -m 0755 infra/deploy/deploy.sh /usr/local/lib/policyops-cd/deploy.sh
+  install -m 0644 scripts/deploy_verify.py /usr/local/lib/policyops-cd/deploy_verify.py
+  install -m 0755 infra/deploy/reset.sh /usr/local/sbin/policyops-demo-reset
+  install -m 0755 infra/deploy/seed.sh /usr/local/sbin/policyops-demo-seed
+  install -m 0644 infra/deploy/policyops-cd.{service,timer} /etc/systemd/system/
+) 9>>/var/lib/policyops/deploy.lock
+```
+
+Create root-owned mode-0600 `/var/lib/policyops/cd/config.json`. Fill in the
+immutable numeric GitHub repository ID for `XiaoyunYin/policyops` and the
+hostname recorded in `/var/lib/policyops/hostname`. The interval fields below
+show the defaults. Stricter build limits can be used without changing the timer.
+
+```json
+{
+  "repo_id": 0,
+  "hostname": "demo.example.invalid",
+  "min_build_interval_seconds": 10800,
+  "max_builds_per_utc_day": 4,
+  "api_backoff_seconds": 600
+}
+```
+
+On a tooling reinstall, run `policyops-cd cancel` before `adopt` if the
+previous agent left a `building` or `built` attempt. The command acquires
+the deploy lock, requires the `active` marker to be absent, and leaves the
+serving release in place.
+
+```bash
+policyops-cd adopt &&
+  systemctl daemon-reload &&
+  touch /var/lib/policyops/cd/enabled &&
+  systemctl enable --now policyops-cd.timer
+```
+
+A failed adopt must leave `/var/lib/policyops/cd/enabled` absent.
+
+The installed verifier uses the last healthy app image's Python and validates
+HTTPS, the release SHA, Alice's session and the exact seeded proposal in a
+read-only GET. It can retry once after 30 seconds. Six readiness and container
+probes, spaced 30 seconds apart, require one container per service and verify its
+running image ID, restart count, and OOM state. The host gate skips external
+port probes. Run the full verifier from outside the admin network for ingress
+evidence.
+
+### Review holds and recover
+
+- Use `policyops-cd release <full-sha>` on the specific held green tip after
+  review. It prints and approves the recorded HOLD reasons. A later reason for
+  the same SHA requires another release. Inspect schema changes in both
+  Alembic trees, migration and bootstrap code and the PostgreSQL image pin.
+  A released schema change can run
+  migrations. Activation or gate failure freezes the host for operator repair.
+- For tooling changes, reinstall the reviewed host tools before releasing the
+  tip. Review protected branch history before releasing a non-fast-forward tip.
+  Before building, the agent checks the resolved service sets, single-replica
+  topology, and reserved image tags. Unsupported configs stay held.
+- A failed same-schema activation or gate restores the retained last healthy
+  checkout and images locally, reseeds a proposal and gates the restored
+  release. Keep those artifacts and both pinned dependency images when pruning.
+  The agent quarantines failures by full SHA and freezes after two failed
+  rollback attempts or three rollbacks within 24 hours.
+- A frozen host also pauses nightly reset and periodic seeding. Inspect
+  `/var/lib/policyops/cd/log.jsonl` and the quarantine entry. After repairing the
+  serving release, use `policyops-cd adopt` if the baseline needs to change and
+  `policyops-cd unfreeze` to resume. Preserve a damaged `state.json` for review,
+  reconcile any recorded attempt, and adopt a verified baseline before enabling
+  the timer again. Keep the enabled switch absent throughout recovery.
+- The agent defers builds from 06:57 to 08:30 UTC and cutover, promotion and
+  rollback from 07:45 to 08:30 UTC. A blocked nightly reset leaves a durable
+  `reset-missed` marker. The agent retries it when the host is unfrozen and
+  cutover is idle. An interrupted reset resumes from `reset-progress`, which
+  records the reset ID, release, and last completed step. If adoption reports
+  `reset_in_progress`, complete or retry the reset with `policyops-demo-reset`
+  on the recorded release first, then run `policyops-cd adopt`. The agent gates the
+  reset fixture before resuming a built candidate and freezes if verification
+  fails.
+
+### Rollback drill and trust
+
+Write root-owned mode-0600 `/var/lib/policyops/cd/drill.json` with `candidate`
+(the full green runtime SHA), `fail_stage` (`gate` or `rollback`), and
+`expires_at` (an ISO 8601 timestamp with a UTC offset). Use a same-schema
+candidate. The matching gate runs normally and the audit records its true
+result and a forced failure. A `rollback` drill also forces the first rollback
+verdict to fail, then lets the real retry decide whether to freeze. The
+instruction is consumed once and applies only to that SHA before expiry.
+From an off-host network, run `python -B scripts/deploy_probe.py <hostname> --duration 900`
+with Python and curl, and redirect stdout to an external JSONL report. The
+report records readiness and release samples, observation gaps, and each SHA's
+first and last sightings. A sampled failure window measures the observation
+period of the drill.
+
+Anyone who can push to `main` controls the root-run release on this demo host.
+Protect `main`, require review of workflow and host-control changes, and
+disable force pushes. Trust extends to GitHub's control plane, the host's TLS
+roots, installed tools and retained images. The agent uses anonymous outbound
+HTTPS and the existing host firewall and CI permissions. Revisit host builds
+in favor of CI-built, digest-pinned and signed images if live drills show CPU
+steal during builds or burst capacity failing to recover between deploys.
+
 ## Backup, rollback, retention and teardown
 
 For a private recovery artifact, disable both timers and stop API/worker/retail/Dex
@@ -618,8 +751,8 @@ header checks and elapsed time per step. Review schema compatibility first and s
 `--schema-compatible`. It uses strict known-host SSH, and stops at the first failed step.
 Timeout means remote work may still run; inspect the host/lock before retrying. A failed
 B is retained for diagnosis; inspect state and manually invoke the same script with
-`<A> <hostname> --rollback` only after compatibility is confirmed. It uses retained images,
-does not build or execute older migrations, and reattaches API to Caddy's new namespace.
+`<A> <hostname> --rollback` only after compatibility is confirmed. It uses the exact retained
+checkout and images locally and reattaches API to Caddy's new namespace. It skips migrations.
 Health checks cannot prove all data/authorization behavior survived rollback; run the
 browser/receipt and migration-version checks as well. The script does not promise zero
 downtime. **Irreversible migrations cannot be rolled back by an image change.** Keep B

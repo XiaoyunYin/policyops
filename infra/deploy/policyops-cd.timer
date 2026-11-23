@@ -1,0 +1,11 @@
+[Unit]
+Description=Check main for a green PolicyOps demo release
+
+[Timer]
+OnCalendar=*-*-* *:3/10:00 UTC
+AccuracySec=1us
+RandomizedDelaySec=60s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

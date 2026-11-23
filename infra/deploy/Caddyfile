@@ -35,6 +35,15 @@ http://{$POLICYOPS_HOSTNAME} {
     request_body {
         max_size 65536
     }
+    @release {
+        method GET
+        path /release
+    }
+    handle @release {
+        header Content-Type "text/plain; charset=utf-8"
+        header Cache-Control "no-store"
+        respond "{$POLICYOPS_RELEASE}" 200
+    }
     handle /dex/* {
         header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-8L66wXkInDnVEdLxlrsFPaRkqIpBKhVd5kdLxX6AvFk='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
         reverse_proxy dex:5556

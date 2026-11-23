@@ -5,6 +5,7 @@ umask 077
 base=/var/lib/policyops
 exec 9>"$base/deploy.lock"
 flock -w 10 9
+if test -e "$base/cd/frozen" || test -e "$base/cd/active"; then exit 0; fi
 cd "$(readlink -f "$base/current")"
 export COMPOSE_PROJECT_NAME=policyops-public POLICYOPS_RUN_ID=public-demo
 export POLICYOPS_TEMP_DIR="$base" TEMP="$base/tmp" TMP="$base/tmp" TMPDIR="$base/tmp"

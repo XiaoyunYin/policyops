@@ -12,6 +12,10 @@ from typing import Any
 
 import httpx
 import pytest
+from starlette.datastructures import Headers
+
+from policyops.api.auth import expected_context
+from policyops.auth.service import AuthError
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -20,6 +24,9 @@ from scripts import deploy_verify as driver
 
 
 HOST = "demo.example.test"
+RELEASE = "a" * 40
+CASE = "00000000-0000-0000-0000-000000000001"
+PROPOSAL = "00000000-0000-0000-0000-000000000002"
 HEADERS = {"strict-transport-security": "max-age=31536000", "x-frame-options": "DENY",
            "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
            "content-security-policy": "default-src 'self'; object-src 'none'; frame-ancestors 'none'"}
@@ -31,9 +38,16 @@ def cookies() -> list[str]:
                                       ("csrf", "Strict", ""))]
 
 
-@pytest.mark.parametrize("mutation", [None, "tls", "redirect", "banner", "hsts", "health", "cookie", "port"])
+@pytest.mark.parametrize("mutation", [None, "tls", "redirect", "banner", "hsts", "health", "cookie", "port", "release",
+                                      "alice", "unreadable_proposal", "wrong_case", "wrong_version", "wrong_digest",
+                                      "missing_seed", "local"])
 def test_actual_verification_sequence_rejects_live_policy_failures(monkeypatch: pytest.MonkeyPatch,
-                                                                  mutation: str | None) -> None:
+                                                                  mutation: str | None, tmp_path: Path) -> None:
+    fixture = tmp_path / "seed.json"
+    if mutation != "missing_seed":
+        fixture.write_text(json.dumps({"proposal_id": PROPOSAL, "proposal_version": 2,
+                                       "case_id": CASE, "action_digest": "d" * 64}), encoding="utf-8")
+
     def response(request: httpx.Request) -> httpx.Response:
         if mutation == "tls":
             raise httpx.ConnectError("synthetic TLS failure", request=request)
@@ -48,6 +62,22 @@ def test_actual_verification_sequence_rejects_live_policy_failures(monkeypatch: 
                                                + HOST + "/"})
         if path == "/api/v1/health/ready":
             return httpx.Response(503 if mutation == "health" else 200, json={"status": "ok"}, headers=headers)
+        if path == "/release":
+            return httpx.Response(200, content=("b" * 40 if mutation == "release" else RELEASE).encode())
+        if path == "/api/v1/me":
+            return httpx.Response(200, json={"principal_id": CASE if mutation == "alice" else driver.ALICE,
+                                            "workspace_id": str(driver.DEMO_WORKSPACE), "roles": ["analyst"]})
+        if path == f"/api/v1/proposals/{PROPOSAL}":
+            assert request.method == "GET" and request.url.query == b"version=2"
+            try:
+                context = expected_context(Headers(raw=[(key.lower(), value) for key, value in request.headers.raw]))
+            except AuthError as error:
+                return httpx.Response(error.status)
+            assert (str(context.principal_id), str(context.workspace_id)) == (driver.ALICE, str(driver.DEMO_WORKSPACE))
+            proposal = {"proposal_id": PROPOSAL, "proposal_version": 3 if mutation == "wrong_version" else 2,
+                        "scope": {"case_id": PROPOSAL if mutation == "wrong_case" else CASE},
+                        "action_digest": ("f" if mutation == "wrong_digest" else "d") * 64}
+            return httpx.Response(404 if mutation == "unreadable_proposal" else 200, json={"proposal": proposal})
         if path == "/api/v1/auth/login":
             return httpx.Response(302, headers={**headers, "location": "/dex/login",
                                                 "set-cookie": cookies()[0]})
@@ -67,13 +97,17 @@ def test_actual_verification_sequence_rejects_live_policy_failures(monkeypatch: 
     monkeypatch.setattr(socket, "getaddrinfo", lambda *_args, **_kw: [(2, 1, 6, "", ("192.0.2.1", 443))])
 
     def connect(endpoint: tuple[str, int], **_kwargs: Any) -> Any:
+        if mutation == "local":
+            pytest.fail("local verifier must not probe ports")
         if endpoint[1] in ({80, 443, 5432} if mutation == "port" else {80, 443}):
             return nullcontext()
         raise OSError("closed")
 
     monkeypatch.setattr(socket, "create_connection", connect)
-    result = driver.verify(HOST)
-    assert result["passed"] is (mutation is None)
+    result = driver.verify(HOST, local=mutation == "local", expect_release=RELEASE, seed_path=fixture)
+    assert result["passed"] is (mutation in (None, "local")), result
+    if mutation == "local":
+        assert not result["port_scope"] and not result["observed_open_ports"]
     serialized = json.dumps(result)
     assert "synthetic" not in serialized and "set-cookie" not in serialized
 

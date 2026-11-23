@@ -6,6 +6,7 @@ Not a Terraform schema validator, Compose merger or proof of live host firewall 
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from pathlib import Path
 import re
 import shlex
@@ -19,6 +20,7 @@ import yaml  # type: ignore[import-untyped]
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from infra.deploy.cd_agent import runtime_path
 from scripts.check_publication import SECRET_PATTERNS
 
 
@@ -100,6 +102,8 @@ def test_public_overlay_policy() -> None:
     assert "Strict-Transport-Security" in caddy and "max-age=31536000" in caddy
     assert "header_up X-PolicyOps-Client-IP {remote_host}" in caddy
     assert "max_size 65536" in caddy and "-Server" in caddy
+    assert 'respond "{$POLICYOPS_RELEASE}" 200' in caddy
+    assert profile()["services"]["caddy"]["environment"]["POLICYOPS_RELEASE"] == "${POLICYOPS_IMAGE_TAG:-local}"
     assert "/var/lib/policyops/caddy-data:/data" in raw
 
 
@@ -377,7 +381,7 @@ def test_host_reset_rollback_and_secret_boundaries() -> None:
     assert "compose_secrets.py" in deploy and 'chmod 0700 "$POLICYOPS_SECRETS_DIR"' in deploy
     assert "--detach" in deploy and "[0-9a-f]{40}" in deploy and "flock -w" in deploy and "flock -w" in reset
     assert 'chmod -R a+rX "$release"' in deploy
-    assert "--no-build --no-deps" in deploy and "docker image inspect" in deploy
+    assert "--no-build --pull never --no-deps" in deploy and "docker image inspect" in deploy
     assert "downgrade" not in re.sub(r"#[^\n]*", "", deploy)
     assert "docker volume rm" in reset and reset.index("docker volume inspect") < reset.index("docker volume rm")
     assert "policyops.run" in reset and "policyops.owner" in reset
@@ -386,3 +390,51 @@ def test_host_reset_rollback_and_secret_boundaries() -> None:
     assert "OnCalendar=" in timer and "Persistent=true" in timer
     seed = (ROOT / "infra/deploy/seed.sh").read_text(encoding="utf-8")
     assert 'test "$count" -lt 300' in seed and "periodic-seed-count" in reset
+    assert all('"$base/cd/frozen"' in script and '"$base/cd/active"' in script for script in (reset, seed))
+    assert "reset-pending" in reset
+
+
+def test_agent_deploy_modes_keep_mutation_and_installs_separate() -> None:
+    deploy = (ROOT / "infra/deploy/deploy.sh").read_text(encoding="utf-8")
+    assert deploy.index('if test "$mode" = --build-only; then exit 0; fi') < deploy.index("stop worker api")
+    assert deploy.index("public.policyops_app_alembic_version") < deploy.index("stop worker api")
+    assert deploy.index("retail.alembic_version") < deploy.index("stop worker api")
+    candidate_exit = deploy.index('if [[ "$mode" != deploy && "$inherited" -eq 1 ]]; then exit 0; fi')
+    assert candidate_exit < deploy.index('readlink "$base/current"')
+    assert candidate_exit < deploy.index("systemctl daemon-reload")
+    fetch = deploy.split("git -C", 1)[0][-350:]
+    assert 'if [[ "$mode" = deploy || ( "$mode" = --build-only && "$inherited" -eq 0 ) ]]; then' in fetch
+    rollback = deploy.split('if test "$mode" == --rollback; then', 1)[1].split("elif", 1)[0]
+    assert "--no-deps" in rollback and "--pull never" in rollback
+    assert 'test /proc/self/fd/9 -ef "$base/deploy.lock"' in deploy and "flock -n 9" in deploy
+
+
+def test_real_container_inputs_are_runtime_paths() -> None:
+    inputs: set[str] = set()
+    for path in (ROOT / "infra/docker").glob("*.Dockerfile"):
+        for line in path.read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
+            instruction = line.strip().split(maxsplit=1)
+            if not instruction or instruction[0].upper() != "COPY":
+                continue
+            arguments = instruction[1]
+            flags = []
+            while arguments.startswith("--"):
+                flag, arguments = arguments.split(maxsplit=1)
+                flags.append(flag)
+            if any(flag.startswith("--from=") for flag in flags):
+                continue  # stage-to-stage copies have no checkout source
+            sources = json.loads(arguments)[:-1] if arguments.startswith("[") else shlex.split(arguments)[:-1]
+            inputs.update(sources)
+    for path in (ROOT / "compose.yaml", *(ROOT / "infra/compose").glob("*.yaml")):
+        stack = yaml.load(path.read_text(encoding="utf-8"), Loader=ProfileLoader)  # noqa: S506
+        sections = [*stack.get("services", {}).values(), *(v for k, v in stack.items() if k.startswith("x-"))]
+        for section in sections:
+            for mount in section.get("volumes", []):
+                if isinstance(mount, dict):
+                    if mount["type"] == "bind":
+                        inputs.add(mount["source"])
+                elif mount.startswith((".", "/", "~", "${")):
+                    inputs.add(mount.split(":", 1)[0])
+    assert {"THIRD_PARTY_NOTICES.md", "./infra/deploy/Caddyfile", "./infra/compose/postgres.sh"} <= inputs
+    for source in inputs:
+        assert runtime_path(source.removeprefix("./")), source

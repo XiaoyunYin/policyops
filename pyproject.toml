@@ -50,6 +50,7 @@ files = [
     "packages/policyops_contracts/src",
     "scripts",
     "tests",
+    "infra/deploy/cd_agent.py",
 ]
 explicit_package_bases = true
 mypy_path = ["packages/policyops/src", "packages/policyops_contracts/src", "tests/support"]

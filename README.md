@@ -217,6 +217,7 @@ PostgreSQL clients enforce `verify-full` with an explicit trust root. The public
 runs lightweight health checks every 30 seconds and ships precompiled Python bytecode.
 The deployed revision is older than main. Lightsail costs about $12/month with a $20
 budget alert. [Deployment runbook](docs/deployment.md).
+CD-enabled releases expose the serving commit at [`/release`](https://52-11-210-0.sslip.io/release).
 
 GitHub Actions runs offline gates on Ubuntu and Windows and PostgreSQL/Dex integration
 on Ubuntu. The default checks make no model calls.

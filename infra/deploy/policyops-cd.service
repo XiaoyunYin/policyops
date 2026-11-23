@@ -1,0 +1,13 @@
+[Unit]
+Description=Evaluate and verify the latest PolicyOps demo release
+Wants=network-online.target
+Requires=docker.service
+After=network-online.target docker.service
+ConditionPathExists=/var/lib/policyops/cd/enabled
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/local/sbin/policyops-cd tick
+TimeoutStartSec=85min

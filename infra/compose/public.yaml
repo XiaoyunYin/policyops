@@ -18,6 +18,7 @@ services:
       net.ipv4.ip_unprivileged_port_start: "0"
     environment:
       POLICYOPS_HOSTNAME: ${POLICYOPS_HOSTNAME:?Set public DNS hostname}
+      POLICYOPS_RELEASE: ${POLICYOPS_IMAGE_TAG:-local}
       XDG_DATA_HOME: /data
       XDG_CONFIG_HOME: /config
     volumes:

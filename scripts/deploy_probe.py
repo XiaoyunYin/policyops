@@ -73,7 +73,7 @@ def summarize(samples: Iterable[Sample], duration: int) -> dict[str, object]:
     ordered = sorted(samples, key=lambda sample: sample["slot"])
     endpoints = {}
     releases: dict[str, dict[str, str]] = {}
-    windows = []
+    release_unavailable_seconds = 0
     for endpoint, interval in INTERVALS.items():
         by_slot = {sample["slot"]: sample for sample in ordered if sample["endpoint"] == endpoint}
         gaps, failed = [], []
@@ -83,6 +83,9 @@ def summarize(samples: Iterable[Sample], duration: int) -> dict[str, object]:
             if sample is None:
                 gaps.append(slot)
             if sample is not None and sample["error"] is not None:
+                # Count observed failure slots until the first valid release SHA.
+                if endpoint == "release" and not releases:
+                    release_unavailable_seconds += interval
                 start = sample if start is None else start
                 end = sample
             elif start is not None and end is not None:
@@ -100,11 +103,11 @@ def summarize(samples: Iterable[Sample], duration: int) -> dict[str, object]:
             span = last["slot"] - first["slot"]
             window = {"endpoint": endpoint, "first": first["at"], "last": last["at"],
                       "sample_span_seconds": span, "samples": 1 + span // interval}
-            windows.append((span, window))
         endpoints[endpoint] = {"samples": len(by_slot), "gap_slots": gaps, "longest_failing_window": window}
-    longest_window = max(windows, key=lambda pair: pair[0], default=(0, None))[1]
     return {"at": datetime.now(UTC).isoformat(), "type": "summary", "sample_count": len(ordered),
-            "longest_failing_window": longest_window, "endpoints": endpoints, "releases": releases}
+            "longest_failing_window": endpoints["readiness"]["longest_failing_window"],
+            "release_unavailable_before_first_sighting_seconds": release_unavailable_seconds,
+            "endpoints": endpoints, "releases": releases}
 
 
 def main() -> int:

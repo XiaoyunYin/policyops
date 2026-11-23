@@ -380,6 +380,34 @@ def test_probe_summary_reports_failures_gaps_and_release_times() -> None:
     result = deploy_probe.summarize(samples, 5)
     assert result["sample_count"] == 4
     assert result["releases"] == {A: {"first": samples[0]["at"], "last": samples[-1]["at"]}}
+    assert result["release_unavailable_before_first_sighting_seconds"] == 0
     assert isinstance(endpoints := result["endpoints"], dict)
     assert endpoints["release"]["gap_slots"] == [3]
     assert endpoints["release"]["longest_failing_window"]["samples"] == 2
+
+
+@pytest.mark.parametrize("readiness_fails", [False, True])
+def test_probe_summary_measures_outage_from_readiness(readiness_fails: bool) -> None:
+    def sample(endpoint: str, slot: int, status: int, release: str | None = None) -> deploy_probe.Sample:
+        return {"at": f"2026-11-23T18:00:{slot:02}Z", "endpoint": endpoint, "slot": slot, "status": status,
+                "release": release, "latency_ms": 4, "error": None if status == 200 else "http_status"}
+
+    samples = [sample("release", slot, 404) for slot in range(7)]
+    samples.append(sample("release", 8, 200, A))
+    samples.append(sample("release", 9, 404))
+    samples.extend(sample("readiness", slot, 503 if readiness_fails and slot in {2, 4, 6} else 200)
+                   for slot in range(0, 10, 2))
+
+    result = deploy_probe.summarize(samples, 10)
+
+    assert result["release_unavailable_before_first_sighting_seconds"] == 7
+    assert isinstance(endpoints := result["endpoints"], dict)
+    assert endpoints["release"]["gap_slots"] == [7]
+    assert endpoints["release"]["longest_failing_window"]["sample_span_seconds"] == 6
+    outage = result["longest_failing_window"]
+    assert outage == endpoints["readiness"]["longest_failing_window"]
+    if readiness_fails:
+        assert outage == {"endpoint": "readiness", "first": "2026-11-23T18:00:02Z",
+                          "last": "2026-11-23T18:00:06Z", "sample_span_seconds": 4, "samples": 3}
+    else:
+        assert outage is None

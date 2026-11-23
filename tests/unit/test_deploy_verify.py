@@ -3,19 +3,31 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import socket
 import subprocess
 import sys
 from typing import Any
+from unittest.mock import Mock
+from uuid import UUID, uuid4
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import httpx
+from pydantic import SecretStr
 import pytest
 from starlette.datastructures import Headers
 
+from policyops.api import auth
 from policyops.api.auth import expected_context
-from policyops.auth.service import AuthError
+from policyops.auth import tokens
+from policyops.auth.service import AuthError, AuthService, IssuedSession, SessionContext, unauthenticated
+from policyops.domain.roles import Role
+from policyops.persistence.identity import WorkspaceChoice
+from policyops.settings import AuthSettings
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -24,6 +36,9 @@ from scripts import deploy_verify as driver
 
 
 HOST = "demo.example.test"
+ORIGIN = f"https://{HOST}"
+CSRF = "synthetic-csrf"
+SESSION = "synthetic-session"
 RELEASE = "a" * 40
 CASE = "00000000-0000-0000-0000-000000000001"
 PROPOSAL = "00000000-0000-0000-0000-000000000002"
@@ -33,20 +48,64 @@ HEADERS = {"strict-transport-security": "max-age=31536000", "x-frame-options": "
 
 
 def cookies() -> list[str]:
-    return [f"__Host-policyops_{name}=synthetic; Path=/; Secure; SameSite={site}" + extra
-            for name, site, extra in (("login", "Lax", "; HttpOnly"), ("session", "Lax", "; HttpOnly"),
-                                      ("csrf", "Strict", ""))]
+    return [f"__Host-policyops_{name}={value}; Path=/; Secure; SameSite={site}" + extra
+            for name, value, site, extra in (("login", "synthetic-login", "Lax", "; HttpOnly"),
+                                             ("session", SESSION, "Lax", "; HttpOnly"),
+                                             ("csrf", CSRF, "Strict", ""))]
+
+
+def auth_routes(monkeypatch: pytest.MonkeyPatch, mutation: str | None) -> TestClient:
+    """Run the real routes, Origin and CSRF checks with in-memory session and membership storage."""
+    settings = AuthSettings(env="test", public_origin=ORIGIN, oidc_issuer=ORIGIN + "/dex",
+                            oidc_client_id="policyops", oidc_client_secret=SecretStr("synthetic-oidc-secret"))
+    service = AuthService(settings, oidc=Mock(), auth_engine=Mock(), clock=Mock())
+    workspace = UUID(CASE) if mutation == "wrong_workspace" else driver.DEMO_WORKSPACE
+    role = Role.AUDITOR if mutation == "wrong_role" else Role.ANALYST
+    choices = [WorkspaceChoice(workspace_id=workspace, slug="demo", name="Demo", roles=(role.value,))]
+    if mutation == "two_workspaces":
+        choices.append(WorkspaceChoice(workspace_id=UUID(CASE), slug="other", name="Other", roles=("analyst",)))
+    sessions = {SESSION: SessionContext(
+        session_id=uuid4(), principal_id=UUID(CASE if mutation == "alice" else driver.ALICE),
+        workspace_id=workspace if mutation == "already_selected" else None,
+        expires_at=datetime(2030, 1, 1, tzinfo=UTC), csrf_sha256=tokens.digest(CSRF),
+    )}
+
+    def resolve(cookie: str | None) -> SessionContext:
+        session = sessions.get(cookie or "")
+        if session is None:
+            raise unauthenticated()
+        return session
+
+    def select(session: SessionContext, workspace_id: UUID) -> IssuedSession:
+        assert workspace_id == workspace
+        issued = IssuedSession(uuid4(), "synthetic-rotated-session", "synthetic-rotated-csrf", "/")
+        del sessions[SESSION]
+        sessions[issued.cookie] = replace(session, session_id=issued.session_id,
+                                          workspace_id=None if mutation == "unconfirmed" else workspace_id,
+                                          csrf_sha256=tokens.digest(issued.csrf))
+        return issued
+
+    monkeypatch.setattr(service, "resolve", resolve)
+    monkeypatch.setattr(service, "workspaces", lambda _session: choices)
+    monkeypatch.setattr(service, "roles", lambda session: frozenset({role}) if session.workspace_id else frozenset())
+    monkeypatch.setattr(service, "select_workspace", select)
+    app = FastAPI()
+    auth.install(app, auth.AuthRuntime(settings, service, Mock()))
+    app.include_router(auth.build_router(), prefix="/api/v1")
+    return TestClient(app, base_url=ORIGIN)
 
 
 @pytest.mark.parametrize("mutation", [None, "tls", "redirect", "banner", "hsts", "health", "cookie", "port", "release",
                                       "alice", "unreadable_proposal", "wrong_case", "wrong_version", "wrong_digest",
-                                      "missing_seed", "local"])
+                                      "missing_seed", "local", "already_selected", "wrong_workspace", "wrong_role",
+                                      "two_workspaces", "missing_csrf", "selection_non_204", "unconfirmed"])
 def test_actual_verification_sequence_rejects_live_policy_failures(monkeypatch: pytest.MonkeyPatch,
                                                                   mutation: str | None, tmp_path: Path) -> None:
     fixture = tmp_path / "seed.json"
     if mutation != "missing_seed":
         fixture.write_text(json.dumps({"proposal_id": PROPOSAL, "proposal_version": 2,
                                        "case_id": CASE, "action_digest": "d" * 64}), encoding="utf-8")
+    auth_calls: list[tuple[str, str]] = []
 
     def response(request: httpx.Request) -> httpx.Response:
         if mutation == "tls":
@@ -64,10 +123,17 @@ def test_actual_verification_sequence_rejects_live_policy_failures(monkeypatch: 
             return httpx.Response(503 if mutation == "health" else 200, json={"status": "ok"}, headers=headers)
         if path == "/release":
             return httpx.Response(200, content=("b" * 40 if mutation == "release" else RELEASE).encode())
-        if path == "/api/v1/me":
-            return httpx.Response(200, json={"principal_id": CASE if mutation == "alice" else driver.ALICE,
-                                            "workspace_id": str(driver.DEMO_WORKSPACE), "roles": ["analyst"]})
+        if path in ("/api/v1/me", "/api/v1/auth/workspace"):
+            auth_calls.append((request.method, path))
+            browser.cookies.clear()
+            result = browser.request(request.method, str(request.url), headers=request.headers.raw,
+                                     content=request.content)
+            if path == "/api/v1/auth/workspace" and mutation == "selection_non_204":
+                assert result.status_code == 204
+                return httpx.Response(200, text="synthetic-selection-body")
+            return httpx.Response(result.status_code, headers=result.headers.raw, content=result.content)
         if path == f"/api/v1/proposals/{PROPOSAL}":
+            assert auth_calls[-1] == ("GET", "/api/v1/me")
             assert request.method == "GET" and request.url.query == b"version=2"
             try:
                 context = expected_context(Headers(raw=[(key.lower(), value) for key, value in request.headers.raw]))
@@ -86,6 +152,8 @@ def test_actual_verification_sequence_rejects_live_policy_failures(monkeypatch: 
                                   '<input name="login"><input name="password"></form>', headers=headers)
         if path == "/dex/login":
             cookie_headers = cookies()[1:]
+            if mutation == "missing_csrf":
+                cookie_headers = cookie_headers[:1]
             if mutation == "cookie":
                 cookie_headers = [value.replace("Secure; ", "") for value in cookie_headers]
             return httpx.Response(200, headers=[*headers.items(), *[("set-cookie", v) for v in cookie_headers]])
@@ -104,8 +172,23 @@ def test_actual_verification_sequence_rejects_live_policy_failures(monkeypatch: 
         raise OSError("closed")
 
     monkeypatch.setattr(socket, "create_connection", connect)
-    result = driver.verify(HOST, local=mutation == "local", expect_release=RELEASE, seed_path=fixture)
-    assert result["passed"] is (mutation in (None, "local")), result
+    with auth_routes(monkeypatch, mutation) as browser:
+        result = driver.verify(HOST, local=mutation == "local", expect_release=RELEASE, seed_path=fixture)
+    assert result["passed"] is (mutation in (None, "local", "already_selected")), result
+    if mutation != "tls":
+        me = ("GET", "/api/v1/me")
+        select = ("POST", "/api/v1/auth/workspace")
+        rejected_before_selection = {"alice", "wrong_workspace", "wrong_role", "two_workspaces", "missing_csrf"}
+        expected_calls = [me]
+        if mutation not in rejected_before_selection | {"already_selected"}:
+            expected_calls.append(select)
+            if mutation != "selection_non_204":
+                expected_calls.append(me)
+        assert auth_calls == expected_calls
+        rejected_session = rejected_before_selection | {"selection_non_204", "unconfirmed"}
+        assert result["checks"]["login_session"] is (mutation not in rejected_session)
+        if mutation in rejected_session:
+            assert result["checks"]["seeded_proposal"] is False
     if mutation == "local":
         assert not result["port_scope"] and not result["observed_open_ports"]
     serialized = json.dumps(result)

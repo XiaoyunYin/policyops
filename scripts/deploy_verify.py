@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PORTS = (22, 80, 443, 2375, 5432, 5556, 8000, 8001, 8080)
 DEMO_WORKSPACE = UUID("00000000-0000-0000-0000-000000003801")
 ALICE = str(uuid5(DEMO_WORKSPACE, "alice"))
+CSRF_COOKIE = "__Host-policyops_csrf"
 
 
 def release_sha(raw: str) -> str:
@@ -65,7 +66,7 @@ def security_headers(headers: httpx.Headers) -> dict[str, bool]:
 
 def cookie_checks(responses: list[httpx.Response]) -> dict[str, bool]:
     found: dict[str, bool] = {}
-    expected = ("__Host-policyops_login", "__Host-policyops_session", "__Host-policyops_csrf")
+    expected = ("__Host-policyops_login", "__Host-policyops_session", CSRF_COOKIE)
     for response in responses:
         for raw in response.headers.get_list("set-cookie"):
             cookie = SimpleCookie()
@@ -96,13 +97,14 @@ class LoginForm(HTMLParser):
 
 
 def fetch(client: httpx.Client, method: str, url: str, *, data: dict[str, str] | None = None,
-          follow: bool = False, headers: dict[str, str] | None = None) -> httpx.Response:
+          json_body: dict[str, str] | None = None, follow: bool = False,
+          headers: dict[str, str] | None = None) -> httpx.Response:
     """Bound each body and redirect, refuse compression and any redirect off the HTTPS origin."""
     history: list[httpx.Response] = []
     origin = urlsplit(url).netloc
     request_headers = {"Accept-Encoding": "identity", **(headers or {})}
     for _ in range(9):
-        with client.stream(method, url, data=data, headers=request_headers) as response:
+        with client.stream(method, url, data=data, json=json_body, headers=request_headers) as response:
             if response.headers.get("content-encoding", "identity").lower() not in ("", "identity"):
                 raise ValueError("compressed verification response")
             body = bytearray()
@@ -120,9 +122,41 @@ def fetch(client: httpx.Client, method: str, url: str, *, data: dict[str, str] |
             raise ValueError("verification redirect left HTTPS origin")
         history.append(result)
         if result.status_code == 303 or (method == "POST" and result.status_code in (301, 302)):
-            method, data = "GET", None
+            method, data, json_body = "GET", None, None
         url = target
     raise ValueError("too many verification redirects")
+
+
+def demo_workspace_selected(client: httpx.Client, origin: str) -> bool:
+    me_url = origin + "/api/v1/me"
+    me = fetch(client, "GET", me_url)
+    principal = me.json() if me.status_code == 200 else {}
+    workspace_id = str(DEMO_WORKSPACE)
+    if principal.get("principal_id") != ALICE:
+        return False
+    workspaces = principal.get("workspaces")
+    if not isinstance(workspaces, list) or len(workspaces) != 1:
+        return False
+    workspace = workspaces[0]
+    if (not isinstance(workspace, dict) or workspace.get("workspace_id") != workspace_id
+            or workspace.get("roles") != ["analyst"]):
+        return False
+    if "workspace_id" in principal and principal["workspace_id"] is None:
+        try:
+            csrf = client.cookies.get(CSRF_COOKIE)
+        except httpx.CookieConflict:
+            return False
+        if not csrf:
+            return False
+        # Selecting the workspace changes only the verifier's own session. No demo data is written.
+        selected = fetch(client, "POST", origin + "/api/v1/auth/workspace", json_body={"workspace_id": workspace_id},
+                         headers={"Origin": origin, "X-CSRF-Token": csrf})
+        if selected.status_code != 204:
+            return False
+        me = fetch(client, "GET", me_url)
+        principal = me.json() if me.status_code == 200 else {}
+    return (principal.get("principal_id") == ALICE and principal.get("workspace_id") == workspace_id
+            and principal.get("roles") == ["analyst"])
 
 
 def proposal_matches(client: httpx.Client, origin: str, seed_path: Path, principal: str, workspace: str) -> bool:
@@ -213,14 +247,10 @@ def verify(host: str, *, allow_admin_ssh: bool = False, local: bool = False, exp
             signed = fetch(client, "POST", action, data=fields, follow=True)
             cookies = cookie_checks([*login.history, login, *signed.history, signed])
             checks.update({"cookie_" + k: v for k, v in cookies.items()})
-            me = fetch(client, "GET", origin + "/api/v1/me")
-            principal = me.json() if me.status_code == 200 else {}
-            checks["login_session"] = (principal.get("principal_id") == ALICE
-                                       and principal.get("workspace_id") == str(DEMO_WORKSPACE)
-                                       and principal.get("roles") == ["analyst"])
+            checks["login_session"] = demo_workspace_selected(client, origin)
             if seed_path is not None:
                 checks["seeded_proposal"] = checks["login_session"] and proposal_matches(
-                    client, origin, seed_path, principal["principal_id"], principal["workspace_id"])
+                    client, origin, seed_path, ALICE, str(DEMO_WORKSPACE))
         except (httpx.HTTPError, ValueError, TypeError, AttributeError, RecursionError) as error:
             checks["https_auth_sequence"] = False
             failures["https_auth_sequence"] = type(error).__name__  # no URL queries / response text

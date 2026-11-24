@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[2]
 SECRETS = Path("/run/secrets")
 HEARTBEAT = Path("/tmp/worker-heartbeat")  # noqa: S108 - private per-container mode-0700 tmpfs
+LOAD_MARKER = "/api/v1/health/n10-load"
 
 
 def secret(name: str) -> str:
@@ -139,7 +140,7 @@ def bootstrap_app() -> None:
 
 def bootstrap_retail() -> None:
     from policyops.persistence.roles import scram_sha256_verifier
-    from policyops_evals.retail_sim import bootstrap
+    from policyops_evals.retail_sim import bootstrap  # type: ignore[import-not-found]  # retail image only
 
     with connect("postgres", autocommit=True) as conn:
         bootstrap.provision(conn, os.environ["POLICYOPS_DB_NAME"],
@@ -218,8 +219,11 @@ def readiness() -> tuple[int, dict[str, Any]]:
 class ReadyApp:
     """Add dependency readiness to the supported API ASGI/lifespan implementation."""
 
-    def __init__(self, app: Any, probe: Callable[[], tuple[int, dict[str, Any]]] = readiness) -> None:
+    def __init__(self, app: Any, probe: Callable[[], tuple[int, dict[str, Any]]] = readiness,
+                 load_token: str | None = None, load_limiter: bool = False) -> None:
         self.app, self.probe, self.started = app, probe, False
+        self.load_token = load_token
+        self.load_limiter = load_limiter
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         from starlette.concurrency import run_in_threadpool
@@ -232,6 +236,13 @@ class ReadyApp:
                 self.started = False
             await send(message)
 
+        if self.load_token is not None and scope["type"] == "http" and scope["path"] == LOAD_MARKER:
+            found = scope["method"] == "GET"
+            await JSONResponse({"load_token": self.load_token, "limiter": self.load_limiter}
+                               if found else {"detail": "Not Found"},
+                               status_code=200 if found else 404,
+                               headers={"Cache-Control": "no-store"})(scope, receive, send)
+            return
         if scope["type"] == "http" and scope["path"] == "/api/v1/health/ready":
             if scope["method"] not in {"GET", "HEAD"}:
                 await JSONResponse({"status": "method_not_allowed"}, status_code=405)(scope, receive, send)
@@ -256,8 +267,9 @@ def api() -> None:
     try:
         from policyops.api.rate_limit import PublicRateLimit
 
-        application = ReadyApp(served)
+        token = secret("n10_load_token") if (SECRETS / "n10_load_token").is_file() else None
         public = os.environ.get("POLICYOPS_PUBLIC_RATE_LIMIT") == "1"
+        application = ReadyApp(served, load_token=token, load_limiter=public)
         uvicorn.run(PublicRateLimit(application) if public else application,
                     host="127.0.0.1", port=8000, lifespan="on", log_config=SERVE_LOG_CONFIG,
                     ws="none", proxy_headers=False, server_header=False,
@@ -275,8 +287,8 @@ def retail() -> None:
 
     from policyops.api.serve import SERVE_LOG_CONFIG
     from policyops_evals.retail_sim import auth, fixture
-    from policyops_evals.retail_sim.app import create_app
-    from policyops_evals.retail_sim.store import Store
+    from policyops_evals.retail_sim.app import create_app  # type: ignore[import-not-found]  # retail image only
+    from policyops_evals.retail_sim.store import Store  # type: ignore[import-not-found]  # retail image only
 
     with own_engine("retail_runtime") as db:
         loaded = fixture.load(Path("/opt/fixture"))

@@ -13,3 +13,7 @@ output "hostname" {
 output "url" {
   value = "https://${local.hostname}"
 }
+
+output "loadgen_static_ip" {
+  value = one(aws_lightsail_static_ip.loadgen[*].ip_address)
+}

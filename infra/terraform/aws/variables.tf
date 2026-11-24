@@ -47,3 +47,31 @@ variable "hostname" {
     error_message = "Use a lowercase DNS hostname without scheme, port, path or wildcard."
   }
 }
+
+variable "name_suffix" {
+  description = "Empty for the existing public deployment. A suffix restricts web ingress to the operator and generator."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.name_suffix == "" || can(regex("^-[a-z0-9][a-z0-9-]{0,23}$", var.name_suffix))
+    error_message = "Use an empty suffix or a short lowercase suffix beginning with a hyphen."
+  }
+}
+
+variable "create_budget" {
+  description = "Keep the live budget at its existing address. Install the separate load override when false."
+  type        = bool
+  default     = true
+}
+
+variable "create_loadgen" {
+  description = "Provision a plain Ubuntu 24.04 generator in the isolated load deployment."
+  type        = bool
+  default     = false
+}
+
+variable "loadgen_bundle" {
+  description = "Starting generator bundle. Re-size only if the validity pilot requires it."
+  type        = string
+  default     = "nano_3_0"
+}

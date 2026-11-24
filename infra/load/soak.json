@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "stages": [
+    {
+      "id": "soak",
+      "w1": null,
+      "warmup": 60,
+      "measured": 1800,
+      "drain": 90
+    }
+  ]
+}

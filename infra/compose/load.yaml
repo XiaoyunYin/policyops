@@ -1,0 +1,47 @@
+# Append after compose.yaml (and public.yaml on the disposable SUT).
+x-identity: &load-identity
+  POLICYOPS_N10_RUN_ID: "${POLICYOPS_RUN_ID:?Set a unique run identity}"
+  POLICYOPS_N10_PUBLIC_HOST: "${POLICYOPS_HOSTNAME:-}"
+  POLICYOPS_N10_ISSUER: "${POLICYOPS_N10_ISSUER:?Set the disposable Dex issuer}"
+services:
+  postgres:
+    environment:
+      <<: *load-identity
+      POLICYOPS_N10_DATABASE: ${POLICYOPS_DATABASE:-policyops}
+      POLICYOPS_N10_TOKEN_SHA256: "${POLICYOPS_N10_TOKEN_SHA256:?Set the disposable token SHA-256}"
+    volumes:
+      - ./infra/compose/load_volume.sh:/docker-entrypoint-initdb.d/20-n10-volume.sh:ro
+  api:
+    secrets: [n10_load_token]
+    environment:
+      POLICYOPS_PUBLIC_RATE_LIMIT: "${POLICYOPS_N10_LIMITER:-0}"
+  worker:
+    environment: *load-identity
+    secrets:
+      - n10_load_token
+      - n10_deny_hosts
+      - policyops_auth_runtime
+  load-init:
+    image: policyops-app:${POLICYOPS_IMAGE_TAG:-local}
+    platform: linux/amd64
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    profiles: [n10-init]
+    entrypoint: [python, -B, -m, infra.compose.loadseed]
+    command: [init]
+    environment:
+      <<: *load-identity
+      POLICYOPS_ENV: local
+      POLICYOPS_DB_HOST: postgres
+      POLICYOPS_DB_PORT: "5432"
+      POLICYOPS_DB_NAME: ${POLICYOPS_DATABASE:-policyops}
+      POLICYOPS_DB_SSLMODE: verify-full
+      POLICYOPS_DB_SSLROOTCERT: /run/secrets/postgres_tls_cert
+    secrets: [postgres, postgres_tls_cert, n10_load_token, n10_deny_hosts]
+secrets:
+  n10_load_token:
+    file: "${POLICYOPS_N10_TOKEN_FILE:?Set the disposable run token file}"
+  n10_deny_hosts:
+    file: "${POLICYOPS_N10_DENY_HOST_FILE:?Set the private denied hostname file}"

@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "defaults": {
+    "warmup": 10,
+    "measured": 60,
+    "drain": 20
+  },
+  "stages": [
+    {
+      "id": "pilot-w1",
+      "w1": 2
+    },
+    {
+      "id": "pilot-w1-8",
+      "w1": 8
+    },
+    {
+      "id": "pilot-w2",
+      "w1": 2,
+      "streams": 10,
+      "measured": 120
+    },
+    {
+      "id": "pilot-w3",
+      "w1": 2,
+      "w3": 0.2,
+      "measured": 120,
+      "drain": 90
+    },
+    {
+      "id": "pilot-batch-1",
+      "w1": 2,
+      "batch": 1
+    },
+    {
+      "id": "pilot-batch-5",
+      "w1": 2,
+      "batch": 5,
+      "drain": 90
+    },
+    {
+      "id": "pilot-batch-20",
+      "w1": 2,
+      "batch": 20,
+      "drain": 90
+    }
+  ]
+}

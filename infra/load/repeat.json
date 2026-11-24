@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "defaults": {
+    "warmup": 60,
+    "measured": 180,
+    "drain": 90
+  },
+  "stages": [
+    {
+      "id": "repeat-pass-1",
+      "w1": null
+    },
+    {
+      "id": "repeat-pass-2",
+      "w1": null
+    },
+    {
+      "id": "repeat-pass-3",
+      "w1": null
+    },
+    {
+      "id": "repeat-fail-1",
+      "w1": null
+    },
+    {
+      "id": "repeat-fail-2",
+      "w1": null
+    },
+    {
+      "id": "repeat-fail-3",
+      "w1": null
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "defaults": {
+    "warmup": 60,
+    "measured": 180,
+    "drain": 90
+  },
+  "stages": [
+    {
+      "id": "fix-a1",
+      "w1": null
+    },
+    {
+      "id": "fix-b1",
+      "w1": null
+    },
+    {
+      "id": "fix-b2",
+      "w1": null
+    },
+    {
+      "id": "fix-a2",
+      "w1": null
+    },
+    {
+      "id": "fix-a3",
+      "w1": null
+    },
+    {
+      "id": "fix-b3",
+      "w1": null
+    },
+    {
+      "id": "fix-b4",
+      "w1": null
+    },
+    {
+      "id": "fix-a4",
+      "w1": null
+    },
+    {
+      "id": "fix-a5",
+      "w1": null
+    },
+    {
+      "id": "fix-b5",
+      "w1": null
+    }
+  ],
+  "pair_order": [
+    [
+      "a1",
+      "b1"
+    ],
+    [
+      "a2",
+      "b2"
+    ],
+    [
+      "a3",
+      "b3"
+    ],
+    [
+      "a4",
+      "b4"
+    ],
+    [
+      "a5",
+      "b5"
+    ]
+  ]
+}

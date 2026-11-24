@@ -35,6 +35,8 @@ PUBLIC_DOCS = {
     "docs/operations.md",
     # T07: public reference for the OIDC/session/CSRF design, local identity setup and its limits.
     "docs/authentication.md",
+    # N10 methodology and reproduction for the fictional API capacity study.
+    "docs/performance.md",
     # T17: the generated rule/source coverage map: rule IDs, policy line ranges and clause digests, and the IDs and
     # asserted outcomes of the executed gateway cases. It holds no traces, states, results or policy text.
     "docs/policy-coverage.json",

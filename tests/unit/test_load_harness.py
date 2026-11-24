@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import socket
 import ssl
+import sys
 import time
 from typing import Any
 from unittest.mock import Mock
@@ -20,6 +21,8 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from infra.compose import loadcheck, loadseed, runtime
 from policyops.api.openapi import schema_app
 from policyops.domain.examples import World

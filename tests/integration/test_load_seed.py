@@ -2,12 +2,16 @@
 
 from datetime import UTC, datetime
 import os
+from pathlib import Path
+import sys
 from uuid import UUID, uuid5
 
 import pytest
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import ProgrammingError
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from infra.compose import load_identity, loadseed, runtime
 from policyops.domain.examples import World
 from policyops.domain.retail_rules import RetailFacts

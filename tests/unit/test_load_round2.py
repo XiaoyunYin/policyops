@@ -21,6 +21,8 @@ import httpx
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from infra.compose import load_identity, loadcheck, loadseed, runtime
 from policyops.api.openapi import document, schema_app
 from policyops.domain.examples import World

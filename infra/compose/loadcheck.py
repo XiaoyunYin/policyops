@@ -41,6 +41,7 @@ STALE = {
 }
 CANARIES = {"case_detail", "messages", "case_proposals", "run_snapshot", "proposal_detail", "stream"}
 EVENT_PAYLOAD = TypeAdapter(EventPayload)
+ReviewJobKey = tuple[str, str | None, int | None, str | None, str | None, str | None]
 
 
 @dataclass(frozen=True)
@@ -394,22 +395,22 @@ def check_workspace(
         case: len(row.executions) for case, row in cases.items() if row.executions
     }:
         findings.append("unexpected_executions_inventory")
-    expected_jobs = Counter()
-    optional_jobs = Counter()
+    expected_jobs: Counter[ReviewJobKey] = Counter()
+    optional_jobs: Counter[ReviewJobKey] = Counter()
     for fixture, row in workflows:
         for decision in row.decision_ids:
             expected_jobs[(fixture["run_id"], fixture["proposal_id"], fixture["proposal_version"],
                            "decision", decision, None)] += 1
     for identifier, row in new_executions.items():
         if row["case_id"] in cases:
-            fixture = runs.get(row["run_id"])
-            if fixture is not None:
+            execution_fixture = runs.get(row["run_id"])
+            if execution_fixture is not None:
                 jobs = (
                     optional_jobs
                     if row["run_id"] in cancelled_runs and row["state"] in {"pending", "dispatched", "unknown"}
                     else expected_jobs
                 )
-                jobs[(row["run_id"], fixture["proposal_id"], fixture["proposal_version"],
+                jobs[(row["run_id"], execution_fixture["proposal_id"], execution_fixture["proposal_version"],
                       "outcome", row["approval_id"], identifier)] += 1
     new_jobs = [row for key, row in after["jobs"].items() if key not in before["jobs"]]
     if (
@@ -421,9 +422,8 @@ def check_workspace(
             for row in new_jobs
         )
         or not expected_jobs <= Counter(
-            tuple(row[key] for key in (
-                "run_id", "proposal_id", "proposal_version", "review_trigger", "decision_id", "execution_id",
-            )) for row in new_jobs
+            (row["run_id"], row["proposal_id"], row["proposal_version"], row["review_trigger"],
+             row["decision_id"], row["execution_id"]) for row in new_jobs
         ) <= expected_jobs + optional_jobs
     ):
         findings.append("unexpected_jobs_inventory")

@@ -394,6 +394,33 @@ def test_host_reset_rollback_and_secret_boundaries() -> None:
     assert "reset-pending" in reset
 
 
+@pytest.mark.parametrize(("lock_status", "expected_status", "expected_stderr"), [
+    (75, 0, "Demo seed skipped: a deploy holds the lock.\n"),
+    (1, 1, ""),
+])
+def test_seed_lock_outcomes(tmp_path: Path, lock_status: int, expected_status: int, expected_stderr: str) -> None:
+    seed = (ROOT / "infra/deploy/seed.sh").read_text(encoding="utf-8")
+    seed = seed.replace("base=/var/lib/policyops", f"base={shlex.quote(tmp_path.as_posix())}")
+    if lock_status == 75 and shutil.which("flock"):
+        lock = shlex.quote((tmp_path / "deploy.lock").as_posix())
+        harness = f'exec 8>{lock}\nflock -n 8 || exit 99\n'
+    else:
+        # Git Bash lacks util-linux flock. Model its selected contention status.
+        harness = f'''flock() {{
+  case "$*" in
+    '-w 10 -E 75 9') return {lock_status} ;;
+    '-w 10 9') return 1 ;;
+    *) exit 99 ;;
+  esac
+}}
+'''
+    result = subprocess.run([shell_binary("bash"), "-s"], input=harness + "readlink() { exit 99; }\n" + seed, text=True,
+                            capture_output=True, timeout=15)
+    assert result.returncode == expected_status, result.stderr
+    assert result.stderr == expected_stderr
+    assert result.stdout == ""
+
+
 def test_agent_deploy_modes_keep_mutation_and_installs_separate() -> None:
     deploy = (ROOT / "infra/deploy/deploy.sh").read_text(encoding="utf-8")
     assert deploy.index('if test "$mode" = --build-only; then exit 0; fi') < deploy.index("stop worker api")

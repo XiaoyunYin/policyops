@@ -4,7 +4,14 @@ set -euo pipefail
 umask 077
 base=/var/lib/policyops
 exec 9>"$base/deploy.lock"
-flock -w 10 9
+flock -w 10 -E 75 9 || {
+  status=$?
+  if test "$status" -eq 75; then
+    printf '%s\n' 'Demo seed skipped: a deploy holds the lock.' >&2
+    exit 0
+  fi
+  exit "$status"
+}
 if test -e "$base/cd/frozen" || test -e "$base/cd/active"; then exit 0; fi
 cd "$(readlink -f "$base/current")"
 export COMPOSE_PROJECT_NAME=policyops-public POLICYOPS_RUN_ID=public-demo

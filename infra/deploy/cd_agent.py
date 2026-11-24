@@ -978,16 +978,16 @@ class Agent:
         if sha == healthy or (self.cd / "quarantine" / f"{sha}.json").exists():
             self.audit("NOOP", "already_healthy" if sha == healthy else "quarantined")
             return
-        if sha != self.state["last_evaluated_tip"]:
+        if sha != self.state["last_evaluated_tip"] or not self.state["ci_green"]:
             verdict = self.ci_evidence(sha)
             if verdict not in ("green", "red"):
                 self.audit("WAIT_CI", verdict)
                 return
             self.state.update({"last_evaluated_tip": sha, "ci_green": verdict == "green"})
             self.save()
-        if not self.state["ci_green"]:
-            self.audit("WAIT_CI", "ci_not_successful")
-            return
+            if verdict == "red":
+                self.audit("WAIT_CI", "ci_not_successful")
+                return
         if self.fetch() != sha:
             self.audit("NOOP", "tip_moved")
             return

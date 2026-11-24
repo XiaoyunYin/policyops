@@ -154,6 +154,42 @@ def test_ci_deferral_has_only_allowed_state_changes(agent: cd.Agent, monkeypatch
     assert cd.load_state(agent.state_path) == {**before, **updates}
 
 
+@pytest.mark.parametrize(("first_conclusion", "second_conclusion", "expected_queries", "expected_starts"), [
+    ("failure", "success", 2, 1),
+    ("failure", "failure", 2, 0),
+    ("success", "failure", 1, 2),
+])
+def test_discovery_rechecks_non_green_ci(agent: cd.Agent, monkeypatch: pytest.MonkeyPatch,
+                                         first_conclusion: str, second_conclusion: str,
+                                         expected_queries: int, expected_starts: int) -> None:
+    first = run(id=45274847551, conclusion=first_conclusion)
+    second = {**first, "run_attempt": 2, "conclusion": second_conclusion}
+    responses = iter((first, second))
+    queries: list[str] = []
+    starts: list[tuple[str, bool]] = []
+
+    def ci(sha: str) -> tuple[cd.CI, int]:
+        queries.append(sha)
+        return cd.ci_verdict({"workflow_runs": [next(responses)]}, sha, 42), 0
+
+    monkeypatch.setattr(agent, "ci", ci)
+    monkeypatch.setattr(agent, "git", lambda *_: "M\0apps/web/runtime.ts\0")
+    monkeypatch.setattr(agent, "start", lambda sha, schema: starts.append((sha, schema)))
+
+    agent.tick()
+    assert queries == [B]
+    assert starts == ([(B, False)] if first_conclusion == "success" else [])
+    if first_conclusion == "failure":
+        assert (audit(agent)[-1]["decision"], audit(agent)[-1]["reason"]) == ("WAIT_CI", "ci_not_successful")
+    agent.state = cd.load_state(agent.state_path)
+    agent.tick()
+
+    assert queries == [B] * expected_queries
+    assert starts == [(B, False)] * expected_starts
+    if expected_starts == 0:
+        assert (audit(agent)[-1]["decision"], audit(agent)[-1]["reason"]) == ("WAIT_CI", "ci_not_successful")
+
+
 @pytest.mark.parametrize(("diff", "forward", "reason"), [
     ("M\0docs/deployment.md\0", True, "skipped_non_runtime"),
     ("D\0apps/web/removed.ts\0M\0docs/deployment.md\0", True, "start"),

@@ -46,6 +46,7 @@ export const SOURCE_LABELS: Readonly<Record<MessageSource, string>> = {
   simulated_customer: "Simulated customer",
   seeded: "Demo conversation",
   agent: "Agent",
+  helpdesk_ticket: "Help desk ticket",
 };
 
 interface History {

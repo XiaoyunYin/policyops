@@ -1616,3 +1616,12 @@ These are the higher published tier. Reservation and settlement conservatively u
 geographic profiles at the source-region rate; this is an accounting assumption, not verified account billing.
 The live smoke returned HTTP 403. Live access was declined for this new AWS account
 for now. Offline tests establish the adapter contract.
+
+## Local help desk
+
+| Flow | Durable boundary |
+|---|---|
+| Zammad trigger to case | An optional local webhook commits a signed wake-up to a workspace inbox. The worker fetches a bounded ticket snapshot and writes its fictional requester binding, link and messages in one transaction. |
+| Case to internal note | A receipt-backed outcome commits its note intent alongside the outcome message. A separate leased worker pass checks for an existing article and writes a pre-send checkpoint. Ambiguous sends use lookup only. |
+
+The [integration guide](integration.md) describes the wire fields, local overlay, fault cases and verification.

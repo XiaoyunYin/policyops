@@ -21,6 +21,7 @@ from policyops.domain.roles import Action, Role, is_allowed
 from policyops.gateway.ports import GatewayScope, load_scope
 from policyops.gateway.precheck import AuthorityRefs, PrecheckRefused
 from policyops.persistence import executions as ledger
+from policyops.persistence import helpdesk
 from policyops.persistence import repositories as repo
 from policyops.persistence import review_jobs as jobs
 from policyops.persistence import runs as store
@@ -29,9 +30,10 @@ from policyops.persistence.roles import APP_RUNTIME
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock, UnsafeTestHook, require_test_environment
 from policyops.services.execution import Executor, Reserved, RetailFactory, RetailOperations, ScopeResolver
 from policyops.services.review_outcomes import RefusalReason, finish_outcome, finish_refusal
+from policyops.settings import HelpdeskSettings
 from policyops.telemetry import annotate, claim, count, observed
 from policyops_contracts.events import RunStateChanged
-from policyops_contracts.scalars import RunScope
+from policyops_contracts.scalars import CaseScope, RunScope
 from policyops_contracts.seeds import CaseCustomerBinding
 
 
@@ -71,6 +73,10 @@ class BoundScopes:
     def scope(self, run: RunScope) -> GatewayScope:
         matches = [binding for binding in self.bindings if (binding.scope.workspace_id, binding.scope.case_id)
                    == (run.workspace_id, run.case_id)]
+        with workspace_transaction(self.engine, run.workspace_id) as connection:
+            binding = helpdesk.case_binding(connection, CaseScope(workspace_id=run.workspace_id, case_id=run.case_id))
+        if binding is not None:
+            matches.append(binding)
         if len(matches) != 1:
             raise ImmutableRecord("review requires one server-owned case binding")
         return load_scope(self.engine, workspace_id=run.workspace_id, run_id=run.run_id,
@@ -80,7 +86,8 @@ class BoundScopes:
 def build_review_runtime(*, env: str, app_engine: Engine, bindings: tuple[CaseCustomerBinding, ...],
                          fixture_sha256: str, retail_origin: str, retail_key: bytes,
                          clock: LeaseClock | None = None, scopes: ScopeResolver | None = None,
-                         retail: RetailFactory | None = None) -> ReviewRuntime:
+                         retail: RetailFactory | None = None,
+                         helpdesk_settings: HelpdeskSettings | None = None) -> ReviewRuntime:
     """Production constructs its own scope resolver/client. Injected ports require explicit env=test."""
     lease_clock = clock or DatabaseLeaseClock()
     require_test_environment(lease_clock, env)
@@ -97,13 +104,15 @@ def build_review_runtime(*, env: str, app_engine: Engine, bindings: tuple[CaseCu
 
     executor = Executor(app_engine=app_engine, clock=lease_clock,
                         scopes=scopes or BoundScopes(app_engine, bindings, fixture_sha256), retail=retail or clients)
-    return ReviewRuntime(executor, test_only=env == "test")
+    return ReviewRuntime(executor, test_only=env == "test",
+                         helpdesk_settings=helpdesk_settings if env in {"local", "test"} else None)
 
 
 @dataclass
 class ReviewRuntime:
     executor: Executor
     test_only: bool = False
+    helpdesk_settings: HelpdeskSettings | None = None
 
     @observed("review.job")
     def process(self, job_id: UUID, workspace_id: UUID, owner: UUID) -> bool:
@@ -273,7 +282,7 @@ class ReviewRuntime:
             if isinstance(binding, jobs.OutcomeBinding):
                 run, job, now = jobs.check_projection(connection, token, self.executor.clock)
                 if isinstance(result, ProjectOutcome):
-                    finish_outcome(connection, run, job, now)
+                    finish_outcome(connection, run, job, now, helpdesk_settings=self.helpdesk_settings)
                 else:
                     delay = min(timedelta(minutes=5), DEFER * 2 ** min(job.attempts - 1, 10))
                     exhausted = job.attempts >= job.max_attempts or now + delay >= job.deadline_at

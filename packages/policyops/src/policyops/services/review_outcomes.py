@@ -8,12 +8,15 @@ from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import Connection
 
+from policyops.domain.helpdesk_rules import destination_digest
 from policyops.persistence import executions as ledger
+from policyops.persistence import helpdesk
 from policyops.persistence import repositories as repo
 from policyops.persistence import review_jobs as jobs
 from policyops.persistence import runs as store
 from policyops.persistence.database import ImmutableRecord
 from policyops.persistence.records import ExecutionRecord
+from policyops.settings import HelpdeskSettings
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.events import (
     ErrorRaised,
@@ -114,7 +117,8 @@ def execution_projection(execution: ExecutionRecord, proposal: ActionProposal) -
     return Projection(text, outcome, state)
 
 
-def finish_outcome(connection: Connection, run: store.Run, job: store.Job, now: datetime) -> None:
+def finish_outcome(connection: Connection, run: store.Run, job: store.Job, now: datetime, *,
+                   helpdesk_settings: HelpdeskSettings | None = None) -> None:
     """Caller holds case -> run -> job and the projection fence; T19 writes truth under this same run lock."""
     binding = jobs.binding_of(job)
     if not isinstance(binding, jobs.OutcomeBinding):
@@ -144,6 +148,13 @@ def finish_outcome(connection: Connection, run: store.Run, job: store.Job, now: 
         if not run.terminal and run.state != projection.state:
             updated = store.set_state(connection, run, projection.state, now)
             store.append_event(connection, updated, RunStateChanged(previous=run.state, current=projection.state), now)
+    if helpdesk_settings is not None and projection.event.outcome == "succeeded" and projection.event.receipt_sha256:
+        link = helpdesk.case_link(connection, run.case_id)
+        config = None if link is None else helpdesk_settings.connection(link.connection_id)
+        if (link is not None and config is not None and config.writeback_enabled
+                and config.workspace_id == run.workspace_id
+                and link.destination_sha256 == destination_digest(config.api_origin, config.integration_user_id)):
+            helpdesk.enqueue_writeback(connection, link, identity, now)
     store.end_job(connection, job, state="done", now=now)
 
 

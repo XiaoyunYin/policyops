@@ -82,6 +82,7 @@ testpaths = ["tests"]
 # selected explicitly: pytest -m postgres.
 pythonpath = ["tests/support"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "-p", "no:cacheprovider",
-           "-m", "not postgres"]
+           "-m", "not postgres and not helpdesk"]
+markers = ["helpdesk: opt-in smoke against the coordinator's disposable local Zammad stack"]
 xfail_strict = true
 filterwarnings = ["error"]

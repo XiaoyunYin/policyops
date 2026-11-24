@@ -81,6 +81,13 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.generation_documents": (SI, set()),
         # T13 retrieval step intents (0011): append-only request identities.
         "app.retrieval_steps": (SI, set()),
+        "app.helpdesk_customer_bindings": (SI, set()),
+        "app.helpdesk_ticket_links": (SI, {"group_id", "state_id", "ticket_updated_at", "max_article_id"}),
+        "app.helpdesk_events": (SI, {"state", "reason", "attempts", "revivals", "next_attempt_at", "lease_owner",
+                                     "lease_expires_at", "version"}),
+        "app.helpdesk_writebacks": (SI, {"state", "reason", "attempts", "reconciles", "dispatch_started_at",
+                                         "next_attempt_at", "lease_owner", "lease_expires_at", "version",
+                                         "article_id", "article_created_at", "duplicate_article_ids"}),
     },
     AUTH_RUNTIME: {
         "identity.workspaces": (SI, set()),
@@ -105,6 +112,8 @@ COLUMN_SELECT: dict[str, dict[str, set[str]]] = {
         "app.jobs": {"id", "workspace_id", "kind", "state", "available_at", "lease_expires_at", "deadline_at"},
         "app.outbox_events": {"id", "workspace_id", "topic", "created_at", "delivered_at"},
         "app.tool_executions": {"id", "workspace_id", "state", "next_attempt_at", "lease_expires_at"},  # T19
+        "app.helpdesk_events": {"id", "workspace_id", "state", "next_attempt_at", "lease_expires_at"},
+        "app.helpdesk_writebacks": {"id", "workspace_id", "state", "next_attempt_at", "lease_expires_at"},
     },
 }
 SCHEMA_USAGE = {APP_RUNTIME: {"identity", "app", "checkpoints", "public"}, AUTH_RUNTIME: {"identity", "public"},

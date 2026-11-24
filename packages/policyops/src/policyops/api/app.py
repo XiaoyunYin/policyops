@@ -11,7 +11,7 @@ from sqlalchemy import Engine
 from policyops import __version__
 from policyops.api import auth as auth_api
 from policyops.api import cases as cases_api
-from policyops.api import docs, run_reads
+from policyops.api import docs, helpdesk, run_reads
 from policyops.api import proposals as proposals_api
 from policyops.api import runs as runs_api
 from policyops.api.body_limit import BodyLimit
@@ -19,7 +19,9 @@ from policyops.auth.oidc import OidcClient
 from policyops.auth.service import AuthService
 from policyops.persistence.database import verify_runtime_role
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
-from policyops.settings import AuthSettings
+from policyops.runtime.clock import DatabaseLeaseClock
+from policyops.services.helpdesk_inbound import Inbound
+from policyops.settings import AuthSettings, HelpdeskSettings
 from policyops.telemetry.attributes import ROUTES
 from policyops.telemetry.http import HttpTelemetry
 from policyops_contracts.clock import Clock
@@ -70,7 +72,8 @@ def include_api_routes(app: FastAPI) -> None:
     app.include_router(proposals_api.build_router(), prefix=API_PREFIX)
 
 
-def create_app(auth: auth_api.AuthRuntime | None = None, runs: runs_api.RunsRuntime | None = None) -> FastAPI:
+def create_app(auth: auth_api.AuthRuntime | None = None, runs: runs_api.RunsRuntime | None = None, *,
+               helpdesk_settings: HelpdeskSettings | None = None) -> FastAPI:
     """Without `auth` only liveness is served (as before); with it, the authentication, case, run and proposal
     routes are installed (`runs` defaults to the database clock with no installed run runtime; the proposal routes
     use its lease clock). Request bodies are bounded to 64 KiB as received (`BodyLimit`)."""
@@ -94,6 +97,9 @@ def create_app(auth: auth_api.AuthRuntime | None = None, runs: runs_api.RunsRunt
         app.state.runs = runs or runs_api.build_runs_runtime(env=auth.settings.env, app_engine=auth.app_engine,
                                                              ledger_clock=auth.service.clock)
         include_api_routes(app)
+        if helpdesk_settings is not None and auth.settings.env in {"local", "test"}:
+            app.include_router(helpdesk.build_router(Inbound(helpdesk_settings, auth.app_engine, DatabaseLeaseClock())),
+                               prefix=API_PREFIX)
     # Included routers are lazy wrappers in the pinned FastAPI, not flattened APIRoutes.
     # OpenAPI resolves their prefixes and yields only registered path templates.
     ROUTES.update(get_openapi(title=app.title, version=app.version, routes=app.routes).get("paths", {}))

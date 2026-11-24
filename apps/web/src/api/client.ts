@@ -438,6 +438,7 @@ export async function logout(options: RequestOptions): Promise<void> {
 
 const MESSAGE_SOURCES: Record<MessageSource, true> = {
   seeded: true, simulated_customer: true, operator_entered_customer: true, staff_note: true, agent: true,
+  helpdesk_ticket: true,
 };
 const RUN_STATES: Record<RunView["state"], true> = {
   queued: true, running: true, waiting_input: true, waiting_approval: true, reconciling: true, succeeded: true,

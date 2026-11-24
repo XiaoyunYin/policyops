@@ -17,13 +17,16 @@ from __future__ import annotations
 from datetime import timedelta
 import ipaddress
 import os
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
+from uuid import UUID
 
-from pydantic import Field, SecretStr, StringConstraints, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from policyops_contracts.helpdesk import ConnectionId, ExternalId
 
 
 Environment = Literal["test", "local", "deployment"]
@@ -82,6 +85,66 @@ def _check_url(value: str, name: str, *, origin_only: bool) -> tuple[str, str]:
     if value.endswith("/"):
         raise SettingsError(f"{name} must not end with '/'")
     return parts.scheme, parts.hostname
+
+
+class HelpdeskConnection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
+
+    connection_id: ConnectionId
+    workspace_id: UUID
+    signing_secret: SecretStr = Field(min_length=24, max_length=256, repr=False)
+    api_token: SecretStr = Field(min_length=24, max_length=256, repr=False)
+    api_origin: str = Field(max_length=256)
+    allowed_group_ids: frozenset[ExternalId] = Field(min_length=1, max_length=100)
+    integration_user_id: ExternalId
+    writeback_enabled: bool
+    max_event_age_seconds: int = Field(default=86400, ge=60, le=604800)
+
+    @field_validator("api_origin")
+    @classmethod
+    def _origin(cls, value: str) -> str:
+        _check_url(value, "api_origin", origin_only=True)
+        parts = urlsplit(value)
+        if (any(ord(char) <= 32 or ord(char) >= 127 for char in value)
+                or "\\" in value or parts.username is not None or parts.password is not None
+                or parts.port == 0 or value != f"{parts.scheme}://{parts.netloc}"):
+            raise SettingsError("invalid help desk API origin")
+        return value
+
+    @field_validator("signing_secret", "api_token")
+    @classmethod
+    def _secret(cls, value: SecretStr) -> SecretStr:
+        if not re.fullmatch(r"[!-~]+", value.get_secret_value()):
+            raise SettingsError("help desk secrets must contain printable ASCII without spaces")
+        return value
+
+
+class HelpdeskSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
+
+    connections: tuple[HelpdeskConnection, ...] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def _unique(self) -> Self:
+        if len({item.connection_id for item in self.connections}) != len(self.connections):
+            raise SettingsError("help desk connection IDs must be unique")
+        if len({item.signing_secret.get_secret_value() for item in self.connections}) != len(self.connections):
+            raise SettingsError("help desk signing secrets must be unique per connection")
+        return self
+
+    def connection(self, connection_id: str) -> HelpdeskConnection | None:
+        return next((item for item in self.connections if item.connection_id == connection_id), None)
+
+    @classmethod
+    def from_secret_file(cls, path: Path) -> Self:
+        try:
+            with path.open("rb") as handle:
+                payload = handle.read(65537)
+            if len(payload) <= 65536:
+                return cls.model_validate_json(payload)
+        except (OSError, ValueError):
+            pass
+        raise SettingsError("could not read or validate help desk secret file")
 
 
 class AuthSettings(BaseSettings):

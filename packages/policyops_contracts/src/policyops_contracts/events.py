@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from policyops_contracts.base import WireModel
+from policyops_contracts.consent import MessageSource
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.retail import TOOL_KINDS, ToolKind, ToolName
 from policyops_contracts.scalars import PositiveVersion, RunScope, Sequence, Sha256Hex, Slug, UtcDatetime
@@ -35,7 +36,7 @@ class MessagePosted(WireModel):
     type: Literal["case.message_posted"] = "case.message_posted"
     message_id: UUID
     message_sequence: Sequence
-    source: Literal["seeded", "simulated_customer", "operator_entered_customer", "staff_note", "agent"]
+    source: MessageSource
 
 
 class RunStopped(WireModel):

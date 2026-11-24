@@ -1,0 +1,25 @@
+# Local overlay for the upstream Zammad Compose stack described in docs/integration.md.
+services:
+  api:
+    environment:
+      POLICYOPS_HELPDESK: "1"
+    secrets: [helpdesk]
+  worker:
+    environment:
+      POLICYOPS_HELPDESK: "1"
+    secrets: [helpdesk]
+    networks: [default, zammad]
+  # The API shares this namespace. Keep the existing Caddy configuration and loopback host port.
+  caddy:
+    networks:
+      default: {}
+      edge: {}
+      zammad:
+        aliases: [policyops-helpdesk]
+secrets:
+  helpdesk:
+    file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/helpdesk'
+networks:
+  zammad:
+    external: true
+    name: '${POLICYOPS_ZAMMAD_NETWORK:?Set the disposable Zammad bridge name}'

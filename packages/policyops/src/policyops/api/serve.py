@@ -55,7 +55,7 @@ from policyops.auth.service import AuthError
 from policyops.persistence.database import DatabaseUnavailable, RuntimeRoleError, make_engine, verify_runtime_role
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops.settings import REFUSED_LIBPQ_ENV as REFUSED_LIBPQ_ENV
-from policyops.settings import AuthSettings, DatabaseSettings, TelemetrySettings
+from policyops.settings import AuthSettings, DatabaseSettings, HelpdeskSettings, TelemetrySettings
 from policyops.telemetry import configure
 from policyops_contracts.clock import SystemClock
 from policyops_contracts.errors import ErrorCode
@@ -98,12 +98,13 @@ class ServerClosed(RuntimeError):
 class ServeConfig:
     """Validated server configuration (both settings objects keep their secrets as `SecretStr`)."""
 
-    __slots__ = ("auth", "database", "telemetry")
+    __slots__ = ("auth", "database", "helpdesk", "telemetry")
 
     def __init__(self, auth: AuthSettings, database: DatabaseSettings,
-                 telemetry: TelemetrySettings | None = None) -> None:
+                 telemetry: TelemetrySettings | None = None, *, helpdesk: HelpdeskSettings | None = None) -> None:
         self.auth, self.database = auth, database
         self.telemetry = telemetry or TelemetrySettings(enabled=False)
+        self.helpdesk = helpdesk
 
     def __repr__(self) -> str:
         return f"ServeConfig(env={self.auth.env!r})"
@@ -318,7 +319,7 @@ def open_runtime(config: ServeConfig) -> ServedRuntime:
                                   clock=SystemClock())
         runtime.own("OIDC client", auth.service.oidc.close)
         stage = "application"
-        runtime.app = create_app(auth)
+        runtime.app = create_app(auth, helpdesk_settings=config.helpdesk)
     except BaseException as error:
         if not isinstance(error, Exception):
             runtime.close_after(error)
@@ -395,10 +396,13 @@ class ServedApp:
         return [] if runtime is None else runtime.close_after(primary)
 
 
-def create_served_app() -> ServedApp:
+def create_served_app(*, helpdesk: HelpdeskSettings | None = None) -> ServedApp:
     """ASGI factory (`uvicorn --factory policyops.api.serve:create_served_app`, lifespan on): validated
     configuration only; nothing is opened until lifespan startup. Raises `ServeConfigError`."""
-    return ServedApp(load_config())
+    config = load_config()
+    if config.auth.env == "local":
+        config.helpdesk = helpdesk
+    return ServedApp(config)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

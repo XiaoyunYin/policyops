@@ -25,7 +25,7 @@ import httpx
 import psycopg
 from sqlalchemy import Engine, create_engine, text
 
-from policyops.settings import REFUSED_LIBPQ_ENV, TelemetrySettings, validate_sslrootcert
+from policyops.settings import REFUSED_LIBPQ_ENV, HelpdeskSettings, TelemetrySettings, validate_sslrootcert
 from policyops.telemetry import configure
 
 
@@ -44,6 +44,12 @@ def secret(name: str) -> str:
     if len(value) < 24:
         raise ValueError("secret is too short")
     return value
+
+
+def helpdesk_settings() -> HelpdeskSettings | None:
+    if os.environ.get("POLICYOPS_ENV") == "local" and os.environ.get("POLICYOPS_HELPDESK") == "1":
+        return HelpdeskSettings.from_secret_file(SECRETS / "helpdesk")
+    return None
 
 
 def connect(role: str, database: str | None = None, *, autocommit: bool = False) -> psycopg.Connection[Any]:
@@ -263,7 +269,8 @@ def api() -> None:
                            ("POLICYOPS_DB_APP_PASSWORD", "policyops_app_runtime"),
                            ("POLICYOPS_OIDC_CLIENT_SECRET", "client_secret")):
         os.environ[variable] = secret(name)
-    served = create_served_app()
+    helpdesk = helpdesk_settings()
+    served = create_served_app() if helpdesk is None else create_served_app(helpdesk=helpdesk)
     try:
         from policyops.api.rate_limit import PublicRateLimit
 
@@ -313,6 +320,7 @@ def worker_loop(stop: threading.Event, passes: tuple[Callable[[], Any], ...], *,
 def worker(*, execution_hooks: Any = None) -> None:
     from policyops.api.serve import SERVE_LOG_CONFIG
     from policyops.runtime.executions import build_execution_dispatcher
+    from policyops.runtime.helpdesk import HelpdeskWorker
     from policyops.runtime.outbox import build_dispatcher
     from policyops.runtime.review import BoundScopes, build_review_runtime
     from policyops.runtime.worker import build_worker
@@ -331,9 +339,11 @@ def worker(*, execution_hooks: Any = None) -> None:
             owned.callback(telemetry.close)
         app = owned.enter_context(own_engine("policyops_app_runtime"))
         discovery = owned.enter_context(own_engine("policyops_worker_discovery"))
+        helpdesk = helpdesk_settings()
         review = build_review_runtime(env="local", app_engine=app, bindings=demo_bindings(app),
             fixture_sha256=FIXTURE_SHA256,
-            retail_origin=os.environ["POLICYOPS_RETAIL_ORIGIN"], retail_key=(SECRETS / "retail_key").read_bytes())
+            retail_origin=os.environ["POLICYOPS_RETAIL_ORIGIN"], retail_key=(SECRETS / "retail_key").read_bytes(),
+            helpdesk_settings=helpdesk)
         jobs = build_worker(env="local", app_engine=app, discovery_engine=discovery, review=review,
                             clock=review.executor.clock, batch=1)
         executions = build_execution_dispatcher(env="local" if execution_hooks is None else "test",
@@ -344,7 +354,12 @@ def worker(*, execution_hooks: Any = None) -> None:
             scopes = BoundScopes(app, demo_bindings(app), FIXTURE_SHA256)
             review.executor.scopes = executions.executor.scopes = scopes
 
-        worker_loop(stop, (refresh_bindings, jobs.run_once, executions.dispatch_once, outbox.dispatch_once))
+        passes = (refresh_bindings, jobs.run_once, executions.dispatch_once, outbox.dispatch_once)
+        if helpdesk is not None:
+            connector = HelpdeskWorker(env="local", app=app, discovery=discovery, settings=helpdesk)
+            worker_loop(stop, (*passes, connector.run_once))
+        else:
+            worker_loop(stop, passes)
 
 
 def main() -> int:

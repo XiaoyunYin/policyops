@@ -106,7 +106,8 @@ class RepositoryConfigTests(unittest.TestCase):
         for project in ("pyproject.toml", "evals/pyproject.toml"):
             with self.subTest(project=project):
                 addopts = load_toml(project)["tool"]["pytest"]["addopts"]
-                self.assertEqual(addopts[addopts.index("-m") + 1], "not postgres")
+                expected = "not postgres and not helpdesk" if project == "pyproject.toml" else "not postgres"
+                self.assertEqual(addopts[addopts.index("-m") + 1], expected)
         python_job = self.workflow[self.workflow.index("\n  python:\n"):self.workflow.index("\n  postgres:\n")]
         self.assertNotIn("postgres", python_job)
 

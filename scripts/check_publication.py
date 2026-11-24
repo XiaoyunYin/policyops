@@ -30,7 +30,7 @@ PUBLIC_DOCS = {
     # Public pilot boundaries and a reproducible pre-production failure analysis.
     "docs/pilot-scope.md", "docs/rca-ambiguous-order-selection.md",
     # T06: public reference for the database role matrix, bootstrap/migration usage and restore/rollback limits.
-    "docs/database.md",
+    "docs/database.md", "docs/integration.md",
     # T38: reproducible Compose operations, migration ownership and coherent recovery procedures.
     "docs/operations.md",
     # T07: public reference for the OIDC/session/CSRF design, local identity setup and its limits.

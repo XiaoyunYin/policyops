@@ -30,7 +30,8 @@ from policyops_contracts.scalars import (
 from policyops_contracts.timing import within_ttl
 
 
-MessageSource = Literal["seeded", "simulated_customer", "operator_entered_customer", "staff_note", "agent"]
+MessageSource = Literal["seeded", "simulated_customer", "operator_entered_customer", "staff_note", "agent",
+                        "helpdesk_ticket"]
 CustomerSource = Literal["simulated_customer", "operator_entered_customer"]
 ENTERED_BY_PRINCIPAL = frozenset({"operator_entered_customer", "staff_note"})
 

@@ -103,6 +103,10 @@ It never creates or grants anything in a `retail` schema. Retail roles and DDL b
 
 Revision `0017` raises generation document counts to 0..5000 and membership ordinals to 0..4999 for the 4,110-passage structural corpus; chunks stay capped at 10,000, Markdown v1 stays capped at 2,000 documents, and downgrade atomically refuses rows outside the old bounds without altering data.
 
+| Revision | App tables and tenant constraints | Runtime and downgrade |
+|---|---|---|
+| `0018` | `helpdesk_events`, `helpdesk_ticket_links`, `helpdesk_customer_bindings`, `helpdesk_writebacks`. Forced RLS, composite tenant references, raw-body and outcome uniqueness, bounded payloads and external IDs. | Discovery reads scheduling columns. Runtime can update claim, disposition, remote metadata and receipt fields by column grant. Downgrade requires an empty connector or explicit data-loss approval and always refuses while imported messages remain. [Local integration](integration.md) |
+
 - **Append-only records.** Messages, run events, consents, decisions, presentations, audit events, usage events, citations, traces and the request-idempotency ledger get `INSERT`/`SELECT` only. Other tables get column-level `UPDATE` grants, and nothing gets `DELETE`.
 - **Proposals.** A proposal's bound content cannot change. A trigger, which fires even for the owner and superusers, allows only setting the presentation time once and forward status moves.
 - **The binding chain.** Proposal, presentation, consent and decision records store every contract field and reconstruct to the exact contracts. Composite keys tie each record to the previous one: the same case, run, proposal version, action digest and presentation digest. They also tie each record to the referenced message's stored case, sequence, text digest, source and author. A record whose recorded evidence disagrees with the referenced row is rejected.

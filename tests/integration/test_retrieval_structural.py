@@ -113,7 +113,7 @@ def test_0017_upgrade_4110_and_atomic_refused_then_successful_downgrade(new_app_
                                                                      tmp_path: Path) -> None:
     db = new_app_database("structural_bounds", revision="0016")
     before = catalog(db)
-    db.upgrade()
+    db.upgrade("0017")
     assert db.current() == "0017"
     after = catalog(db)
     changed = [a[5] for b, a in zip(before, after, strict=True) if b != a]
@@ -149,5 +149,5 @@ def test_0017_upgrade_4110_and_atomic_refused_then_successful_downgrade(new_app_
                 conn.execute(f"DELETE FROM {table}")  # noqa: S608
     db.downgrade("0016")
     assert db.current() == "0016" and catalog(db) == before
-    db.upgrade()
+    db.upgrade("0017")
     assert db.current() == "0017" and catalog(db) == after

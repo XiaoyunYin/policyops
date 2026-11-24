@@ -147,12 +147,15 @@ describe("case queue", () => {
 describe("conversation and composer", () => {
   test("labels every source in plain text and posts a staff note against the shown version", async () => {
     const api = openCase(["analyst"], 2, page([message(1, "<b>Hi</b>", "operator_entered_customer"),
-                                               message(2, "Internal", "staff_note")]));
-    api.next("POST", MESSAGES, posted(3, 3, "Checked the order"));
-    api.next("POST", MESSAGES, posted(4, 4, "Second note"));
+                                               message(2, "Internal", "staff_note"),
+                                               message(3, "<b>yes</b>", "helpdesk_ticket")]));
+    api.next("POST", MESSAGES, posted(4, 3, "Checked the order"));
+    api.next("POST", MESSAGES, posted(5, 4, "Second note"));
     const { user } = renderApp(`/cases/${ID}`);
     expect(await screen.findByText("<b>Hi</b>")).toBeTruthy(); // text, never markup
     const list = screen.getByRole("list", { name: "Messages" });
+    expect(within(list).getByText("Help desk ticket")).toBeTruthy();
+    expect(within(list).getByText("<b>yes</b>")).toBeTruthy();
     expect(within(list).getByText("Customer message · entered by staff (simulation)")).toBeTruthy();
     expect(within(list).getByText("Staff note · internal, not sent to the customer")).toBeTruthy();
     expect(screen.getByRole("radio", { name: "Simulated customer (model)" }).hasAttribute("disabled")).toBe(true);

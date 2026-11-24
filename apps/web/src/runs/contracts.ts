@@ -41,7 +41,7 @@ const TOOLS = ["find_user_id_by_email", "find_user_id_by_name_zip", "get_user_de
   "cancel_pending_order", "modify_pending_order_address", "modify_pending_order_payment", "modify_pending_order_items",
   "return_delivered_order_items", "exchange_delivered_order_items", "modify_user_address"];
 const slug = (v: unknown): boolean => typeof v === "string" && /^[a-z][a-z0-9_.-]{0,63}$/.test(v);
-const SOURCES = ["seeded", "simulated_customer", "operator_entered_customer", "staff_note", "agent"];
+const SOURCES = ["seeded", "simulated_customer", "operator_entered_customer", "staff_note", "agent", "helpdesk_ticket"];
 const ERRORS = ["invalid_input", "unauthenticated", "forbidden", "not_found", "conflict", "stale_version", "expired",
   "customer_not_authenticated", "customer_mismatch", "policy_denied", "policy_unsupported", "consent_required",
   "consent_ambiguous", "approval_required", "separation_of_duties", "protocol_violation", "upstream_money_precision",

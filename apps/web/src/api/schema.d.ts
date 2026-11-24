@@ -1065,7 +1065,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent";
+            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent" | "helpdesk_ticket";
             /** Text */
             text: string;
             /** Text Sha256 */
@@ -1612,7 +1612,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent";
+            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent" | "helpdesk_ticket";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2074,7 +2074,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent";
+            source: "seeded" | "simulated_customer" | "operator_entered_customer" | "staff_note" | "agent" | "helpdesk_ticket";
             /**
              * Type
              * @default case.message_posted

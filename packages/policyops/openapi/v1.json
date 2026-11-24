@@ -1619,7 +1619,8 @@
               "simulated_customer",
               "operator_entered_customer",
               "staff_note",
-              "agent"
+              "agent",
+              "helpdesk_ticket"
             ],
             "title": "Source",
             "type": "string"
@@ -2917,7 +2918,8 @@
               "simulated_customer",
               "operator_entered_customer",
               "staff_note",
-              "agent"
+              "agent",
+              "helpdesk_ticket"
             ],
             "title": "Source",
             "type": "string"
@@ -4051,7 +4053,8 @@
               "simulated_customer",
               "operator_entered_customer",
               "staff_note",
-              "agent"
+              "agent",
+              "helpdesk_ticket"
             ],
             "title": "Source",
             "type": "string"

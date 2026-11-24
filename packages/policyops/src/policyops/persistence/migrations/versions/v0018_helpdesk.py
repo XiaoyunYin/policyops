@@ -12,7 +12,7 @@ branch_labels = None
 depends_on = None
 
 ENDPOINT = "connection_id text NOT NULL CHECK (connection_id ~ '^[a-z][a-z0-9_-]{0,63}$')"
-SHA = "CHECK ({} ~ '^[0-9a-f]{64}$')"
+SHA = "CHECK ({} ~ '^[0-9a-f]{{64}}$')"
 MAX_ID = 2**53 - 1
 EXTERNAL = f"bigint NOT NULL CHECK ({{}} BETWEEN 1 AND {MAX_ID})"
 CUSTOMER = "customer_user_id text NOT NULL CHECK (customer_user_id ~ '^[a-z]+(_[a-z]+)*_[0-9]{1,6}$'"

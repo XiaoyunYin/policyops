@@ -796,7 +796,10 @@ def test_round3_cloud_preflight_refuses_before_docker_and_pins_local_daemon(
 
 
 def test_round3_handoff_guards_deploy_and_compose() -> None:
-    handoff = (Path(__file__).resolve().parents[2] / "HANDOFF.md").read_text(encoding="utf-8")
+    path = Path(__file__).resolve().parents[2] / "HANDOFF.md"
+    if not path.is_file():
+        pytest.skip("private operator handoff is external to published sources")
+    handoff = path.read_text(encoding="utf-8")
     cloud = handoff.split("## Lightsail", 1)[1].split("## Offline gates", 1)[0]
     assert "n10_preflight && docker --host unix:///var/run/docker.sock compose" in cloud
     assert "n10_preflight && DOCKER_HOST=unix:///var/run/docker.sock bash infra/deploy/deploy.sh" in cloud

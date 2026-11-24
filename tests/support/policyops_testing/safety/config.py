@@ -21,7 +21,7 @@ FAULTS: tuple[Fault, ...] = ("crash_before_send", "commit_then_timeout", "crash_
 VARIANTS: tuple[Variant, ...] = ("cancel", "pending_address", "delivered_return")
 ARMS: tuple[Arm, Arm] = ("ledger", "naive_new_id")
 REPO = Path(__file__).resolve().parents[4]
-DEFAULT_CONFIG = REPO / "tests/fixtures/safety/t30-v1.json"
+DEFAULT_CONFIG = REPO / "tests/fixtures/safety/t30-v2.json"
 
 
 class StrictModel(BaseModel):
@@ -53,8 +53,8 @@ class Grant(StrictModel):
 
 
 class Config(StrictModel):
-    schema_version: Literal["policyops.safety-config/v1"]
-    study_id: Literal["t30-slice-a-v1"]
+    schema_version: Literal["policyops.safety-config/v1", "policyops.safety-config/v2"]
+    study_id: Literal["t30-slice-a-v1", "t30-slice-a-v2"]
     master_seed: Literal[2026111204]
     pairs: Annotated[tuple[Pair, ...], Field(min_length=100, max_length=100)]
     matrix_ids: Annotated[tuple[str, ...], Field(min_length=1, max_length=2000)]

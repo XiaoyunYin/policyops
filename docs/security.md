@@ -66,6 +66,9 @@ and 17 fenced without effect, with 0 duplicate, forbidden, false-success, failed
 aborted outcomes. All 6 sensitivity controls detected their injected defects. The naive arm failed to
 recognize all 20 commit-then-timeout writes despite their committed effects; the ledger recovered receipts.
 
+The current matrix runs on [v2](../tests/fixtures/safety/t30-v2.json), which extends v1's frozen grant
+expectations with the `0018` help-desk tables, and the recorded counts were measured with v1.
+
 E05's final live sample had gateway 0/48 attack effects and 0/12 false blocks. Prompt-only Luna had
 2/48 attack effects and 6/12 false blocks; the earlier sample had 2/48 and 2/12 respectively. Replaying
 the final model proposals through the gateway gave 0/48 effects and 6/12 false blocks (absent proposals

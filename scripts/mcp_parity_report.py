@@ -47,7 +47,7 @@ from policyops_testing.gateway_cases import CASES
 from policyops_testing.postgres import OwnedPostgres, owned_postgres
 from policyops_testing.retrieval_fixtures import CAPS, TOKENIZER, Embeddings, documents
 from policyops_testing.safety import matrix
-from policyops_testing.safety.config import load_e05_config
+from policyops_testing.safety.config import DEFAULT_CONFIG, load_e05_config
 from policyops_testing.safety.environment import Env, make_env, study_case
 from policyops_testing.safety.retail import Service
 
@@ -397,7 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "source_sha256": {p.relative_to(REPO).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted([*(REPO / "packages/policyops/src/policyops/mcp").glob("*.py"),
                              REPO / "scripts/mcp_parity_report.py", REPO / "uv.lock",
-                             REPO / "tests/fixtures/safety/t30-v1.json",
+                             DEFAULT_CONFIG,
                              REPO / "tests/fixtures/safety/t30-e05-v1.json"])}}
     target.write_bytes((json.dumps(report, indent=2) + "\n").encode("utf-8"))
     print(json.dumps({"passed": passed, "summary": stats, "failure": failure, "report": str(target)}))

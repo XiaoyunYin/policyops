@@ -30,6 +30,7 @@ from policyops_testing.evidence import EvidenceRecorder, git_identity
 from policyops_testing.postgres import owned_postgres
 from policyops_testing.safety import e05, e05_provider, e05_reports, sensitivity
 from policyops_testing.safety.config import (
+    DEFAULT_CONFIG,
     E05_ARMS,
     E05_CONFIG,
     E05_PROMPT,
@@ -264,7 +265,7 @@ def command(args: Any, argv: Any) -> int:
     from policyops_testing.safety.cli import output_recorder
     from policyops_testing.safety.config import load_e05_config
 
-    config = load_e05_config(args.config if args.config != REPO / "tests/fixtures/safety/t30-v1.json" else E05_CONFIG)
+    config = load_e05_config(E05_CONFIG if args.config == DEFAULT_CONFIG else args.config)
     if args.preflight_only:
         print(json.dumps(e05_provider.planning(config), sort_keys=True))
         return 0

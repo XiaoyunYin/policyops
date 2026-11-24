@@ -51,11 +51,11 @@ def output_recorder(path: Path) -> EvidenceRecorder:
                             purpose="Slice A executed safety matrix and paired recovery study", seed=2026111204)
 
 
-def source_hashes() -> dict[str, str]:
+def source_hashes(config_path: Path = DEFAULT_CONFIG) -> dict[str, str]:
     paths = {p for tree in ("packages/policyops/src", "packages/policyops_contracts/src", "tests/support")
              for p in (REPO / tree).rglob("*.py")
              if p != REPO / "packages/policyops/src/policyops/persistence/evaluation.py"}
-    paths.update((REPO / "scripts/run_safety_study.py", REPO / "uv.lock", DEFAULT_CONFIG))
+    paths.update((REPO / "scripts/run_safety_study.py", REPO / "uv.lock", config_path.resolve()))
     paths.add(REPO / "tests/integration/test_app_privileges.py")
     return {p.relative_to(REPO).as_posix(): sha_file(p) for p in sorted(paths) if REPO in p.parents and p.is_file()}
 
@@ -116,10 +116,10 @@ def cleanup_runtime(recorder: EvidenceRecorder, server: OwnedPostgres | None, se
 
 
 def execute(config: Config, recorder: EvidenceRecorder, suites: tuple[str, ...], pair_ids: tuple[str, ...],
-            command: tuple[str, ...]) -> Envelope:
+            command: tuple[str, ...], *, config_path: Path = DEFAULT_CONFIG) -> Envelope:
     started = datetime.now(UTC)
     code = git_identity(REPO)
-    sources = source_hashes()
+    sources = source_hashes(config_path)
     pairs = [p for p in config.pairs if not pair_ids or p.pair_id in pair_ids]
     matrix_rows: list[MatrixRow] = []
     trials: list[Trial] = []
@@ -205,7 +205,7 @@ def execute(config: Config, recorder: EvidenceRecorder, suites: tuple[str, ...],
     if "e04" in suites:
         done = {(r.pair_id, r.arm) for r in trials}
         trials.extend(aborted(p, a, "SetupAborted") for p in pairs for a in p.arms if (p.pair_id, a) not in done)
-    if source_hashes() != sources:
+    if source_hashes(config_path) != sources:
         failures.append("executed_source_changed")
     failures.extend(completeness(config, matrix_rows, trials, suites, pair_ids))
     required = ({"reviewer_role_guard_removed", "authentication_rls_disabled"} if "matrix" in suites else set()) \
@@ -313,7 +313,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError("--out is required")
         recorder = output_recorder(args.out)
         envelope = execute(config, recorder, suites, pair_ids,
-                           tuple(sys.argv if argv is None else ("run_safety_study", *argv)))
+                           tuple(sys.argv if argv is None else ("run_safety_study", *argv)),
+                           config_path=args.config)
         seal(recorder, envelope)
         print(json.dumps({"exit_code": envelope.exit_code, "matrix_rows": len(envelope.matrix),
                           "trial_rows": len(envelope.trials), "failures": envelope.failures}, sort_keys=True))

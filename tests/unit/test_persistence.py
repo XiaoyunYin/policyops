@@ -6,8 +6,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 import re
+from types import SimpleNamespace
+from unittest.mock import Mock
 from uuid import uuid4
 
+from alembic.script import Script, ScriptDirectory
 from pydantic import ValidationError
 import pytest
 
@@ -67,6 +70,20 @@ def test_engine_pool_is_bounded() -> None:
 
 MIGRATION_TEXT = "\n".join(path.read_text(encoding="utf-8")
                            for path in sorted((migrate.MIGRATIONS / "versions").glob("*.py")))
+
+
+@pytest.mark.parametrize("migration", list(ScriptDirectory(str(migrate.MIGRATIONS)).walk_revisions()),
+                         ids=lambda script: script.revision)
+def test_migration_upgrade_renders_sql_offline(migration: Script, monkeypatch: pytest.MonkeyPatch) -> None:
+    statements: list[str] = []
+    # Stub a provisioned, empty database so revisions with preflight queries reach their DDL.
+    bind = Mock()
+    bind.execute.return_value.first.return_value = (1,)
+    bind.execute.return_value.scalar_one.return_value = 0
+    bind.exec_driver_sql.return_value.scalar.return_value = 0
+    monkeypatch.setattr(migration.module, "op", SimpleNamespace(execute=statements.append, get_bind=lambda: bind))
+    migration.module.upgrade()
+    assert statements and all(statement.strip() for statement in statements)
 
 
 @pytest.mark.parametrize("pattern", [

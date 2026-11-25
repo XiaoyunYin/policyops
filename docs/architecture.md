@@ -5,8 +5,9 @@ in [database.md](database.md), and OIDC/session authentication handlers and role
 [authentication.md](authentication.md). The case/message and review APIs, bounded investigation graph, approval continuation,
 execution/reconciliation services and web UI are implemented. The default Compose demo leaves
 model-driven investigation unconfigured and verifies a deterministic proposal through real
-consent, approval and execution. See [operations](operations.md) and [evaluation](evaluation.md)
-for the measured scope. Pure contracts do not authorize a runtime action; services establish
+consent, approval and execution. See [operations](operations.md), [evaluation](evaluation.md)
+and the [disposable-host load study](performance.md#n10-cloud-results) for the measured scope.
+Pure contracts do not authorize a runtime action; services establish
 current authority and database roles constrain persistence.
 
 ## Packages

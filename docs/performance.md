@@ -1,8 +1,98 @@
 # PolicyOps API load and capacity study
 
-## Results: not yet run
+## N10 cloud results
 
-E02 ANN remains **not claimable**. The retail study below measures the fictional retail API and the packaged worker without provider or model calls.
+Browse traffic was stable at **8 requests/s** in short trials, with mixed outcomes at **16 requests/s** and saturation at **32 requests/s**. The formal capacity bracket remains uncertified. The worker-loop A/B was **inconclusive**.
+
+### Environment
+
+Each session used one disposable Lightsail `small_3_0` system under test (SUT) in `us-west-2` with 2 vCPUs and 2 GB of RAM. The study targeted baseline CPU availability. Observed SUT burst credits started at 0% and reached at most 1.98% in session 1 and 0.11% in session 2. The same-region `nano_3_0` generator drove session 1 and the initial A/B sequence. After two send-lag aborts on nano, the coordinator replaced it with `micro_3_0` and restarted the full sequence. [Lightsail bundle specifications](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-bundles.html)
+
+Session 1 used release `1d70f97`. Both A/B arms used the same image from `ee5895b`. The workstation's five TCP connect measurements (31.7–39.3 ms) were excluded. Session 1 used about 7.7 instance-hours, and session 2 used 5.1, including the aborted sequence and generator replacement. Both sessions were torn down. The total was about 12.8 instance-hours and $0.15 at Lightsail list rates, before any billing credits. [Lightsail pricing](https://aws.amazon.com/lightsail/pricing/)
+
+The retail API and packaged worker used fictional data without provider or model calls. E02 ANN remains **not claimable**.
+
+### W1 browse capacity
+
+The table gives the p95 for successful browse requests, including partial observations from invalid trials. The study ran no qualifying soak, so these are short-run burst observations. Among passing 8 and 16 rps trials, estimated credit burn ranged from −0.43 to +2.76 percentage points/hour. Negative values indicate credit accrual.
+
+| Offered rps | Attempt | Browse p95 (ms) | Outcome |
+|---:|---|---:|---|
+| 1 | Sweep | 24.2 | Passed |
+| 2 | Sweep | 30.3 | Passed |
+| 4 | Sweep | 35.4 | Passed |
+| 8 | Sweep | 39.6 | Passed |
+| 8 | Repeat 1 | 30.5 | Passed |
+| 8 | Repeat 2 | 38.0 | Unverified. All 1,440 requests succeeded. An operator SSH timeout lost the credit readings, and the PostgreSQL sampler series had a coverage gap. |
+| 8 | Repeat 3 | 37.8 | Passed |
+| 16 | Sweep | 36.0 | Passed |
+| 16 | Repeat 1 | 45.5 | Passed |
+| 16 | Repeat 2 | 212.6 | Invalid. The sampler timed out during SUT degradation, truncating the run. The driver logged 39 deadlines. |
+| 16 | Repeat 3 | 102.4 | Invalid. The generator aborted at 6.92 ms send-lag p99 against the 5 ms limit. |
+| 32 | Sweep | 41.5 | Invalid. Repeated readiness loss, request deadlines and a sampler timeout. |
+| 32 | Replacement | — | Invalid. A sampler timeout and generator send-lag abort left no successful measured requests. |
+
+The three 8 rps repeats had a median p95 of 37.8 ms and a range of 30.5–38.0 ms, including the unverified repeat. The two passes at the 16 rps boundary had a median of 40.7 ms and a range of 36.0–45.5 ms. Peak sampled CPU steal reached 74.8% in the first 32 rps attempt and 77.3% in its replacement. Both attempts starved the sampler, whose subprocess timed out. The reporter treated the incomplete checker output from the first aborted 32 rps attempt as a correctness stop and withheld the formal bracket. The checker recorded no correctness violations in either attempt.
+
+### W2 stream hold
+
+All 50 SSE streams held through the test, with one reconnect per stream around 300 s. The checker reconciled event continuity with the database and recorded no violations. All 360 background browse requests succeeded at 2 rps with 58.4 ms p95. The stage is **unverified** because the PostgreSQL sampler series had a coverage gap.
+
+### W3 simultaneous batches
+
+Each batch ran with 2 rps of background browse traffic. Decision HTTP p95 includes all recorded decision attempts. Approval-to-terminal p95 describes the observed completions, including the partial samples in invalid trials.
+
+| Batch size | Attempt | Completed / offered | Approval-to-terminal p95 (s) | Decision HTTP p95 (ms) | Outcome |
+|---:|---|---:|---:|---:|---|
+| 1 | Sweep | 1/1 | 4.08 | 34 | Passed |
+| 1 | Repeat 1 | 1/1 | 3.10 | 38 | Unverified. PostgreSQL sampler gap. |
+| 1 | Repeat 2 | 1/1 | 4.09 | 38 | Passed |
+| 5 | Sweep | 4/5 | 12.34 | 91 | Failed. Terminal latency and dispatch miss. PostgreSQL sampler gap. |
+| 5 | Repeat 1, reseeded | 3/5 | 10.19 | 69 | Invalid. Generator send-lag abort. |
+| 5 | Repeat 2 | 4/5 | 12.23 | 99 | Failed. Terminal latency and dispatch miss. |
+| 5 | Repeat 3 | 4/5 | 12.60 | 95 | Failed. Terminal latency and dispatch miss. |
+| 20 | Sweep | 5/20 | 22.44 | 127 | Invalid. Generator send-lag abort. |
+
+For batch 1, the median and range across all three observations were 4.08 s (3.10–4.09 s) to terminal and 38 ms (34–38 ms) for decisions. The three batch-5 attempts that passed the generator validity gate had a median of 12.34 s (12.23–12.60 s) to terminal and 95 ms (91–99 ms) for decisions.
+
+Simultaneous release exposed a generator limit. Each generator-valid session-1 batch of five missed one dispatch out of five offers, with an allowance of zero. This alone fails the stage, and those batches also exceeded the 10 s terminal limit. The checker verified zero effects for the undispatched cases and the reporter counted zero started-workflow failures. The invalid repeat of batch 5 and the invalid batch of 20 missed two and 15 dispatches, respectively, and exceeded the 5 ms send-lag p99 limit.
+
+Wave seeding failed before timed load at the first 0.1 workflow/s stage, twice for the third batch-1 repeat, and once for the first batch-5 repeat. Each failed with `simulator initialization failed`. The batch-5 repeat subsequently seeded on a fresh volume and produced the invalid trial above. In session 2, the first throwaway `initialize()` after a fresh start timed out and the retry succeeded. This establishes a cold-start timeout in that setup. The underlying cause is undetermined. The rest of the rate ladder has no timed results.
+
+### Worker cadence diagnosis
+
+Approval-to-terminal p95 rose as more approvals were released together. A separate signal came from the sampler. Across the batch-1, batch-5 and batch-20 sweeps, peak due-job counts were 1, 4 and 5, and the oldest due job reached 0.94, 7.05 and 15.64 s, respectively. Median host CPU idle time was about 86% in all three windows. The batch-20 timing and queue samples are diagnostic because the stage aborted.
+
+The packaged loop claims one job and one execution per pass (`batch=1`) and unconditionally waits 1 s between passes. This cadence can leave work waiting even while CPU is available. The candidate keeps the batch size and starts another pass immediately after work, with a periodic yield. It is opt-in and defaults off. Before the A/B, the prediction for batch 5 at 2 rps browse was a reduction of at least 20% in approval-to-terminal p95 in every pair, from about 12 s to 4–6 s, with lower oldest-due age. Decision and browse p95 were predicted to rise by at most 20%, with correctness and success counts preserved.
+
+### Worker-loop A/B
+
+The predeclared five-pair gate was **inconclusive**. Only pair 5 was complete and valid. A coordinator-side orchestrator moved the workstation copies of the aborted sequence's artifacts aside and left stale sampler outputs on the SUT. The sampler refused to overwrite them, so three restarted trials never reached stage start. Two other A trials were invalid on generator send lag. Pair 5 also missed the success-count guardrail because B completed four workflows and A completed five.
+
+The table is descriptive. A is the default loop and B enables drain. A timed trial can have valid generator and sampler evidence and still fail the workload rule. The aborted nano sequence is excluded from the pairs. It ended during setup of the next trial after a generator SSH timeout.
+
+| Generator | Arm / trial | Completed / offered | Approval-to-terminal p95 (s) | Decision HTTP p95 (ms) | Outcome and validity |
+|---|---|---:|---:|---:|---|
+| Nano | A1 | 3/5 | 9.18 | 65 | Invalid. Generator send lag. |
+| Nano | B1 | 5/5 | 5.24 | 138 | Unverified. Sampler coverage gap. |
+| Nano | B2 | 3/5 | 4.13 | 64 | Invalid. Generator send lag. |
+| Nano | A2 | — | — | — | No stage. Generator SSH timeout during setup. |
+| Micro | A1 | — | — | — | No stage. Stale SUT sampler output. |
+| Micro | B1 | — | — | — | No stage. Stale SUT sampler output. |
+| Micro | B2 | — | — | — | No stage. Stale SUT sampler output. |
+| Micro | A2 | 4/5 | 11.31 | 115 | Failed. Terminal latency and dispatch miss. Sampler coverage gap. |
+| Micro | A3 | 3/5 | 10.20 | 122 | Invalid. Generator send lag. |
+| Micro | B3 | 4/5 | 5.20 | 101 | Failed. Dispatch miss. Sampler coverage gap. |
+| Micro | B4 | 4/5 | 6.23 | 99 | Valid. Failed on dispatch miss. |
+| Micro | A4 | 4/5 | 11.17 | 102 | Invalid. Generator send lag. |
+| Micro | A5 | 5/5 | 14.31 | 141 | Valid. Failed on terminal latency. |
+| Micro | B5 | 4/5 | 5.25 | 115 | Valid. Failed on dispatch miss. |
+
+Each generator-valid micro trial with 4/5 completions had one dispatch miss against an allowance of zero. A5 had zero misses. The reporter counted zero started-workflow failures in every restarted trial that ran. **No worker-loop effect is claimed.** A certified rerun would need a larger generator validated at simultaneous release, clean SUT output paths, and all five counterbalanced pairs with matched workload, seed and credits in the predeclared 0–10% band. It would also need complete sampler and checker evidence and preserved success counts.
+
+### Limitations
+
+The bracket depends on a single burstable SUT per session, short trials and synthetic traffic. The study covered one stream count and a subset of the write matrix. The sampler can lose evidence under CPU starvation, and small generators can drop simultaneous offers before the SUT sees them. The coordinator-side cloud orchestrator is outside this repository. These observations do not establish sustained capacity, production traffic performance or a service-level objective.
 
 ## N16 filtered HNSW protocol
 

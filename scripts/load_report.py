@@ -877,8 +877,10 @@ def markdown(result: dict[str, Any]) -> str:
         marker = " Correctness failed." if attempt["correctness_failed"] else ""
         lines.append(f"- {attempt['run']} · {attempt['stage']} · {attempt['outcome']}.{marker}{note}")
     if comparison := result.get("paired"):
+        arms = comparison["arms"]
         lines.append(
-            f"Paired {comparison['metric']} median improvement {show(comparison['median'] * 100)}%. "
+            f"Paired {comparison['metric']} (A {arms['A']}, B {arms['B']}) "
+            f"median improvement {show(comparison['median'] * 100)}%. "
             f"Bootstrap 95% interval {show(comparison['bootstrap_ci95'])}. "
             f"Effect claim {show(comparison['claim'])}."
         )
@@ -891,6 +893,10 @@ def artifact(path: Path, suffix: str) -> dict[str, Any] | None:
 
 
 def paired_analysis(trials: list[dict[str, Any]], plan: dict[str, Any]) -> dict[str, Any]:
+    arms = plan.get("arms")
+    if not isinstance(arms, dict) or set(arms) != {"A", "B"} or not all(
+            isinstance(arms[key], str) and arms[key].strip() for key in ("A", "B")) or arms["A"] == arms["B"]:
+        raise ValueError("paired plan requires distinct, non-empty arm descriptions for A and B")
     by_run = trial_index(trials)
     pairs = plan["pairs"]
     labels = {label for pair in pairs for label in pair}
@@ -934,6 +940,8 @@ def paired_analysis(trials: list[dict[str, Any]], plan: dict[str, Any]) -> dict[
             regressions.append(b)
         if metric == "decision":
             a_value, b_value = (trial["decision_http_s"]["p95"] for trial in (baseline, candidate))
+        elif metric == "approval_to_terminal":
+            a_value, b_value = (trial["approval_to_terminal_s"]["p95"] for trial in (baseline, candidate))
         else:
             a_value, b_value = (
                 trial["routes"][metric]["successful_latency_s"]["p95"] for trial in (baseline, candidate)
@@ -946,6 +954,7 @@ def paired_analysis(trials: list[dict[str, Any]], plan: dict[str, Any]) -> dict[
     comparison = paired(values)
     return {
         "metric": metric,
+        "arms": arms,
         **comparison,
         "pairs": pairs,
         "regressions": regressions,
@@ -958,7 +967,8 @@ def main() -> int:
     cli.add_argument("raw", type=Path, nargs="+")
     cli.add_argument("--output-prefix", type=Path, required=True)
     cli.add_argument("--attempts", type=Path, help="Chronological JSON plan with attempts and authorized retries")
-    cli.add_argument("--pairs", type=Path, help="Predeclared JSON with five [baseline, candidate] run IDs and metric")
+    cli.add_argument("--pairs", type=Path,
+                     help="Predeclared JSON with five [baseline, candidate] run IDs, metric, credit band and arms")
     args = cli.parse_args()
     trials = []
     for path in args.raw:

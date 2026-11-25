@@ -16,7 +16,9 @@ services:
     environment:
       POLICYOPS_PUBLIC_RATE_LIMIT: "${POLICYOPS_N10_LIMITER:-0}"
   worker:
-    environment: *load-identity
+    environment:
+      <<: *load-identity
+      POLICYOPS_WORKER_DRAIN: "${POLICYOPS_N10_WORKER_DRAIN:-0}"
     secrets:
       - n10_load_token
       - n10_deny_hosts

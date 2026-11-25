@@ -281,14 +281,23 @@ def test_report_command_signals_correctness_abort_and_preserves_report(
     assert report["trials"][0]["outcome"] == "failed"
 
 
+def worker_drain_pairs(metric: str) -> dict[str, Any]:
+    return {
+        "arms": {"A": "drain=0", "B": "drain=1"},
+        "pairs": [[f"a{i}", f"b{i}"] for i in range(1, 6)],
+        "metric": metric,
+        "credit_band": [90, 100],
+    }
+
+
 def test_paired_report_rejects_reuse_duplicate_labels_wrong_assignment_and_wrong_order() -> None:
     order = ("a1", "b1", "b2", "a2", "a3", "b3", "b4", "a4", "a5", "b5")
     rows = [
         trial(label, "fix-" + label, start=i, value=1 if label.startswith("a") else 0.7)
         for i, label in enumerate(order)
     ]
-    pairs = [[f"a{i}", f"b{i}"] for i in range(1, 6)]
-    plan = {"pairs": pairs, "metric": "messages", "credit_band": [90, 100]}
+    plan = worker_drain_pairs("messages")
+    pairs = plan["pairs"]
     assert load_report.paired_analysis(list(reversed(rows)), plan)["claim"]
     with pytest.raises(ValueError, match="ten distinct"):
         load_report.paired_analysis(rows, dict(plan, pairs=[pairs[0]] * 5))
@@ -839,7 +848,7 @@ def test_round3_paired_analysis_requires_single_configuration_across_pairs(misma
             row["meta"]["stage"][mismatch] = 8
         else:
             row["meta"][mismatch] = 11 if mismatch == "seed" else "different"
-    plan = {"pairs": [[f"a{i}", f"b{i}"] for i in range(1, 6)], "metric": "messages", "credit_band": [90, 100]}
+    plan = worker_drain_pairs("messages")
     with pytest.raises(ValueError, match="all ten"):
         load_report.paired_analysis(rows, plan)
 
@@ -1372,8 +1381,62 @@ def test_round4_paired_decision_metric_includes_unsuccessful_attempts() -> None:
         baseline = label.startswith("a")
         row["routes"]["decision"] = {"successful_latency_s": {"p95": 0.8 if baseline else 0.3}}
         row["decision_http_s"] = {"p95": 1.0 if baseline else 1.5}
-    plan = {"pairs": [[f"a{i}", f"b{i}"] for i in range(1, 6)], "metric": "decision", "credit_band": [90, 100]}
+    plan = worker_drain_pairs("decision")
     assert not load_report.paired_analysis(rows, plan)["claim"]
+
+
+@pytest.fixture
+def terminal_trials() -> list[dict[str, Any]]:
+    order = ("a1", "b1", "b2", "a2", "a3", "b3", "b4", "a4", "a5", "b5")
+    rows = [trial(label, "fix-" + label, start=index) for index, label in enumerate(order)]
+    for row, label in zip(rows, order, strict=True):
+        baseline = label.startswith("a")
+        row["meta"]["stage"].update(w1=2, batch=5)
+        row["outcome"] = "failed" if baseline else "passed"
+        row["workflow"]["succeeded"] = 5
+        row["approval_to_terminal_s"] = {"p95": 12.0 if baseline else 6.0}
+    return rows
+
+
+@pytest.mark.parametrize("variant,claim", [("improvement", True), ("small", False), ("mixed", False),
+                                          ("regression", False)])
+def test_paired_approval_to_terminal_gate(terminal_trials: list[dict[str, Any]], variant: str, claim: bool) -> None:
+    plan = worker_drain_pairs("approval_to_terminal")
+    if variant == "small":
+        for row in terminal_trials:
+            if row["meta"]["run"].startswith("b"):
+                row["approval_to_terminal_s"]["p95"] = 10.0
+    elif variant == "mixed":
+        terminal_trials[-1]["approval_to_terminal_s"]["p95"] = 13.0
+    elif variant == "regression":
+        terminal_trials[-1]["workflow"]["succeeded"] = 4
+    result = load_report.paired_analysis(terminal_trials, plan)
+    assert result["claim"] is claim
+    assert result["arms"] == plan["arms"]
+    assert result["regressions"] == (["b5"] if variant == "regression" else [])
+    if claim:
+        assert result["paired_improvement"] == [0.5] * 5
+        assert result["bootstrap_ci95"] == [0.5, 0.5]
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_paired_approval_to_terminal_requires_both_p95s(terminal_trials: list[dict[str, Any]], index: int) -> None:
+    terminal_trials[index]["approval_to_terminal_s"]["p95"] = None
+    with pytest.raises(ValueError, match="requires observations for both runs"):
+        load_report.paired_analysis(terminal_trials, worker_drain_pairs("approval_to_terminal"))
+
+
+@pytest.mark.parametrize("arms", [None, ["drain=0", "drain=1"], {"A": "drain=0"},
+                                  {"A": "drain=0", "B": "drain=1", "C": "drain=1"}, {"A": "drain=0", "B": " "},
+                                  {"A": "drain=0", "B": "drain=0"}, {"A": 0, "B": 1}])
+def test_paired_plan_requires_distinct_arm_descriptions(terminal_trials: list[dict[str, Any]], arms: Any) -> None:
+    plan = worker_drain_pairs("approval_to_terminal")
+    if arms is None:
+        del plan["arms"]
+    else:
+        plan["arms"] = arms
+    with pytest.raises(ValueError, match="paired plan requires distinct, non-empty arm descriptions"):
+        load_report.paired_analysis(terminal_trials, plan)
 
 
 def test_wave_admission_denies_concurrent_seed_and_releases_lock() -> None:

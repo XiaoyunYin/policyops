@@ -65,7 +65,7 @@ def case_target_ids(connection: Connection, run: RunScope, *, before_sequence: i
         "AND source = ANY(:sources) AND (CAST(:before AS bigint) IS NULL OR sequence < :before)"
     ), {"workspace": run.workspace_id, "case": run.case_id, "sources": sorted(CUSTOMER_SOURCES),
         "before": before_sequence})
-    return stated_order_ids(rows.tuples(), before_sequence=before_sequence)
+    return stated_order_ids(((row[0], row[1], row[2]) for row in rows.all()), before_sequence=before_sequence)
 
 
 class PgTargetEvidence:

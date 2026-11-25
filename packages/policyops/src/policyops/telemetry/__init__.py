@@ -34,8 +34,10 @@ SpanName = Literal["http.request", "worker.job", "worker.claim", "worker.execute
                    "execution.reconcile", "sql.failure"]
 MetricName = Literal["provider.calls", "provider.input_tokens", "provider.output_tokens", "provider.cost_usd",
                      "provider.dispatch_duration",
-                     "errors", "jobs", "reviews", "executions", "queue.depth", "queue.oldest_due_age"]
-ServiceRole = Literal["api", "worker", "demo"]
+                     "errors", "jobs", "reviews", "executions", "queue.depth", "queue.oldest_due_age",
+                     "canary.proposal_window_count", "canary.ambiguous_window_count",
+                     "canary.gateway_window_count", "canary.last_finalized_timestamp"]
+ServiceRole = Literal["api", "worker", "demo", "canary"]
 
 
 class Span(Protocol):

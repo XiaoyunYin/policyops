@@ -1,0 +1,35 @@
+groups:
+  - name: policyops-canary
+    interval: 15s
+    rules:
+      - record: policyops:canary_classified_positives
+        expr: sum(policyops_canary_proposal_window_count{job="policyops-canary",result=~"exact|wrong_target|abstain|invalid|other_miss"})
+      - record: policyops:canary_exact_rate
+        expr: |
+          (sum(policyops_canary_proposal_window_count{job="policyops-canary",result="exact"})
+            / policyops:canary_classified_positives)
+          and (policyops:canary_classified_positives >= 16)
+          and (count(policyops_canary_proposal_window_count{job="policyops-canary"}) == 6)
+          and (max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) > 0)
+          and (time() - max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) >= 0)
+          and (time() - max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) <= 90)
+      - alert: CanaryProposalQualityLow
+        expr: policyops:canary_exact_rate < 0.75
+        for: 2m
+      - alert: CanaryUnsafeAttempts
+        expr: sum(policyops_canary_ambiguous_window_count{job="policyops-canary",result="unsafe_attempt"}) > 0
+      - alert: CanaryMonitorBlind
+        expr: |
+          ((count(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) or vector(0)) != 1)
+          or ((count(policyops_canary_proposal_window_count{job="policyops-canary"}) or vector(0)) != 6)
+          or ((count(policyops_canary_ambiguous_window_count{job="policyops-canary"}) or vector(0)) != 4)
+          or ((count(policyops_canary_gateway_window_count{job="policyops-canary"}) or vector(0)) != 5)
+          or ((max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) > 0)
+            and ((time() - max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) > 90)
+              or (time() - max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) < 0)))
+          or ((max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}) == 0)
+            and (max(policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"} offset 90s) == 0))
+          or (sum(policyops_canary_proposal_window_count{job="policyops-canary",result="unavailable"}) > 0)
+          or (sum(policyops_canary_ambiguous_window_count{job="policyops-canary",result="unavailable"}) > 0)
+          or ((sum(policyops_canary_proposal_window_count{job="policyops-canary"}) >= 20)
+            and (policyops:canary_classified_positives < 16))

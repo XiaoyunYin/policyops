@@ -15,7 +15,7 @@ from sqlalchemy import Engine
 from policyops.budget.config import Configuration
 from policyops.budget.ledger import Ledger, RunBinding
 from policyops.gateway.ports import GatewayScope, PgSessionStore, RetailPort, ScopeMismatch, load_scope
-from policyops.gateway.steps import Gateway
+from policyops.gateway.steps import Gateway, StepResult
 from policyops.gateway.stores import PgTargetEvidence
 from policyops.orchestration import investigation_prompt as prompt
 from policyops.orchestration.adapters import InvestigationAdapters
@@ -72,7 +72,7 @@ from policyops.runtime.spec import (
 from policyops.services.proposals import ProposalService
 from policyops.telemetry import annotate, enabled, observed
 from policyops_contracts.clock import Clock, SystemClock
-from policyops_contracts.conversation import AgentLimits, PolicyContext, UserMessage
+from policyops_contracts.conversation import AgentLimits, AgentToolCall, PolicyContext, UserMessage
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalScope, canonical_sha256
 from policyops_contracts.seeds import CaseCustomerBinding
@@ -127,6 +127,7 @@ class InvestigationExecutor:
     config_sha256: str
     test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None
     profile: InvestigationProfile = InvestigationProfile.BASELINE
+    observe_write: Callable[[AgentToolCall, StepResult], None] | None = None
 
     @observed("investigation")
     def execute(self, context: StepContext) -> Outcome:
@@ -260,7 +261,7 @@ class InvestigationExecutor:
                                          EvidenceValidator(self.engine, context.workspace_id),
                                          CitationRecorder(self.engine, context.workspace_id),
                                          references={r.evidence_id: r for r in state.recorded_evidence},
-                                         disclose_lookup_user_id=repaired)
+                                         disclose_lookup_user_id=repaired, observe_write=self.observe_write)
         builder = InvestigationGraph(model, adapters, adapters, self.policy, self.limits, deadline,
                                    lambda: self.fence(context),
                                    lambda: (stop_reason(reason) if (reason := ledger.exhaustion(

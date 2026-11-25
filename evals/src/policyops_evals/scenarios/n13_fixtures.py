@@ -38,6 +38,7 @@ class Panel:
     trials: tuple[Trial, ...]
     live: tuple[Trial, ...]
     census: dict[str, int]
+    pools: dict[tuple[Status, Class], tuple[tuple[Trial, ...], ...]]
 
 
 def _action(fixture: gen.FixtureData, customer: str, order_id: str, status: Status) -> Action | None:
@@ -120,6 +121,7 @@ def generate(raw: bytes) -> Panel:
                       "historical_resolvable_pool": len(resolvable),
                       "historical_resolvable_design_blocks": design_blocks})
     trials: list[Trial] = []
+    full_pools: dict[tuple[Status, Class], tuple[tuple[Trial, ...], ...]] = {}
     live_pools: list[list[tuple[Trial, ...]]] = []
     statuses: tuple[Status, ...] = ("pending", "delivered")
     for status in statuses:
@@ -159,6 +161,7 @@ def generate(raw: bytes) -> Panel:
             if not choices:
                 raise ValueError(f"pinned fixture has no fresh {status}/{group} case")
             trials.extend(choices[0])
+            full_pools[status, group] = tuple(choices)
         live_pools.extend((by_group["B2"], by_group["B1"]))
     used = {trial.scenario.world.customer_id for trial in trials}
     live: list[Trial] = []
@@ -171,7 +174,7 @@ def generate(raw: bytes) -> Panel:
             raise ValueError("pinned fixture has no fresh live acceptance case")
         live.append(selected)
         used.add(selected.scenario.world.customer_id)
-    return Panel(tuple(trials), tuple(live), dict(census))
+    return Panel(tuple(trials), tuple(live), dict(census), full_pools)
 
 
 def main() -> int:

@@ -1,12 +1,13 @@
 """Run-bound retrieval, gateway preparation and strict evidence recording adapters."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
 import time
 from typing import Literal
 from uuid import UUID
 
-from policyops.gateway.steps import Gateway
+from policyops.gateway.steps import Gateway, StepResult
 from policyops.orchestration.facts import critical_fact
 from policyops.orchestration.graph import ABSTENTION
 from policyops.orchestration.state import AwaitingApproval, InvestigationState
@@ -65,6 +66,7 @@ class InvestigationAdapters:
     references: dict[UUID, EvidenceRef] = field(default_factory=dict)
     by_step: dict[int, tuple[EvidenceRef, ...]] = field(default_factory=dict)
     disclose_lookup_user_id: bool = False
+    observe_write: Callable[[AgentToolCall, StepResult], None] | None = None
 
     def __post_init__(self) -> None:
         run = self.gateway.scope.run
@@ -184,6 +186,8 @@ class InvestigationAdapters:
         if time.monotonic() >= deadline:
             raise TimeoutError
         result = self.gateway.step(step, previous=state.previous_step, sequence=state.step_count)
+        if self.observe_write is not None:
+            self.observe_write(call, result)
         if result.collected is None:
             return ToolResult(call_id=call.call_id, content=(result.observation.model_dump_json()
                                                             if result.observation else "Proposal refused."),

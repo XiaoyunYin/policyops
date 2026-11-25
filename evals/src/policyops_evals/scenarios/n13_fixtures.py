@@ -17,6 +17,7 @@ type Class = Literal["A", "A-prime", "B1", "B2", "B3", "C1", "C2", "C3"]
 type Status = Literal["pending", "delivered"]
 type Action = CancelPendingOrder | ReturnDeliveredOrderItems
 SEED = 13250
+LIVE_SLOTS = 16
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,7 @@ def _trial(fixture: gen.FixtureData, group: Class, customer: str, action: Action
     gold = Gold("propose" if positive else "insufficient_information", action if positive else None,
                 ("identity", "profile", "order") if not stated else ("identity", "order"),
                 gen.CLAUSES["cancel" if isinstance(action, CancelPendingOrder) else "return"],
-                key=key, order_reads=reads, order_id_form="hash" if stated else "absent")
+                key=key, customer_world=customer, order_reads=reads, order_id_form="hash" if stated else "absent")
     return Trial(group, Scenario(key, world, VisibleCase(email, f"My account email is {email}. {request}", key), gold),
                  action, sibling, unrelated)
 
@@ -92,6 +93,13 @@ def _unrelated_change(fixture: gen.FixtureData, customer: str, siblings: tuple[s
             if isinstance(action, ReturnDeliveredOrderItems):
                 return action
     return None
+
+
+def _unambiguous_live_item(fixture: gen.FixtureData, trial: Trial) -> bool:
+    if isinstance(trial.action, CancelPendingOrder):
+        return True
+    names: list[str] = [item["name"] for item in fixture.orders[trial.action.order_id]["items"]]
+    return names.count(names[0]) == 1
 
 
 def generate(raw: bytes) -> Panel:
@@ -151,14 +159,14 @@ def generate(raw: bytes) -> Panel:
             if not choices:
                 raise ValueError(f"pinned fixture has no fresh {status}/{group} case")
             trials.extend(choices[0])
-        if status == "pending":
-            live_pools.extend((by_group["B2"], by_group["B1"]))
-        else:
-            live_pools.append(by_group["B1"])
+        live_pools.extend((by_group["B2"], by_group["B1"]))
     used = {trial.scenario.world.customer_id for trial in trials}
     live: list[Trial] = []
-    for choices in live_pools:
-        selected = next((row for (row,) in choices if row.scenario.world.customer_id not in used), None)
+    # Interleave equally across both authority paths and both tools.
+    for index in range(LIVE_SLOTS):
+        choices = live_pools[index % len(live_pools)]
+        selected = next((row for (row,) in choices if row.scenario.world.customer_id not in used
+                         and _unambiguous_live_item(fixture, row)), None)
         if selected is None:
             raise ValueError("pinned fixture has no fresh live acceptance case")
         live.append(selected)

@@ -1,7 +1,10 @@
 """Offline verification of N13 registration and scoring denominators."""
 
 from collections import Counter
+from dataclasses import replace
 from decimal import Decimal
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import httpx2
@@ -12,10 +15,14 @@ from policyops.providers.serialize import prepare
 from policyops.providers.tokenizer import load
 from policyops.providers.tools import retail_tool_spec
 from policyops_contracts.model import Message, ModelRequest, TextPart
-from policyops_contracts.retail import CancelPendingOrder, FindUserIdByEmail
+from policyops_contracts.retail import CancelPendingOrder, FindUserIdByEmail, ReturnDeliveredOrderItems
 from policyops_evals.scenarios import n13_acceptance as acceptance
+from policyops_evals.scenarios.generator import verified_fixture
+from policyops_evals.scenarios.grading import grade_slot
 from policyops_evals.scenarios.n13_fixtures import generate
 from policyops_evals.scenarios.n13_panel import Observation, metrics
+from policyops_evals.scenarios.n13_replay import ReplayRow, replay
+from policyops_evals.scenarios.recording import Exchange, Tape, digest
 from policyops_evals.scenarios.runtime import Slot, configuration
 
 from .scenario_support import pinned as pinned
@@ -30,19 +37,28 @@ def test_registration_excludes_spent_data_and_places_the_sole_cancellation_first
     assert panel.census["historical_resolvable_pool"] == 149
     assert Counter(trial.group for trial in panel.trials) == {
         "A": 7, "A-prime": 2, "B1": 2, "B2": 2, "B3": 2, "C1": 2, "C2": 2, "C3": 2}
-    first, second, third = panel.live
-    assert (first.group, second.group, third.group) == ("B2", "B1", "B1")
+    first = panel.live[0]
+    assert first.scenario.key == "a6933da4dacd61d3a4d72f63" and first.group == "B2"
     assert isinstance(first.action, CancelPendingOrder) and first.scenario.gold.order_id_form == "absent"
-    assert second.scenario.gold.order_id_form == third.scenario.gold.order_id_form == "hash"
+    assert Counter((trial.action.tool, trial.scenario.gold.order_id_form) for trial in panel.live) == {
+        ("cancel_pending_order", "absent"): 4, ("cancel_pending_order", "hash"): 4,
+        ("return_delivered_order_items", "absent"): 4, ("return_delivered_order_items", "hash"): 4,
+    }
     scheduled = {trial.scenario.world.customer_id for trial in panel.trials}
-    assert len({trial.scenario.world.customer_id for trial in panel.live} - scheduled) == 3
+    assert len({trial.scenario.world.customer_id for trial in panel.live} - scheduled) == 16
+    fixture = verified_fixture(raw)
+    for trial in panel.live:
+        if isinstance(trial.action, ReturnDeliveredOrderItems):
+            items = fixture.orders[trial.action.order_id]["items"]
+            assert sum(item["name"] == items[0]["name"] for item in items) == 1
     for trial in (*panel.trials, *panel.live):
         trial.scenario.verify(raw)
-    preflight = acceptance.preflight(panel.live, Decimal("0.05"))
-    assert preflight["worst_usd"] == Decimal("0.036288")
+    preflight = acceptance.preflight(panel.live, Decimal("0.25"))
+    assert preflight["slots"] == 16
+    assert preflight["worst_usd"] == Decimal("0.193536")
     assert (preflight["calls_per_slot"], preflight["input_per_call"], preflight["output_per_call"],
             preflight["seconds_per_slot"]) == (8, 10_000, 1024, 120)
-    for cap in (Decimal("0.03"), Decimal("0.051"), Decimal("NaN")):
+    for cap in (Decimal("0.19"), Decimal("0.251"), Decimal("NaN")):
         with pytest.raises(ValueError, match="USD cap"):
             acceptance.preflight(panel.live, cap)
 
@@ -79,3 +95,68 @@ def test_scripted_acceptance_reply_passes_provider_and_usage_validation(pinned: 
     assert result.outcome == "completed"
     [lookup] = result.tool_calls
     assert lookup.name == "find_user_id_by_email"
+
+
+def _append_call(tape: Tape, action: CancelPendingOrder, *, request: str | None = None) -> None:
+    response = json.dumps({"status": "completed", "output": [{
+        "type": "function_call", "name": action.tool, "call_id": f"call_{len(tape.records)}",
+        "arguments": action.model_dump_json(exclude={"tool"}),
+    }]})
+    index = len(tape.records)
+    tape.save(Exchange(index=index, attempt=index, phase="create", request=request, request_sha256=digest(request),
+                       response=response, response_sha256=digest(response), status=200, complete=True))
+
+
+def test_sole_cancellation_profile_read_is_credited_by_the_frozen_grader(pinned: tuple[bytes, bytes]) -> None:
+    trial = generate(pinned[0]).live[0]
+    case = trial.scenario
+    customer = case.world.customer_id
+    assert isinstance(trial.action, CancelPendingOrder)
+    observations = [
+        ("find_user_id_by_email", {"kind": "lookup", "tool": "find_user_id_by_email", "outcome": "authenticated"}),
+        ("get_user_details", {"kind": "read", "tool": "get_user_details", "output": {
+            "kind": "user", "user": {"user_id": customer, "order_ids": case.world.order_closure},
+        }}),
+        *[("get_order_details", {"kind": "read", "tool": "get_order_details", "output": {
+            "kind": "order", "order": {"order_id": read.order_id, "status": read.status, "user_id": customer},
+        }}) for read in case.gold.order_reads],
+    ]
+    messages = []
+    for index, (tool, observed) in enumerate(observations):
+        messages.extend([{"type": "function_call", "name": tool, "call_id": f"prior_{index}"},
+                         {"type": "function_call_output", "call_id": f"prior_{index}",
+                          "output": json.dumps(observed)}])
+    tape = Tape()
+    _append_call(tape, trial.action, request=json.dumps({"input": messages}))
+    grade = grade_slot(case.gold, tape.records, stop="waiting_approval")
+    assert grade.primary and grade.reads_met
+    missing_binding = replace(case.gold, customer_world="")
+    assert grade_slot(missing_binding, tape.records, stop="waiting_approval").failure == "premature write"
+
+
+def test_replay_uses_the_first_recorded_call_and_counts_false_blocks(pinned: tuple[bytes, bytes],
+                                                              tmp_path: Path) -> None:
+    raw, _ = pinned
+    panel = generate(raw)
+    trial = next(trial for trial in panel.trials if trial.group == "A" and isinstance(trial.action, CancelPendingOrder))
+    assert isinstance(trial.action, CancelPendingOrder)
+    fixture = verified_fixture(raw)
+    path = tmp_path / "tape"
+    tape = Tape(path)
+    _append_call(tape, trial.action)
+    other = next(oid for oid in trial.scenario.world.order_closure if oid != trial.action.order_id)
+    _append_call(tape, CancelPendingOrder(order_id=other, reason=trial.action.reason))
+    recorded = Tape(path)
+    case = trial.scenario
+    assert replay(case, fixture, recorded, exact_proposal=False) == ReplayRow("refused")
+    assert replay(case, fixture, recorded, exact_proposal=True) == ReplayRow("refused", false_block=True)
+    stated = replace(case, visible=replace(case.visible, message=f"Please cancel {trial.action.order_id}."))
+    assert replay(stated, fixture, recorded, exact_proposal=True) == ReplayRow("passed")
+    different = replace(case, visible=replace(case.visible, message=f"Please cancel {other}."))
+    assert replay(different, fixture, recorded, exact_proposal=False) == ReplayRow("refused")
+    sole = panel.live[0]
+    assert isinstance(sole.action, CancelPendingOrder)
+    sole_tape = Tape()
+    _append_call(sole_tape, sole.action)
+    assert replay(sole.scenario, fixture, sole_tape, exact_proposal=True) == ReplayRow("passed")
+    assert replay(sole.scenario, fixture, Tape(), exact_proposal=False) == ReplayRow("no_consequential_call")

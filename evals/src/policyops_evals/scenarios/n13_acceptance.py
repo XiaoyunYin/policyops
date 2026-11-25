@@ -1,6 +1,7 @@
 """Run a bounded model-to-receipt slice against the signed, loopback retail simulator."""
 
 from argparse import ArgumentParser
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass
@@ -41,7 +42,7 @@ from policyops.services.proposal_views import DecisionRequest
 from policyops.settings import TelemetrySettings
 from policyops.telemetry.sdk import MemorySpans
 from policyops_contracts.clock import SystemClock
-from policyops_contracts.events import EventEnvelope, ReviewOutcome
+from policyops_contracts.events import ConsentRecorded, EventEnvelope, ReviewOutcome, ReviewReason
 from policyops_contracts.proposal import ActionProposal
 from policyops_contracts.retail import CancelPendingOrder, GetOrderDetails
 from policyops_contracts.retail_service import FIXTURE_SHA256, CaseState, OrderOutput
@@ -51,14 +52,19 @@ from policyops_evals.retail_sim.store import Store
 from policyops_evals.scenarios.batch import serial_lock
 from policyops_evals.scenarios.cases import Scenario
 from policyops_evals.scenarios.cli import _credential, _operator_profile, _require_paid
-from policyops_evals.scenarios.n13_fixtures import SEED, Trial, generate
+from policyops_evals.scenarios.grading import grade_slot
+from policyops_evals.scenarios.n13_fixtures import LIVE_SLOTS, SEED, Trial, generate
 from policyops_evals.scenarios.recording import Tape, phase_of
 from policyops_evals.scenarios.runtime import Profile, Slot, Summary, configuration, usage
 from policyops_evals.scenarios.study import private_root
 
 
 PROFILE = InvestigationProfile.TOOL_CONTRACT_V1R1
-MAX_USD = Decimal("0.05")
+MAX_USD = Decimal("0.25")
+type FailureCategory = Literal["gateway_refusal", "model_wrong_or_abstained", "cap_stop", "infrastructure"]
+FAILURE_CATEGORIES: tuple[FailureCategory, ...] = (
+    "gateway_refusal", "model_wrong_or_abstained", "cap_stop", "infrastructure",
+)
 TRACE_ATTRIBUTES = frozenset({"run_id", "proposal_id", "operation_id", "attempt", "generation", "outcome", "tool",
                               "provider", "model", "access", "error_code", "receipt_sha256", "input_tokens",
                               "output_tokens", "cost_micro_usd", "node", "kind"})
@@ -76,6 +82,12 @@ class Endpoint:
             if not isinstance(client.initialize(), CaseState):
                 raise ValueError("retail initialization unavailable")
             yield client
+
+
+@dataclass(frozen=True)
+class Failure:
+    category: FailureCategory
+    reason: str
 
 
 @contextmanager
@@ -263,12 +275,12 @@ def preflight(trials: tuple[Trial, ...], maximum: Decimal) -> dict[str, object]:
     config = configuration()
     actor, caps = config.actors["agent"], config.caps
     worst = len(trials) * caps.run_usd
-    if not maximum.is_finite() or not 0 < worst <= maximum <= MAX_USD or not 1 <= len(trials) <= 3:
+    if not maximum.is_finite() or not 0 < worst <= maximum <= MAX_USD or not 1 <= len(trials) <= LIVE_SLOTS:
         raise ValueError("acceptance USD cap does not cover the registered slots")
     return {"model": actor.model, "effort": "low", "cache_mode": "none", "profile": PROFILE,
             "fixture_sha256": FIXTURE_SHA256, "seed": SEED, "calls_per_slot": caps.run_calls,
             "input_per_call": caps.request_max_input, "output_per_call": caps.request_max_output,
-            "seconds_per_slot": caps.active_seconds, "worst_usd": worst, "max_usd": maximum,
+            "seconds_per_slot": caps.active_seconds, "slots": len(trials), "worst_usd": worst, "max_usd": maximum,
             "cases": [trial.scenario.key for trial in trials]}
 
 
@@ -289,8 +301,53 @@ def _emit(fields: dict[str, object], output: Path | None = None) -> None:
     print(line, flush=True)
 
 
+def _investigation_failure(trial: Trial, summary: Summary, tape: Tape, *,
+                           proposed: bool, gateway: object) -> Failure:
+    if proposed:
+        if not summary.gold_match:
+            return Failure("model_wrong_or_abstained", summary.first_decision)
+        return Failure("infrastructure", "presentation_without_waiting_approval")
+    if summary.stop_reason == "waiting_approval":
+        return Failure("infrastructure", "waiting_approval_without_presentation")
+    grade = grade_slot(trial.scenario.gold, tape.records, stop=summary.stop_reason)
+    if gateway == "error":
+        return Failure("infrastructure", "gateway_write_unavailable")
+    if gateway == "refused":
+        return Failure("gateway_refusal", "gateway_write_refused")
+    if grade.cap is not None:
+        return Failure("cap_stop", grade.cap)
+    if grade.failure == "provider failure" or summary.stop_reason.startswith("investigation."):
+        return Failure("infrastructure", summary.stop_reason)
+    if gateway == "completed":
+        return Failure("gateway_refusal", "proposal_preparation_refused")
+    return Failure("model_wrong_or_abstained", grade.failure or grade.decision)
+
+
+def _complete(runtime: Profile, endpoint: Endpoint, trial: Trial, slot: Slot,
+              proposal: ActionProposal) -> tuple[str | None, Failure | None]:
+    if proposal.action != trial.action:
+        return None, Failure("model_wrong_or_abstained", "presented_action_mismatch")
+    phase = "consent_and_approval"
+    try:
+        assent_and_approve(runtime, slot, proposal)
+        phase = "review_and_dispatch"
+        execution = advance(runtime, endpoint, trial, slot)
+        if execution is None:
+            _, events = run_events(runtime.app, slot)
+            if any(isinstance(event.payload, ReviewOutcome)
+                   and event.payload.reason == ReviewReason.PRECHECK_REFUSED for event in events):
+                return None, Failure("gateway_refusal", "reservation_precheck_refused")
+            return None, Failure("infrastructure", "review_did_not_reserve_execution")
+        if execution.outcome == "precheck_refused":
+            return None, Failure("gateway_refusal", "dispatch_precheck_refused")
+        phase = "receipt_verification"
+        return verify_receipt(runtime, endpoint, trial, slot, proposal, execution), None
+    except Exception as exc:
+        return None, Failure("infrastructure", f"{phase}: {type(exc).__name__}")
+
+
 def run(runtime: Profile, endpoint: Endpoint, workspace: UUID, trials: tuple[Trial, ...], *,
-        maximum: Decimal, output: Path, credential: str | None = None, redactions: tuple[str, ...] = ()) -> bool:
+        maximum: Decimal, output: Path, credential: str | None = None, redactions: tuple[str, ...] = ()) -> int:
     registration = preflight(trials, maximum)
     study_id = uuid5(workspace, "policyops:n13/model-to-receipt/v1")
     slots = tuple(Slot(workspace, uuid5(study_id, trial.scenario.key)) for trial in trials)
@@ -302,68 +359,103 @@ def run(runtime: Profile, endpoint: Endpoint, workspace: UUID, trials: tuple[Tri
                                   span_exporter=memory)
     if backend is None:
         raise ValueError("acceptance trace was not configured")
+    failures: Counter[FailureCategory] = Counter()
+    verified = 0
     try:
         with serial_lock(runtime.app, study_id) as check:
             generation = runtime.corpus_generation(workspace)
             with workspace_transaction(runtime.app, workspace) as connection:
                 if any(runs.get_run(connection, slot.run) is not None for slot in slots):
                     raise ValueError("a registered acceptance slot already has durable state")
+            lock_lost = False
             for index, (trial, slot) in enumerate(zip(trials, slots, strict=True), start=1):
-                check()
-                accounts = tuple(usage(runtime.app, item) for item in slots)
-                if (any(row.blocked or row.held for row in accounts)
-                        or sum(row.settled for row in accounts) + configuration().caps.run_usd > maximum):
-                    raise ValueError("aggregate model budget unavailable")
-                tape = Tape(None if credential is None else output / "private-provider" / str(index))
+                tape = Tape()
                 summary: Summary | None = None
                 receipt_digest: str | None = None
-                error: str | None = None
+                failure: Failure | None = None
+                proposed = False
+                phase = "batch_lock"
                 with telemetry.span("investigation", run_id=slot.run):
                     trace = telemetry.correlation()["trace_id"]
                     try:
-                        if credential is None:
-                            handler = scripted(runtime.tokenizer, trial, slot)
-                            summary = runtime.run_scripted(trial.scenario, slot, tape, handler,
-                                                           profile=PROFILE, retail_session=endpoint.client)
+                        if lock_lost:
+                            raise ValueError("batch lock already lost")
+                        check()
+                        phase = "budget_admission"
+                        accounts = tuple(usage(runtime.app, item) for item in slots)
+                        if any(row.blocked or row.held for row in accounts):
+                            failure = Failure("infrastructure", "aggregate_usage_unreconciled")
+                        elif sum(row.settled for row in accounts) + configuration().caps.run_usd > maximum:
+                            failure = Failure("cap_stop", "aggregate_usd_cap")
                         else:
-                            transport = partial(httpx2.AsyncHTTPTransport, trust_env=False, retries=0)
-                            summary = runtime._run(
-                                trial.scenario, slot, tape, transport,
-                                env="local", credential=credential, redactor=slot.redactor((credential, *redactions)),
-                                expected_generation=generation, profile=PROFILE, retail_session=endpoint.client)
-                        account = usage(runtime.app, slot)
-                        if tape.write_failed or account.blocked or account.held:
-                            raise ValueError("provider capture or usage did not reconcile")
-                        proposal = presented(runtime, slot)
-                        if (summary.stop_reason == "waiting_approval" and summary.gold_match
-                                and proposal is not None and proposal.action == trial.action):
-                            assent_and_approve(runtime, slot, proposal)
-                            execution = advance(runtime, endpoint, trial, slot)
-                            if execution is None:
-                                raise ValueError("review did not reserve the approved execution")
-                            receipt_digest = verify_receipt(runtime, endpoint, trial, slot, proposal, execution)
+                            phase = "investigation"
+                            if credential is None:
+                                handler = scripted(runtime.tokenizer, trial, slot)
+                                summary = runtime.run_scripted(trial.scenario, slot, tape, handler,
+                                                               profile=PROFILE, retail_session=endpoint.client)
+                            else:
+                                tape = Tape(output / "private-provider" / str(index))
+                                transport = partial(httpx2.AsyncHTTPTransport, trust_env=False, retries=0)
+                                summary = runtime._run(
+                                    trial.scenario, slot, tape, transport, env="local", credential=credential,
+                                    redactor=slot.redactor((credential, *redactions)), expected_generation=generation,
+                                    profile=PROFILE, retail_session=endpoint.client)
+                            phase = "usage_reconciliation"
+                            account = usage(runtime.app, slot)
+                            if tape.write_failed or account.blocked or account.held:
+                                raise ValueError("provider capture or usage did not reconcile")
+                            phase = "presentation"
+                            proposal = presented(runtime, slot)
+                            proposed = proposal is not None
+                            if (proposal is not None and summary.stop_reason == "waiting_approval"
+                                    and summary.gold_match):
+                                receipt_digest, failure = _complete(runtime, endpoint, trial, slot, proposal)
                     except Exception as exc:
                         # Driver, provider and database exceptions can carry private request text or credentials.
-                        error = type(exc).__name__
+                        lock_lost = lock_lost or phase == "batch_lock"
+                        failure = Failure("infrastructure", f"{phase}: {type(exc).__name__}")
                 if not backend.flush(6):
-                    error = error or "TraceFlushFailed"
-                state, events = run_events(runtime.app, slot)
+                    failure = failure or Failure("infrastructure", "trace_flush_failed")
+                state = "unavailable"
+                events: tuple[EventEnvelope, ...] = ()
+                accounting: dict[str, object] | None = None
+                try:
+                    state, events = run_events(runtime.app, slot)
+                    accounting = asdict(usage(runtime.app, slot)) | _usage_tokens(runtime.app, slot)
+                except Exception as exc:
+                    failure = failure or Failure("infrastructure", f"reporting: {type(exc).__name__}")
+                finished = [span for span in memory.get_finished_spans() if span.context is not None
+                            and f"{span.context.trace_id:032x}" == trace]
+                if failure is None and receipt_digest is None:
+                    if summary is not None:
+                        gateway = next((attrs.get("outcome") for span in reversed(finished)
+                                        if span.name == "gateway.step" and (attrs := span.attributes)
+                                        and attrs.get("access") == "write"), None)
+                        failure = _investigation_failure(trial, summary, tape, proposed=proposed, gateway=gateway)
+                    else:
+                        failure = Failure("infrastructure", "missing_investigation_summary")
                 spans = [{"name": span.name, "start_ns": span.start_time, "end_ns": span.end_time,
                           "span_id": f"{span.context.span_id:016x}",
                           "parent_id": f"{span.parent.span_id:016x}" if span.parent else None,
                           "attributes": {k: v for k, v in (span.attributes or {}).items() if k in TRACE_ATTRIBUTES}}
-                         for span in memory.get_finished_spans() if span.context is not None
-                         and f"{span.context.trace_id:032x}" == trace]
+                         for span in finished if span.context is not None]
+                if failure is None:
+                    verified += 1
+                else:
+                    failures[failure.category] += 1
                 _emit({"attempt": index, "case": trial.scenario.key, "run": slot.run, "trace": trace,
-                       "scripted_assent": True, "paid": credential is not None,
+                       "scripted_assent": any(isinstance(event.payload, ConsentRecorded) for event in events),
+                       "paid": credential is not None,
                        "investigation": asdict(summary) if summary is not None else None,
-                       "usage": asdict(usage(runtime.app, slot)) | _usage_tokens(runtime.app, slot),
+                       "usage": accounting,
                        "state": state, "events": [{"sequence": event.sequence, "type": event.payload.type,
                                                     "at": event.occurred_at} for event in events], "spans": spans,
-                       "receipt_sha256": receipt_digest, "error": error}, output / f"attempt-{index}.json")
-                if error is not None or receipt_digest is not None:
-                    return error is None and receipt_digest is not None
-            return False
+                       "receipt_sha256": receipt_digest, "failure": asdict(failure) if failure else None},
+                      output / f"attempt-{index}.json")
+            _emit({"verified_receipts": verified, "registered_slots": len(slots),
+                   "failures": {category: failures[category] for category in FAILURE_CATEGORIES}},
+                  output / "summary.json")
+            return verified
     finally:
         backend.close()
 
@@ -395,9 +487,9 @@ def main() -> int:
             _require_paid(True)
             credential = _credential()
         with _operator_profile(args) as (runtime, redactions), loopback(runtime.retail) as endpoint:
-            trials = panel.live if args.allow_paid else panel.live[:1]
-            return int(not run(runtime, endpoint, args.workspace, trials, maximum=args.max_usd,
-                               output=args.out, credential=credential, redactions=redactions))
+            verified = run(runtime, endpoint, args.workspace, panel.live, maximum=args.max_usd,
+                           output=args.out, credential=credential, redactions=redactions)
+            return int(verified < (1 if args.allow_paid else len(panel.live)))
     except Exception as exc:
         _emit({"error": type(exc).__name__})
         return 1

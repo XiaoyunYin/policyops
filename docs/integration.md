@@ -59,6 +59,99 @@ scans fail closed. The service does not fetch attachments, extract HTML, change 
 replies or post refusals. The demo does not establish production integration, requester identity, throughput,
 exactly-once remote delivery, or wire equivalence beyond confirmed captures.
 
+## Historical ticket import
+
+Use a **disposable workspace**. Each newly accepted ticket opens a case. The Compose CLI requires
+`POLICYOPS_ENV=local`, `POLICYOPS_HELPDESK=1`, and a configured connection with `writeback_enabled=false`.
+The connection selects the workspace and installation. Seed requester bindings on the server before importing.
+The CLI uses the verified app runtime role and makes zero HTTP requests. Signed webhooks continue to provide
+incremental sync for the same connection.
+
+### Export format v1
+
+Use strict UTF-8 with the exact header below. Each physical line contains one complete cumulative snapshot
+from the same Zammad installation and ID space. Use LF or CRLF. Encode line breaks inside article bodies as
+JSON escapes and quote the array as a CSV field. Ticket and group IDs, requester IDs, and state IDs are positive
+integers up to 2⁵³ − 1. Use UTC timestamps with `Z` or `+00:00` and up to six fractional digits. The array uses the
+article fields in the [field mapping](#field-mapping). An empty snapshot uses `[]`.
+
+```csv
+policyops_helpdesk_v1_ticket_id,group_id,customer_id,state_id,updated_at,articles_json
+42,7,11,2,2026-10-31T00:00:00Z,"[{""id"":1,""ticket_id"":42,""internal"":false,""sender"":""Customer"",""created_by_id"":11,""content_type"":""text/plain"",""body"":""yes"",""created_at"":""2026-10-30T00:00:00Z""}]"
+```
+
+The file limit is 64 MiB and 50,000 records. The encoded record limit is 1 MiB, including its line ending. The
+decoded articles field admits up to 200 articles and 256 KiB of JSON. Header, encoding, or file limit failures
+refuse the archive. A malformed or over-limit record receives a redacted rejection. Batches parse outside SQL
+transactions and normally hold up to 16 records or 2 MiB of encoded input. An oversized line beyond the batch
+budget is accounted for individually using its digest.
+
+### Plan, import, and report
+
+Use the disposable Compose setup described below, with a dedicated write-back-disabled connection. Place the
+export in the worker's private temporary directory. These commands assume its path is `/tmp/tickets.csv`.
+Set the actual export timestamp and preserve the digest returned by `plan`.
+
+```powershell
+$compose = @('-f','compose.yaml','-f','infra/compose/helpdesk.yaml')
+$importer = @('exec','-T','worker','python','-B','infra/compose/helpdesk_import.py')
+$connection = 'zammad-history'
+$exportedAt = '2026-11-01T00:00:00Z'
+$plan = docker compose @compose @importer plan --connection $connection --file /tmp/tickets.csv --exported-at $exportedAt
+if ($LASTEXITCODE -ne 0) { throw 'Plan failed' }
+$sha = ($plan | ConvertFrom-Json).file_sha256
+docker compose @compose @importer run --connection $connection --file /tmp/tickets.csv --exported-at $exportedAt --sha256 $sha
+docker compose @compose @importer report --connection $connection --sha256 $sha
+```
+
+`plan` validates the input and counts structurally valid and rejected rows without writing. The export timestamp
+must be within five minutes of database time or earlier. Records with `updated_at` later than the export timestamp
+are rejected. The operator is responsible for accurate file timestamps and source ordering. An incorrect timestamp
+in the past can appear valid.
+
+`run` verifies the file digest before writing. Resume with the same bytes, export timestamp, connection and digest.
+The destination and allowed-group mapping are pinned for the run. Keep requester bindings stable. A different digest
+requires a new plan and starts a separate run. A session advisory lock serializes importers per workspace and
+connection. Each batch commits case changes, ledger rows and the versioned cursor together. The first commit also
+creates the run and its one audit event. An uncertain commit triggers a fresh read of the durable cursor. A
+completed rerun returns the existing report. Report rows contain the record ordinal, ticket ID when identified,
+disposition and typed reason. Remove the worker's temporary archive after the run or retain the original privately
+for resumption.
+
+### Ordering and reconciliation
+
+Both callers project under the same ticket lock, including first creation. The watermark is UTC ticket
+`updated_at` followed by the maximum article ID, including ignored articles and using zero for an empty list.
+The import ledger records `skipped_stale` for a lower mark and `duplicate` for an equal mark with the same projected
+fields and customer messages. An import with divergent projected content at an equal mark is quarantined as
+`snapshot_conflict`. A higher import mark that drops or changes a projected message is quarantined as
+`incompatible_history`. The webhook inbox retains its N11 states and lease semantics. The audit and typed
+quarantines for historical rows live in the import run and ledger.
+
+Compatible import and webhook snapshots converge on the greatest delivered watermark when the snapshots are
+complete and cumulative, article identities and contents are immutable, bindings stay stable, and equal marks
+agree. The projected link fields and customer-message identities and digests are comparable across delivery
+orders. Case IDs, ingestion timestamps, sequence numbers and case versions are local operational fields.
+Imported text stays in `helpdesk_ticket` messages, including the literal “yes”, and is excluded from consent.
+The importer leaves the case workflow status to PolicyOps.
+
+### Fixture and acceptance
+
+The PostgreSQL tests run the importer as the app runtime role. The oracle test generates the CSV and an
+independent expected projection at test time using the hash-verified τ² retail `db.json` from the frozen evaluator
+installation. The generator writes to a private output directory, and its separate server-side bindings are seeded
+before import. See [data provenance](data-provenance.md#rights-and-provenance-audit).
+
+```powershell
+python -B scripts/devenv.py uv sync --project evals --frozen
+python -B scripts/devenv.py uv run --frozen pytest -m postgres tests/integration/test_helpdesk_import.py
+```
+
+For a workstation measurement, set `POLICYOPS_N14_WORKSTATION_HARDWARE` to the workstation CPU, memory and local
+PostgreSQL setup and run the same command with `-k pinned_retail_fixture -s`. This selects the full eligible retail
+fixture and prints the hardware, fixture size and SHA-256, batch limits, committed row count and elapsed time. The
+result describes that workstation run.
+
 ## Offline checks
 
 Use the frozen development environment and an external temporary root as in the project setup.

@@ -699,8 +699,8 @@ and pre-send 503. A real lost-response relay is used; one real subprocess-kill c
 is supplementary and outside the paired denominator. Both arms retain the simulator's
 scope, signed transport, expected-version and business/effect checks.
 
-The current matrix runs on [v2](../tests/fixtures/safety/t30-v2.json), which extends v1's frozen grant
-expectations with the `0018` help-desk tables, and the recorded counts were measured with v1.
+The current matrix runs on [v3](../tests/fixtures/safety/t30-v3.json), which adds the `0019` historical import
+grants to [v2](../tests/fixtures/safety/t30-v2.json). The recorded counts were measured with v1.
 
 | Outcome | Operation ledger | Naive retry |
 |---|---:|---:|

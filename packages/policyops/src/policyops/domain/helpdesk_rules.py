@@ -4,6 +4,7 @@ from datetime import datetime
 import hashlib
 import hmac
 import re
+from typing import Literal
 from uuid import UUID, uuid5
 
 from pydantic import TypeAdapter, ValidationError
@@ -15,6 +16,12 @@ from policyops_contracts.scalars import MessageText
 ARTICLE_NAMESPACE = UUID("e2de4574-ded7-5764-817b-ed269571fe6e")
 NOTE_VERSION = 1
 _text = TypeAdapter(MessageText)
+
+ProjectionReason = Literal["disallowed_group", "destination_changed", "requester_changed", "unmapped_requester",
+                           "snapshot_conflict", "incompatible_history"]
+RejectReason = Literal["record_too_large", "invalid_csv", "invalid_ticket", "future_ticket",
+                       "articles_too_large", "too_many_articles", "invalid_articles",
+                       "duplicate_article_id", "article_ticket_mismatch"]
 
 
 def signature_valid(secret: str, body: bytes, values: list[bytes]) -> bool:

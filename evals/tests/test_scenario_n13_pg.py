@@ -181,15 +181,25 @@ def test_target_guard_panel(profile: tuple[Profile, World], monkeypatch: pytest.
             assert row.refused and row.effects == 0 and not row.receipt_verified, row
 
 
-def test_scripted_acceptance_verifies_first_receipt(profile: tuple[Profile, World], tmp_path: Path) -> None:
+def test_scripted_acceptance_verifies_every_receipt(profile: tuple[Profile, World], tmp_path: Path) -> None:
     runtime, world = profile
     trials = generate(runtime.retail.fixture.raw).live
     output = tmp_path / "n13-scripted"
     with _server(runtime.retail) as endpoint:
-        assert acceptance.run(runtime, endpoint, world.ws, trials, maximum=acceptance.MAX_USD, output=output)
-    assert sorted(path.name for path in output.iterdir()) == ["attempt-1.json", "preflight.json"]
-    report = json.loads((output / "attempt-1.json").read_text(encoding="utf-8"))
-    assert len(report["receipt_sha256"]) == 64 and report["error"] is None
-    assert not report["paid"] and report["scripted_assent"] and report["usage"]["settled_events"] > 0
-    assert {span["name"] for span in report["spans"]} >= {"gateway.step", "review.job", "execution.step"}
-    assert "review.outcome" in {event["type"] for event in report["events"]}
+        verified = acceptance.run(runtime, endpoint, world.ws, trials, maximum=acceptance.MAX_USD, output=output)
+    attempts = [f"attempt-{index}.json" for index in range(1, 17)]
+    assert {path.name for path in output.iterdir()} == {"preflight.json", "summary.json", *attempts}
+    for trial, filename in zip(trials, attempts, strict=True):
+        report = json.loads((output / filename).read_text(encoding="utf-8"))
+        context = (report["attempt"], report["case"], report["failure"], report["state"], report["investigation"])
+        assert report["case"] == trial.scenario.key, context
+        assert report["failure"] is None and len(report["receipt_sha256"] or "") == 64, context
+        assert not report["paid"] and report["scripted_assent"] and report["usage"]["settled_events"] > 0, context
+        assert {span["name"] for span in report["spans"]} >= {"gateway.step", "review.job", "execution.step"}, context
+        assert "review.outcome" in {event["type"] for event in report["events"]}, context
+    assert verified == len(trials) == 16
+    assert json.loads((output / "summary.json").read_text(encoding="utf-8")) == {
+        "verified_receipts": 16, "registered_slots": 16, "failures": {
+            "gateway_refusal": 0, "model_wrong_or_abstained": 0, "cap_stop": 0, "infrastructure": 0,
+        },
+    }

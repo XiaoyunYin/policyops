@@ -168,7 +168,11 @@ class Gateway:
     def step(self, step: AgentStep, *, previous: AgentStep | None, sequence: int) -> StepResult:
         annotate(run_id=self.scope.run.run_id)
         result = self._step(step, previous=previous, sequence=sequence)
-        annotate(outcome="refused" if isinstance(result.observation, ToolError) else "completed")
+        if isinstance(result.observation, ToolError):
+            unavailable = result.observation.code in {ErrorCode.UNAVAILABLE, ErrorCode.INTERNAL, ErrorCode.RATE_LIMITED}
+            annotate(outcome="error" if unavailable else "refused")
+        else:
+            annotate(outcome="completed")
         return result
 
     def _step(self, step: AgentStep, *, previous: AgentStep | None, sequence: int) -> StepResult:

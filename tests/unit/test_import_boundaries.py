@@ -138,6 +138,8 @@ SCENARIO_IMPORTS = {
         "policyops.services.decisions", "policyops.services.proposal_views", "policyops.settings",
         "policyops.telemetry.sdk",
     },
+    # The private replay uses the production target predicate and customer-source parser.
+    "src/policyops_evals/scenarios/n13_replay.py": {"policyops.domain.retail_rules", "policyops.gateway.stores"},
     "tests/test_scenario_n13.py": {"policyops.providers.results", "policyops.providers.serialize",
                                   "policyops.providers.tokenizer", "policyops.providers.tools"},
     "tests/test_scenario_n13_pg.py": {

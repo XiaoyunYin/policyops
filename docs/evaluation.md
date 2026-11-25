@@ -455,15 +455,24 @@ python -B ../scripts/devenv.py uv run --frozen pytest -m postgres -s tests/test_
 ```
 
 The separate live acceptance command uses `tool-contract-v1r1`, Luna low and
-cache off. It registers a sole-eligible cancellation first, then two stated-ID
-cases. With eight calls, 10,000 input tokens and 1,024 output tokens per call,
-and 120 active seconds per slot, the three-slot upper bound is $0.036288 under
-the $0.05 aggregate cap. The driver stops at the first verified receipt. It
-uses scripted operator-entered assent and a separate reviewer, then checks the
-run outcome, matching application and simulator receipts, and the committed
-effect count. The sanitized report contains allowlisted trace attributes, run
-events, usage and the receipt digest. Provider capture stays private. The live
-result is pending.
+cache off. It registers 16 fresh positives, starting with a sole-eligible
+cancellation. Each tool has four sole-eligible and four stated-ID cases. With
+eight calls, 10,000 input tokens and 1,024 output tokens per call, and 120 active
+seconds per slot, preflight records an upper bound of $0.193536 under
+`--max-usd 0.25`. The driver reports all 16 slots and counts verified receipts
+over the registered panel. Failures are classified as gateway refusals, model
+errors or abstentions, cap stops, or infrastructure failures.
+
+The scripted mode uses the same panel. Both modes use scripted operator-entered
+assent and separate reviewer approval, then check the run outcome, matching
+application and simulator receipts, and the committed effect count. The
+sanitized report contains allowlisted trace attributes, run events, usage and
+receipt digests. Provider capture stays private. The live result is pending.
+
+The regression check uses a private replay of the recorded held-out attempts.
+It evaluates the first consequential call against the target rule using the
+pinned fixture. Coordinator notes record aggregate counts only, including
+false blocks among previously exact first calls on positive cases.
 
 ## Prompt-caching study
 

@@ -1444,7 +1444,7 @@ N15 runs regular investigations in a dedicated workspace backed by a disposable,
 
 Each five-slot cycle contains N13 B1 and B2 positives for both cancellation and return, then one ambiguous A control. N15 excludes the 16 N13 live slots and historical held-out customers. The scripted model works from the serialized opener and delivered tool results. It proposes the stated order or the sole eligible order for the requested action, with return items and payment taken from the visible order. The scorer joins private gold by slot ID after the provider exchange is captured.
 
-- **Proposal verdict** uses the frozen N3 grader on the first consequential provider reply and preceding reads. Its categories are `exact`, `wrong_target`, `abstain`, `invalid`, `other_miss`, and `unavailable`.
+- **Proposal verdict** uses the frozen N3 grader. The first consequential provider reply fixes the action, arguments, and required reads. The terminal evidence still applies the grader's cap and invalid-reply checks.
 - **Gateway outcome** uses the typed write result and the presentation read under the workspace runtime role. Its categories are `accepted`, `target_refused`, `other_refused`, `not_reached`, and `unavailable`. A blocked wrong target counts on both axes. The B3 control is an exact proposal that receives `target_refused`.
 
 The driver schedules one slot every 15 seconds and finalizes each slot once. A slot missing its 12-second deadline becomes `unavailable`. The scorer publishes the last 20 scheduled write positives, five ambiguous controls, 25 gateway outcomes, and the last finalized timestamp. The closed `policyops-canary` service role keeps these metrics separate. The prototype runs one driver per local stack.
@@ -1470,4 +1470,16 @@ The frozen v1 comparison uses the same 20-positive window, coverage, freshness a
 
 The noisy-healthy control uses 200 independent seeded schedules and a failure probability of 21/192, the published 10.9% rounded healthy failure rate. Wilson wins the predeclared comparison of missed above-floor episodes, then new healthy firings, then detection delay. The shipped Prometheus rule uses the fixed threshold. The synthetic study emits every run's detection and valid-clear delays, misses, healthy hours and firings, and blind intervals. These are controlled-clock results for the registered faults and noise process.
 
-The private replay first checks N13's registered N3 recording bindings and regrades all paired write positives. The acceptance totals are 171/192 tool-contract and 3/192 default. It then feeds tool-contract, default and tool-contract through the frozen monitor at the virtual cadence. The primary order follows the registered tool-contract schedule. Three seeded paired permutations are labelled as resamples. The output contains only aggregates and stays outside the checkout. See [the local canary runbook](operations.md#local-canary-monitor).
+The private replay checks N13's registered N3 recording bindings and regrades every paired write positive. Each regraded verdict and the canary verdict must match the recorded N3 grade under the mapping below. The acceptance totals are 171/192 tool-contract and 3/192 default. The replay refuses any per-slot mismatch before writing the aggregate report.
+
+| Frozen N3 positive grade, in order of precedence | Canary proposal verdict |
+|---|---|
+| Primary success (exact proposal) | `exact` |
+| Wrong target | `wrong_target` |
+| Malformed write or invalid-reply stop | `invalid` |
+| Provider failure | `unavailable` |
+| Abstention, clarification or decline without a consequential call | `abstain` |
+| Missing capture | `unavailable` |
+| Remaining misses, including an otherwise exact write with a call-cap stop | `other_miss` |
+
+After reconciliation the replay feeds tool-contract, default and tool-contract through the frozen monitor at the virtual cadence. The primary order follows the registered tool-contract schedule. Three seeded paired permutations are labelled as resamples. The replay prints only the pair count and exact counts. It writes the aggregate monitor results outside the checkout. See [the local canary runbook](operations.md#local-canary-monitor).

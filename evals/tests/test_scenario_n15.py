@@ -10,24 +10,30 @@ import httpx2
 from opentelemetry.sdk.metrics.export import Gauge
 import pytest
 
-from policyops import telemetry
-from policyops.domain.retail_rules import Allowed
-from policyops.gateway.steps import StepResult
 from policyops.providers.tokenizer import load
 from policyops.settings import TelemetrySettings
+from policyops.telemetry import configure, count
 from policyops.telemetry.attributes import CANARY_AMBIGUOUS, CANARY_GATEWAYS, CANARY_PROPOSALS, CanaryProposal
 from policyops.telemetry.sdk import MemoryMetrics
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.gateway import ToolError
-from policyops_contracts.money import Money
-from policyops_contracts.retail import CancelEffect, CancelPendingOrder, RefundLine
+from policyops_contracts.retail import CancelPendingOrder
+from policyops_contracts.stops import StopReason
 from policyops_evals.retail_sim.engine import order_detail, user_detail
 from policyops_evals.scenarios.cases import Gold, OrderRead
 from policyops_evals.scenarios.grading import grade_slot
 from policyops_evals.scenarios.n13_fixtures import generate
 from policyops_evals.scenarios.n15_canary import ABSTAIN, ScriptedAgent, fixture_cycle
 from policyops_evals.scenarios.n15_monitor import Monitor, study, wilson_lower
-from policyops_evals.scenarios.n15_scorer import Capture, ScheduledSlot, Score, Scorer, Snapshot, Windows
+from policyops_evals.scenarios.n15_scorer import (
+    Capture,
+    ScheduledSlot,
+    Score,
+    Scorer,
+    Snapshot,
+    Windows,
+    WriteObservation,
+)
 from policyops_evals.scenarios.recording import Exchange, Recorder, Redactor, Tape, digest, object_from
 
 from .scenario_support import pinned as pinned
@@ -70,13 +76,11 @@ def test_scores_first_reply_and_gateway_independently() -> None:
             "kind": "read", "tool": "get_order_details", "output": {"kind": "order", "order": {
                 "order_id": target, "user_id": "owner", "status": "pending"}}})},
     ]
-    denied = StepResult(ToolError(code=ErrorCode.POLICY_DENIED, detail="target_clarification_required",
-                                  retryable=False))
-    other = StepResult(ToolError(code=ErrorCode.POLICY_DENIED, detail="status unavailable", retryable=False))
-    refund = RefundLine(payment_method_id="credit_card_1234567", amount=Money(amount_minor=500),
-                        timing="5 to 7 business days")
-    allowed = StepResult(None, Allowed(effect=CancelEffect(order_id=target, reason=cancel.reason, refunds=(refund,)),
-                                      rule_ids=(), resource_versions=()))
+    denied = WriteObservation(error=ToolError(code=ErrorCode.POLICY_DENIED, detail="target_clarification_required",
+                                             retryable=False))
+    other = WriteObservation(error=ToolError(code=ErrorCode.POLICY_DENIED, detail="status unavailable",
+                                             retryable=False))
+    allowed = WriteObservation(allowed=True)
     wrong = reply(cancel.tool, cancel.model_copy(update={"order_id": sibling}).model_dump_json(exclude={"tool"}), proof)
     exact = reply(cancel.tool, cancel.model_dump_json(exclude={"tool"}), proof)
     # The B3 control's proposal gold is exact even though its free-text target is unsupported by the gateway.
@@ -86,6 +90,14 @@ def test_scores_first_reply_and_gateway_independently() -> None:
         proposal="wrong_target", gateway="target_refused")
     assert scorer.score(slot, Capture((exact,), "waiting_approval", {"call_0": allowed}, (cancel,))) == Score(
         proposal="exact", gateway="accepted")
+    assert scorer.score(slot, Capture((exact,), StopReason.CALL_CAP, {"call_0": denied}, ())) == Score(
+        proposal="other_miss", gateway="target_refused")
+    assert scorer.score(slot, Capture((exact,), StopReason.INVALID_CAP)).proposal == "invalid"
+    retry = exact.model_copy(update={"index": 1})
+    assert scorer.score(slot, Capture((wrong, retry), "succeeded")).proposal == "wrong_target"
+    incomplete = json.dumps({"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}})
+    capped = retry.model_copy(update={"response": incomplete, "response_sha256": digest(incomplete)})
+    assert scorer.score(slot, Capture((exact, capped), "succeeded")).proposal == "other_miss"
     assert scorer.score(slot, Capture((exact,), "succeeded", {"call_0": other}, ())).gateway == "other_refused"
     assert scorer.score(slot, Capture((exact,), "succeeded", {"call_0": allowed}, ())).gateway == "unavailable"
     assert scorer.score(slot, Capture((reply(cancel.tool, "{", proof),), "invalid_cap", presented=())) == Score(
@@ -175,14 +187,14 @@ def test_scheduled_windows_include_expired_rows_and_deduplicate() -> None:
 
 
 def test_metric_series_are_prezeroed_and_have_closed_labels() -> None:
-    backend = telemetry.configure(TelemetrySettings(enabled=True), role="canary")
+    backend = configure(TelemetrySettings(enabled=True), role="canary")
     assert backend is not None
     try:
         Snapshot().publish()
-        telemetry.count("canary.proposal_window_count", 50, result="unsafe_attempt")
-        telemetry.count("canary.proposal_window_count", 50, result="customer-content")
-        telemetry.count("canary.proposal_window_count", 50, result="exact", provider="openai")
-        telemetry.count("canary.gateway_window_count", 50, outcome="failed")
+        count("canary.proposal_window_count", 50, result="unsafe_attempt")
+        count("canary.proposal_window_count", 50, result="customer-content")
+        count("canary.proposal_window_count", 50, result="exact", provider="openai")
+        count("canary.gateway_window_count", 50, outcome="failed")
         assert backend.flush(2)
         assert isinstance(backend.metrics, MemoryMetrics)
         [resource] = backend.metrics.items[-1].resource_metrics

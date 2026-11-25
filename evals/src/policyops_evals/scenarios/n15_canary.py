@@ -4,7 +4,6 @@ from argparse import ArgumentParser
 from collections.abc import Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import replace
 import json
 import logging.config
 import os
@@ -18,17 +17,12 @@ from uuid import uuid4
 import httpx
 import httpx2
 
-from policyops import telemetry
-from policyops.api.serve import SERVE_LOG_CONFIG
-from policyops.gateway.steps import StepResult
-from policyops.persistence import repositories as repo
-from policyops.persistence.database import workspace_transaction
+from policyops.api.logging import LOG_CONFIG
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
 from policyops.providers.tokenizer import Tokenizer, load
-from policyops.runtime.investigation import InvestigationExecutor
-from policyops.runtime.spec import RuntimeSpec
 from policyops.settings import TelemetrySettings
-from policyops_contracts.conversation import AgentToolCall
+from policyops.telemetry import configure
+from policyops_contracts.gateway import ToolError
 from policyops_contracts.policy import RETAIL_POLICY
 from policyops_contracts.retail import WriteToolCall
 from policyops_contracts.retail_service import OrderDetail, OrderOutput, UserOutput
@@ -37,7 +31,7 @@ from policyops_evals.scenarios.generator import REPO, verified_fixture
 from policyops_evals.scenarios.grading import _tool_outputs
 from policyops_evals.scenarios.n13_fixtures import Class, Status, Trial, _unambiguous_live_item, generate
 from policyops_evals.scenarios.n15_monitor import CADENCE, FRESH_SECONDS, SLOT_DEADLINE
-from policyops_evals.scenarios.n15_scorer import Capture, ScheduledSlot, Scorer, Windows
+from policyops_evals.scenarios.n15_scorer import Capture, ScheduledSlot, Scorer, Windows, WriteObservation
 from policyops_evals.scenarios.recording import Tape, object_from, phase_of
 from policyops_evals.scenarios.runtime import POLICY_CORPUS, CaseInput, Profile, Slot, load_policy, retail_store
 from policyops_evals.scenarios.study import private_root
@@ -166,30 +160,21 @@ class ScriptedAgent:
 
 def run_slot(profile: Profile, slot: Slot, visible: CaseInput, fault: Fault | None) -> Capture:
     tape = Tape()
-    writes: dict[str, StepResult] = {}
+    writes: dict[str, WriteObservation] = {}
 
-    def observe(call: AgentToolCall, result: StepResult) -> None:
-        writes.setdefault(call.call_id, result)
-
-    def bind(spec: RuntimeSpec) -> RuntimeSpec:
-        if not isinstance(spec.executor, InvestigationExecutor):
-            raise TypeError("expected the real investigation executor")
-        return replace(spec, executor=replace(spec.executor, observe_write=observe))
+    def observe(call_id: str, allowed: bool, error: ToolError | None) -> None:
+        writes.setdefault(call_id, WriteObservation(allowed, error))
 
     stop = None
     try:
         stop = profile.run_local_capture(visible, slot, tape,
-                                         ScriptedAgent(profile.tokenizer, slot.id.hex, fault), bind_spec=bind)
+                                         ScriptedAgent(profile.tokenizer, slot.id.hex, fault), observe_write=observe)
     except Exception as error:
         # Never print exception messages from the provider, simulator or database.
         print(json.dumps({"canary_worker_error": type(error).__name__}), flush=True)
     presented: tuple[WriteToolCall, ...] | None = None
     try:
-        with workspace_transaction(profile.app, slot.workspace) as connection:
-            rows = repo.presented_rows_of_run(connection, slot.run)
-            found = [repo.get_proposal(connection, row.proposal_id, row.proposal_version) for row in rows]
-            if all(proposal is not None for proposal in found):
-                presented = tuple(proposal.action for proposal in found if proposal is not None)
+        presented = profile.presented_actions(slot)
     except Exception as error:
         print(json.dumps({"canary_db_error": type(error).__name__}), flush=True)
     return Capture(tuple(tape.records), stop, writes, presented)
@@ -306,9 +291,9 @@ def main() -> int:
         if temp.is_relative_to(REPO) or not 1 <= args.grafana_port <= 65535 or not 1 <= args.otlp_port <= 65535:
             raise ValueError("canary needs an external temp root and valid loopback ports")
         otlp = f"http://127.0.0.1:{args.otlp_port}"
-        logging.config.dictConfig(SERVE_LOG_CONFIG)
-        backend = telemetry.configure(TelemetrySettings(enabled=True, exporter="otlp", traces_url=otlp + "/v1/traces",
-                                                         metrics_url=otlp + "/v1/metrics"), role="canary")
+        logging.config.dictConfig(LOG_CONFIG)
+        backend = configure(TelemetrySettings(enabled=True, exporter="otlp", traces_url=otlp + "/v1/traces",
+                                              metrics_url=otlp + "/v1/metrics"), role="canary")
         if backend is None:
             raise RuntimeError("canary telemetry was not configured")
         try:

@@ -13,6 +13,7 @@ from sqlalchemy.exc import DBAPIError
 from policyops.domain.examples import World
 from policyops.gateway.facts import Collected, collect
 from policyops.gateway.ports import IncompleteHistory
+from policyops.gateway.stores import PgDecisionStore
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import IdempotencyConflict, workspace_transaction
 from policyops.persistence.roles import APP_RUNTIME
@@ -30,10 +31,10 @@ pytestmark = pytest.mark.postgres
 CALL = CancelPendingOrder(order_id=World().order_id, reason="no longer needed")
 
 
-def facts(owner: Claimed) -> Collected:
+def facts(owner: Claimed, *, guarded: bool = True) -> Collected:
     retail = FakeRetail(state(), tenant_id=owner.scope.run.workspace_id, case_id=owner.scope.run.case_id,
                         customer_id=World().user_id)
-    result = collect(retail, owner.scope, CALL, IncompleteHistory())
+    result = collect(retail, owner.scope, CALL, IncompleteHistory(), stated_ids=frozenset() if guarded else None)
     assert isinstance(result, Collected)
     return result
 
@@ -53,6 +54,30 @@ def counts(owner: Claimed) -> tuple[int, ...]:
                                   (owner.scope.run.workspace_id,)).fetchone()[0] for table in (
                                       "app.action_proposals", "app.proposal_presentations", "app.case_messages",
                                       "app.audit_events", "app.run_events", "app.outbox_events"))
+
+
+def test_create_once_refuses_missing_selection_facts(shared_db: AppDatabase) -> None:
+    owner = claimed(shared_db)
+    before = counts(owner)
+    result = service(owner).create_once(owner.scope, CALL, facts(owner, guarded=False), token=owner.token,
+                                       step=1, rationale="Customer asked.")
+    assert isinstance(result, ProposalRefused) and result.detail == "target_selection_facts_incomplete"
+    assert counts(owner) == before
+
+
+def test_precheck_target_evidence_ends_before_presentation(shared_db: AppDatabase) -> None:
+    owner = claimed(shared_db)
+    app = shared_db.engine(APP_RUNTIME)
+    scope = owner.scope
+    with workspace_transaction(app, scope.run.workspace_id) as connection:
+        repo.append_message(connection, message_id=uuid4(), scope=scope.binding.scope, source="agent",
+                            entered_by=None, text_value=CALL.order_id, created_at=owner.clock.now())
+    result = prepare(owner)
+    assert isinstance(result, Prepared)
+    with workspace_transaction(app, scope.run.workspace_id) as connection:
+        repo.append_message(connection, message_id=uuid4(), scope=scope.binding.scope, source="simulated_customer",
+                            entered_by=None, text_value=CALL.order_id, created_at=owner.clock.now())
+    assert PgDecisionStore(app).proposal_target_ids(result.proposal) == frozenset()
 
 
 def test_equal_replay_after_lost_ack_returns_original_and_conflict_writes_nothing(shared_db: AppDatabase) -> None:

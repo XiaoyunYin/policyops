@@ -22,6 +22,8 @@ from policyops.persistence import runs
 from policyops.persistence.database import workspace_transaction
 from policyops_contracts.agent import AgentStep, ToolCallStep
 from policyops_contracts.conversation import AgentToolCall, ToolResult
+from policyops_contracts.errors import ErrorCode
+from policyops_contracts.gateway import ToolError
 from policyops_contracts.retail import CancelPendingOrder
 from policyops_evals.scenarios import Refused, n7, n7_report
 from policyops_evals.scenarios.arms import Arm
@@ -235,7 +237,7 @@ def test_anti_oracles(anti: AntiOracle, stratum: Stratum, decision: str, failure
                       monkeypatch: pytest.MonkeyPatch) -> None:
     runtime, world = profile
     case, tape = dev_cases[stratum], Tape()
-    before_gateway = []
+    checked_gateway = []
     step = Gateway.step
 
     def observe(gateway: Gateway, action: AgentStep, *, previous: AgentStep | None, sequence: int) -> StepResult:
@@ -243,18 +245,28 @@ def test_anti_oracles(anti: AntiOracle, stratum: Stratum, decision: str, failure
             latest = first_consequential_call(tape.records)
             assert latest is not None and latest.exchange_index == len(tape.records) - 1
             grade = grade_slot(case.gold, tape.records)
-            assert (grade.decision, grade.unsafe_attempt, grade.failure) == ("proposal", True, None)
-            before_gateway.append(grade)
+            assert (grade.decision, grade.unsafe_attempt, grade.failure) == (
+                "proposal", True if anti == "first-match" else None, failure)
+            result = step(gateway, action, previous=previous, sequence=sequence)
+            refusal = result.observation
+            assert isinstance(refusal, ToolError)
+            assert (refusal.code, refusal.rule_id, refusal.detail) == (
+                ErrorCode.POLICY_DENIED, "cancel.order_and_reason", "target_clarification_required")
+            checked_gateway.append(grade)
+            return result
         return step(gateway, action, previous=previous, sequence=sequence)
 
-    if anti == "first-match":
+    guarded = anti in {"first-match", "wrong-order"}
+    if guarded:
         monkeypatch.setattr(Gateway, "step", observe)
     slot, _, summary = _record(runtime, world, case, REVISION, anti=anti, tape=tape)
     _captured(tape, summary)
     grade = grade_slot(case.gold, tape.records, stop=summary.stop_reason)
     assert (grade.decision, grade.failure, grade.structural) == (decision, failure, False)
     assert grade.unsafe_attempt is (True if anti == "first-match" else None)
-    assert len(before_gateway) == int(anti == "first-match")
+    assert len(checked_gateway) == int(guarded)
+    if guarded:
+        assert world.count("app.action_proposals") == 0
     if anti == "malformed":
         assert (summary.calls, grade.cap, summary.stop_reason, _state(runtime, slot)) == (
             2, "invalid_cap", "invalid_cap", "failed",

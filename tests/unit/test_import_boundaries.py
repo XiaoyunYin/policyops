@@ -129,6 +129,22 @@ SCENARIO_IMPORTS = {
         "policyops.runtime.clock", "policyops.runtime.investigation", "policyops.runtime.spec",
         "policyops.runtime.worker", "policyops.services.runs",
     },
+    # N13 drives the real proposal, review and execution services from the local acceptance harness.
+    "src/policyops_evals/scenarios/n13_acceptance.py": {
+        "policyops", "policyops.adapters.retail_client", "policyops.auth.service", "policyops.domain.roles",
+        "policyops.orchestration.profile", "policyops.persistence", "policyops.persistence.database",
+        "policyops.persistence.records", "policyops.providers.tokenizer", "policyops.runtime.clock",
+        "policyops.runtime.review", "policyops.runtime.spec", "policyops.runtime.worker", "policyops.services.cases",
+        "policyops.services.decisions", "policyops.services.proposal_views", "policyops.settings",
+        "policyops.telemetry.sdk",
+    },
+    "tests/test_scenario_n13.py": {"policyops.providers.results", "policyops.providers.serialize",
+                                  "policyops.providers.tokenizer", "policyops.providers.tools"},
+    "tests/test_scenario_n13_pg.py": {
+        "policyops.adapters.retail_client", "policyops.domain.retail_rules", "policyops.domain.session",
+        "policyops.gateway.facts", "policyops.gateway.ports", "policyops.gateway.steps",
+        "policyops.persistence.database", "policyops.runtime.clock",
+    },
     "src/policyops_evals/scenarios/setup.py": {
         "policyops.persistence.database", "policyops.persistence.migrate", "policyops.persistence.records",
         "policyops.persistence.repositories", "policyops.persistence.roles", "policyops.providers.calls",

@@ -259,7 +259,11 @@ the baseline and `tool-contract-v1r1` through the real workbench and retail
 simulator. Scripted replies use the visible opener and delivered tool results.
 The gate checks exact first proposals after the required reads, the three
 negative decisions, the handoff, and run state. Separate negative controls
-check pre-gateway grading, including a write on an ambiguous order.
+check pre-gateway grading, including a write on an ambiguous order and a write
+to the wrong order. Both controls also assert a target-clarification refusal
+and zero persisted proposals. The v1 lock still uses the original development
+gold cases. Its description-only positive has a single pending order and still
+reaches presentation under the target guard.
 
 The [scenario lock](../evals/studies/scenario-lock-v1.json) binds the profile
 identities, registered evidence digests and aggregate counts. The PostgreSQL
@@ -415,6 +419,51 @@ returned a rejection. The revision flag requires the original frozen report
 whose digest is pinned in the runner. An independently reproduced report
 will have a different receipt. Held-out execution checks the admitted
 profile and consumes the registration's single unseal.
+
+### Guarded order targeting and model-to-receipt acceptance
+
+The scripted target panel generates fresh cases from the digest-pinned public
+retail fixture. It uses the registered allocation to exclude development and
+held-out customers without rendering historical held-out requests. The fresh
+pool contains 116 customers. The panel covers cancellation and return, with a
+fresh signed simulator case for each attempt.
+
+| Case | Registered attempts | Measurement |
+| --- | ---: | --- |
+| A, no ID and multiple eligible orders | 7 | Clean refusals with zero proposals and effects. Each eligible order is attempted. |
+| A′, customer states a different eligible order | 2 | Wrong-target effects are counted over A and A′ together. |
+| B1 and B2, correct stated ID or sole eligible order | 4 | False blocks and verified receipts. |
+| B3, a description distinguishes one of several eligible orders | 2 | Design blocks, reported separately. |
+| C1, target becomes ineligible after approval | 2 | Reservation refusal and zero additional effects. |
+| C2, sibling becomes eligible after reservation | 2 | Dispatch refusal and zero effects after a test-only simulator state injection. |
+| C3, unrelated sibling changes after reservation | 2 | The approved operation should still commit and produce a verified receipt. |
+
+In the public fixture census, 56 of 149 customers in the original
+description-resolvable cancellation pool (37.6%) have multiple pending orders.
+Those requests require clarification under the structural rule. This census
+estimates the rule's cost on that pool. The A–C panel reports execution results
+separately. Customer messages establish which IDs were stated, and consent and
+separate reviewer approval still bind the action. A concurrent sibling change
+between precheck and send can escape the check. [Gateway architecture](architecture.md#execution-precheck)
+
+From `evals/`, run the panel and scripted acceptance using the PostgreSQL
+test setup and pinned retail assets. The panel prints aggregate census and
+per-tool counts, alongside each attempt's outcome.
+
+```text
+python -B ../scripts/devenv.py uv run --frozen pytest -m postgres -s tests/test_scenario_n13_pg.py
+```
+
+The separate live acceptance command uses `tool-contract-v1r1`, Luna low and
+cache off. It registers a sole-eligible cancellation first, then two stated-ID
+cases. With eight calls, 10,000 input tokens and 1,024 output tokens per call,
+and 120 active seconds per slot, the three-slot upper bound is $0.036288 under
+the $0.05 aggregate cap. The driver stops at the first verified receipt. It
+uses scripted operator-entered assent and a separate reviewer, then checks the
+run outcome, matching application and simulator receipts, and the committed
+effect count. The sanitized report contains allowlisted trace attributes, run
+events, usage and the receipt digest. Provider capture stays private. The live
+result is pending.
 
 ## Prompt-caching study
 

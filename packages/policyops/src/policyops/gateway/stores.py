@@ -29,12 +29,13 @@ creation and preserved by the immutable sealed proposal.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+import re
 from typing import Literal
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, text
 
 from policyops.persistence import repositories as repo
 from policyops.persistence.database import ImmutableRecord, workspace_transaction
@@ -44,6 +45,36 @@ from policyops_contracts.scalars import RunScope
 
 
 EvidenceStatus = Literal["current", "stale_evidence", "evidence_inconsistent"]
+CUSTOMER_SOURCES = frozenset({"seeded", "simulated_customer", "operator_entered_customer"})
+ORDER_TOKEN = re.compile(r"(?<![\w#])#?(W\d{7})(?!\w)")
+
+
+def stated_order_ids(messages: Iterable[tuple[str, int, str]], *,
+                     before_sequence: int | None = None) -> frozenset[str]:
+    return frozenset(
+        f"#{match[1]}"
+        for source, sequence, body in messages
+        if source in CUSTOMER_SOURCES and (before_sequence is None or sequence < before_sequence)
+        for match in ORDER_TOKEN.finditer(body)
+    )
+
+
+def case_target_ids(connection: Connection, run: RunScope, *, before_sequence: int | None = None) -> frozenset[str]:
+    rows = connection.execute(text(
+        "SELECT source, sequence, text FROM app.case_messages WHERE workspace_id = :workspace AND case_id = :case "
+        "AND source = ANY(:sources) AND (CAST(:before AS bigint) IS NULL OR sequence < :before)"
+    ), {"workspace": run.workspace_id, "case": run.case_id, "sources": sorted(CUSTOMER_SOURCES),
+        "before": before_sequence})
+    return stated_order_ids(rows.tuples(), before_sequence=before_sequence)
+
+
+class PgTargetEvidence:
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def stated_ids(self, run: RunScope) -> frozenset[str]:
+        with workspace_transaction(self._engine, run.workspace_id) as connection:
+            return case_target_ids(connection, run)
 
 
 def evidence_status(connection: Connection, references: Sequence[EvidenceRef], *,
@@ -115,6 +146,21 @@ class PgDecisionStore:
     def consent(self, run: RunScope, consent_id: UUID) -> CustomerConsent | None:
         with workspace_transaction(self._engine, run.workspace_id) as connection:
             return repo.consent_by_id(connection, run, consent_id)
+
+    def proposal_target_ids(self, proposal: ActionProposal) -> frozenset[str] | Literal["unguarded", "unavailable"]:
+        run = proposal.scope
+        with workspace_transaction(self._engine, run.workspace_id) as connection:
+            row = repo.proposal_row(connection, proposal.proposal_id, proposal.proposal_version)
+            if row is None or row.status != "presented" or (row.case_id, row.run_id, row.action_digest) != (
+                    run.case_id, run.run_id, proposal.action_digest):
+                return "unavailable"
+            if row.creation_step is None:
+                return "unguarded"
+            presentation = repo.get_presentation(connection, proposal.proposal_id, proposal.proposal_version)
+            if presentation is None or (presentation.scope, presentation.action_digest) != (
+                    run, proposal.action_digest):
+                return "unavailable"
+            return case_target_ids(connection, run, before_sequence=presentation.message_sequence)
 
     def approval(self, run: RunScope, approval_id: UUID) -> ApprovalDecision | None:
         with workspace_transaction(self._engine, run.workspace_id) as connection:

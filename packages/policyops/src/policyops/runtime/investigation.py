@@ -16,6 +16,7 @@ from policyops.budget.config import Configuration
 from policyops.budget.ledger import Ledger, RunBinding
 from policyops.gateway.ports import GatewayScope, PgSessionStore, RetailPort, ScopeMismatch, load_scope
 from policyops.gateway.steps import Gateway
+from policyops.gateway.stores import PgTargetEvidence
 from policyops.orchestration import investigation_prompt as prompt
 from policyops.orchestration.adapters import InvestigationAdapters
 from policyops.orchestration.context import fit
@@ -254,7 +255,7 @@ class InvestigationExecutor:
                               lexical_mode=self.profile.lexical_mode)
         adapters = InvestigationAdapters(retriever, self.retrieval_scope, self.retrieval_config,
                                          Gateway(scope, retail=self.retail(scope), sessions=PgSessionStore(self.engine),
-                                                 clock=self.wall_clock),
+                                                 clock=self.wall_clock, target_evidence=PgTargetEvidence(self.engine)),
                                          ProposalService(self.engine, self.clock), context.claim_token,
                                          EvidenceValidator(self.engine, context.workspace_id),
                                          CitationRecorder(self.engine, context.workspace_id),

@@ -38,7 +38,7 @@ from pydantic import BaseModel
 
 from policyops.domain.approval_rules import ready_to_execute
 from policyops.domain.consent_rules import consent_is_current
-from policyops.domain.retail_rules import Allowed, Denied, Escalated, evaluate_write
+from policyops.domain.retail_rules import ORDER_TARGETS, Allowed, Denied, Escalated, evaluate_write
 from policyops.domain.roles import Action, Role, is_allowed
 from policyops.domain.session import CustomerSession
 from policyops.gateway.facts import FactsRefused, collect
@@ -58,6 +58,7 @@ from policyops_contracts.consent import ApprovalDecision, CustomerConsent
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.policy import RETAIL_POLICY
 from policyops_contracts.proposal import ActionProposal
+from policyops_contracts.retail import ToolName
 from policyops_contracts.retail_service import MutationRequest
 
 
@@ -146,7 +147,15 @@ def precheck(scope: GatewayScope, refs: AuthorityRefs, *, retail: RetailPort, se
                                rule_id="scope.single_customer")
     if proposal.evidence and evidence is None:  # nothing could confirm the evidence: refuse before any read
         return PrecheckRefused(ErrorCode.STALE_VERSION, "evidence_not_current")
-    collected = collect(retail, scope, proposal.action, history if history is not None else IncompleteHistory())
+    stated_ids = None
+    if ToolName(proposal.action.tool) in ORDER_TARGETS:
+        target_ids = decisions.proposal_target_ids(proposal)
+        if isinstance(target_ids, frozenset):
+            stated_ids = target_ids
+        elif target_ids != "unguarded":
+            return PrecheckRefused(ErrorCode.UNAVAILABLE, "target_selection_facts_incomplete")
+    collected = collect(retail, scope, proposal.action, history if history is not None else IncompleteHistory(),
+                        stated_ids=stated_ids)
     if isinstance(collected, FactsRefused):
         return PrecheckRefused(collected.code, collected.detail, rule_id=collected.rule_id,
                                retryable=collected.retryable)

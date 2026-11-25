@@ -1152,6 +1152,20 @@ Dispatch is a closed match on the validated call. A step object that skipped val
    persisted and `actionable: false`. It carries no proposal ID, digest, consent or approval authority. The durable,
    actionable pending proposal is created by the proposal service.
 
+**Order targets in investigations.** Each order-targeted write checks the proposed order against exact `#W` or `W`
+tokens followed by seven digits in persisted case messages. The sources are the seeded scenario opener, simulated
+customer turns and operator-entered customer turns. Agent messages, staff notes, help-desk ticket text and tool results
+convey no target authority. A stated ID proves the customer mentioned an order. Consent and separate reviewer approval
+still establish authority for the specific effect. Help-desk provenance could be evaluated separately in the future.
+
+If the customer stated any IDs, the proposed order must be one of them. If they stated none, the proposed order
+must be the sole order in the tool's actionable status on the bound customer's profile. The gateway reads the complete
+profile closure at one coherent retail case version, with at most 16 sibling reads across recollections. Missing or
+inconsistent facts fail closed. Sibling reads establish eligibility and contribute no expected mutation versions.
+Description-only requests with several actionable orders require clarification even when a description distinguishes one.
+The shared rule refuses with `policy_denied` and detail `target_clarification_required`. Proposal creation checks the
+customer statements again under the case lock and refuses agent order facts without target selection data.
+
 **Once-per-order tools.** The default operation history (`IncompleteHistory`) is incomplete, so every once-per-order
 tool escalates (`orders.modify_exchange_once`). The execution executor passes `LedgerHistory` (below).
 
@@ -1171,6 +1185,9 @@ authority.
 - the run's durable lookup authentication.
 
 **Then it reads the current facts** and re-evaluates them:
+- for an investigation order write, customer statements are bounded to sequences earlier than that proposal's
+  persisted presentation. The executor repeats the target check against fresh retail facts at reservation, first
+  dispatch and any resend. A refusal requires a fresh proposal, consent and approval;
 - a denial or escalation is returned as itself, so approval never overrides an invalid policy;
 - a different effect, resource-version set or rule set is `stale_version`.
 
@@ -1182,9 +1199,9 @@ authority.
 **What it returns.** It returns the exact `MutationRequest` and `authorization_not_after`, the earliest of the
 approval, consent and proposal expiries. It assigns no operation ID and dispatches nothing.
 
-**Not a guarantee against a later write.** The precheck does not protect against a concurrent write after it
-returns. The service's expected-version check under its case lock and the client's expiry cap stay authoritative at
-commit.
+The service checks the expected resource versions under its case lock and the client caps expiry at commit. A sibling
+can become eligible between precheck and send without changing an expected resource version. This residual race is the
+trade-off for keeping the existing mutation contract and fingerprints, which support reconciliation by operation ID.
 
 ### Rule coverage
 

@@ -131,6 +131,10 @@ strings are presumed fictional benchmark content, but this cannot be proven. URL
 followed or audited. Dependency license inventories and their redistribution limits are described in
 [third-party notices](../THIRD_PARTY_NOTICES.md).
 
+The historical help desk import test derives its CSV, server-side bindings and reconciliation oracle at test
+time from the hash-verified retail database. It keeps these generated files under the external test root.
+Application unit tests use a small authored fixture. [Historical import](integration.md#historical-ticket-import)
+
 ## Retail split (64 dev / 50 held out)
 
 The held-out set is every task ID in upstream `task_subsets/retail_50.json`. Its byte SHA-256,

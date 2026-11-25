@@ -51,7 +51,7 @@ NOW = datetime(2026, 11, 12, tzinfo=UTC)
 CODE = CodeIdentity(git_head="1" * 40, git_tree="2" * 40, dirty_patch_sha256=None)
 
 
-def test_current_matrix_config_only_extends_frozen_helpdesk_grants() -> None:
+def test_0018_matrix_config_only_extends_frozen_helpdesk_grants() -> None:
     v1_path = DEFAULT_CONFIG.with_name("t30-v1.json")
     v1_bytes = v1_path.read_bytes()
     expected = json.loads(v1_bytes)
@@ -81,15 +81,34 @@ def test_current_matrix_config_only_extends_frozen_helpdesk_grants() -> None:
             "table": [], "update_columns": [],
             "select_columns": ["id", "lease_expires_at", "next_attempt_at", "state", "workspace_id"],
         }
-    privileges_source = REPO / "tests/integration/test_app_privileges.py"
     expected.update(
-        grants_source_sha256=hashlib.sha256(privileges_source.read_bytes()).hexdigest(),
+        grants_source_sha256="de58c53079478a469f9296f382ebd50db80fc3339829ce4df05d6a80083b0565",
         schema_version="policyops.safety-config/v2",
         study_id="t30-slice-a-v2",
     )
-    assert DEFAULT_CONFIG.name == "t30-v2.json"
+    assert DEFAULT_CONFIG.with_name("t30-v2.json").read_bytes() == canonical(expected) + b"\n"
+
+
+def test_current_matrix_config_only_extends_0018_grants() -> None:
+    expected = json.loads(DEFAULT_CONFIG.with_name("t30-v2.json").read_bytes())
+    runtime = expected["role_grants"]["policyops_app_runtime"]
+    for table, columns in (
+        ("app.helpdesk_imports",
+         ["accepted", "duplicate", "next_record", "quarantined", "rejected", "skipped_stale", "state",
+          "updated", "version"]),
+        ("app.helpdesk_import_records", []),
+    ):
+        assert table not in runtime
+        runtime[table] = {"table": ["INSERT", "SELECT"], "update_columns": columns, "select_columns": []}
+    privileges_source = REPO / "tests/integration/test_app_privileges.py"
+    expected.update(
+        grants_source_sha256=hashlib.sha256(privileges_source.read_bytes()).hexdigest(),
+        schema_version="policyops.safety-config/v3",
+        study_id="t30-slice-a-v3",
+    )
+    assert DEFAULT_CONFIG.name == "t30-v3.json"
     assert DEFAULT_CONFIG.read_bytes() == canonical(expected) + b"\n"
-    assert load_config().study_id == "t30-slice-a-v2"
+    assert load_config().study_id == "t30-slice-a-v3"
 
 
 def golden() -> Trial:

@@ -306,7 +306,7 @@ def test_rls_cross_tenant_fks_discovery_and_downgrade(new_app_database: NewDatab
 
     with pytest.raises(DataLossRefused, match="imported help desk messages"):
         db.downgrade("0017", allow_data_loss=True)
-    assert db.current() == "0018"
+    assert db.current() == "0019"
 
 
 def test_signed_ticket_to_receipt_note_and_outcome_rollback(env: retail_tests.Env,

@@ -88,6 +88,9 @@ EXPECTED: dict[str, dict[str, tuple[set[str], set[str]]]] = {
         "app.helpdesk_writebacks": (SI, {"state", "reason", "attempts", "reconciles", "dispatch_started_at",
                                          "next_attempt_at", "lease_owner", "lease_expires_at", "version",
                                          "article_id", "article_created_at", "duplicate_article_ids"}),
+        "app.helpdesk_imports": (SI, {"next_record", "accepted", "updated", "duplicate", "skipped_stale",
+                                       "quarantined", "rejected", "state", "version"}),
+        "app.helpdesk_import_records": (SI, set()),
     },
     AUTH_RUNTIME: {
         "identity.workspaces": (SI, set()),

@@ -196,6 +196,15 @@ def case_link(connection: Connection, case_id: UUID) -> Link | None:
     return None if row is None else Link(**row)
 
 
+def projected_article_digests(connection: Connection, scope: CaseScope, *, limit: int) -> dict[UUID, str]:
+    rows = connection.execute(text("""
+        SELECT id, text_sha256 FROM app.case_messages
+        WHERE workspace_id = :workspace AND case_id = :case AND source = 'helpdesk_ticket'
+        LIMIT :limit
+    """), {"workspace": scope.workspace_id, "case": scope.case_id, "limit": limit})
+    return {row.id: row.text_sha256 for row in rows}
+
+
 def enqueue_writeback(connection: Connection, link: Link, message_id: UUID, now: datetime) -> None:
     operation = uuid5(link.id, str(message_id))
     sha = digest(note_body(operation, NOTE_VERSION).encode())

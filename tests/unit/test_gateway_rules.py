@@ -20,15 +20,25 @@ from policyops_contracts.gateway import (
 from policyops_contracts.policy import RETAIL_RULES, RULES_BY_ID
 from policyops_contracts.presentation import render_effect
 from policyops_contracts.retail import ToolName
-from policyops_testing.gateway_cases import CASES, CONTRACT, COVERAGE, LINKED_TESTS, RuleCase, coverage_bytes, execute
+from policyops_testing.gateway_cases import (
+    CASES,
+    CONTRACT,
+    COVERAGE,
+    LINKED_TESTS,
+    TARGET_CASES,
+    RuleCase,
+    coverage_bytes,
+    execute,
+)
 
 
 REPO = Path(__file__).resolve().parents[2]
+RULE_CASES = (*CASES, *TARGET_CASES)
 KINDS: dict[str, type[Any]] = {"preview": ProposalPreview, "read": ReadObservation, "lookup": LookupObservation,
          "handoff": HandoffObservation, "error": ToolError}
 
 
-@pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
+@pytest.mark.parametrize("case", RULE_CASES, ids=[case.case_id for case in RULE_CASES])
 def test_rule_case(case: RuleCase) -> None:
     execution = execute(case)
     result = execution.last
@@ -39,6 +49,8 @@ def test_rule_case(case: RuleCase) -> None:
         assert isinstance(observation, KINDS[case.expect.kind]), observation
     if isinstance(observation, ToolError):
         assert (observation.code, observation.rule_id) == (case.expect.code, case.expect.rule_id)
+        if case.expect.detail is not None:
+            assert observation.detail == case.expect.detail
         assert result.decision is None or not isinstance(result.decision, Allowed)
         expected_category = "escalate" if observation.code == "policy_unsupported" else "deny"
         assert case.outcome == expected_category
@@ -61,14 +73,14 @@ def test_rule_case(case: RuleCase) -> None:
 
 def _by_rule() -> dict[str, list[RuleCase]]:
     grouped: dict[str, list[RuleCase]] = {rule.rule_id: [] for rule in RETAIL_RULES}
-    for case in CASES:
+    for case in RULE_CASES:
         grouped[case.rule_id].append(case)
     return grouped
 
 
 def test_case_ids_are_unique_and_name_real_rules() -> None:
-    assert len({case.case_id for case in CASES}) == len(CASES)
-    assert all(case.rule_id in RULES_BY_ID for case in CASES)
+    assert len({case.case_id for case in RULE_CASES}) == len(RULE_CASES)
+    assert all(case.rule_id in RULES_BY_ID for case in RULE_CASES)
 
 
 def test_every_rule_kind_has_its_required_executed_coverage() -> None:
@@ -83,15 +95,15 @@ def test_every_rule_kind_has_its_required_executed_coverage() -> None:
             assert LINKED_TESTS.get(rule.rule_id), rule.rule_id
         else:
             assert not grouped[rule.rule_id] and rule.rule_id not in LINKED_TESTS, rule.rule_id
-    for case in CASES:
+    for case in RULE_CASES:
         if case.outcome != "allow" and case.expect.rule_id != case.rule_id:
             assert case.via, f"{case.case_id} asserts {case.expect.rule_id} for {case.rule_id} without a reason"
 
 
 def test_once_only_allows_run_only_with_the_labelled_test_history() -> None:
-    once_allows = [case for case in CASES if case.outcome == "allow" and case.history_label != "not_used"]
+    once_allows = [case for case in RULE_CASES if case.outcome == "allow" and case.history_label != "not_used"]
     assert once_allows and all(case.history_label == "test_only_complete" for case in once_allows)
-    assert any(case.history_label == "production_incomplete" and case.outcome == "escalate" for case in CASES)
+    assert any(case.history_label == "production_incomplete" and case.outcome == "escalate" for case in RULE_CASES)
 
 
 def test_linked_tests_exist() -> None:
@@ -105,7 +117,7 @@ def test_linked_tests_exist() -> None:
 def test_coverage_map_is_regenerated_from_the_executed_cases() -> None:
     assert COVERAGE.read_bytes() == coverage_bytes()
     document = json.loads(COVERAGE.read_bytes())
-    assert document["case_count"] == len(CASES)
+    assert document["case_count"] == len(RULE_CASES)
     assert [rule["rule_id"] for rule in document["rules"]] == [rule.rule_id for rule in RETAIL_RULES]
     uncovered = [rule["rule_id"] for rule in document["rules"] if rule["enforcement"] == "not_codified"]
     assert uncovered == ["grounding.no_fabrication", "time.est_database"]

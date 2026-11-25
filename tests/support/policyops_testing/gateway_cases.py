@@ -1,6 +1,6 @@
 """Executable gateway rule cases (T17) and the offline fakes they run against.
 
-`CASES` is the single source of the rule coverage map (`docs/policy-coverage.json`). Every case runs through the
+`CASES` and `TARGET_CASES` supply the rule coverage map (`docs/policy-coverage.json`). Every case runs through the
 real `Gateway` in `test_gateway_rules.py::test_rule_case`:
 - the provider result goes through `parse_result`;
 - the steps go through `Gateway.step`;
@@ -300,6 +300,9 @@ class MemoryDecisions:
         self.asked.append("approval")
         return self.approval_record
 
+    def proposal_target_ids(self, proposal: ActionProposal) -> Literal["unguarded"]:
+        return "unguarded"
+
 
 def authority(proposal: ActionProposal, *, approver: UUID = W.reviewer, entered_by: UUID = W.analyst,
               refs: AuthorityRefs = REFS) -> tuple[CustomerConsent, ApprovalDecision]:
@@ -394,6 +397,15 @@ class Setup:
     gift_balance: int = 5000
     payments: int = 1
     item_c_available: bool = True
+    stated_ids: frozenset[str] | None = None
+
+
+@dataclass(frozen=True)
+class StaticTargetEvidence:
+    ids: frozenset[str]
+
+    def stated_ids(self, run: RunScope) -> frozenset[str]:
+        return self.ids
 
 
 @dataclass(frozen=True)
@@ -401,6 +413,7 @@ class Expect:
     kind: ExpectKind
     code: ErrorCode | None = None
     rule_id: str | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -438,6 +451,20 @@ DELIVERED = Setup(status="delivered")
 PREVIEW, READ = Expect("preview"), Expect("read")
 CONTRACT = "enforced by the closed typed contract: the parser refuses the call before any gateway step"
 
+TARGET_CASES: tuple[RuleCase, ...] = (
+    RuleCase("cancel-stated-target-allowed", "cancel.order_and_reason", "allow", (cancel(),), PREVIEW,
+             Setup(stated_ids=frozenset({W.order_id}))),
+    RuleCase("cancel-sole-pending-target-allowed", "cancel.order_and_reason", "allow", (cancel(),), PREVIEW,
+             Setup(stated_ids=frozenset())),
+    RuleCase("cancel-other-stated-target-denied", "cancel.order_and_reason", "deny", (cancel(),),
+             Expect("error", DENIED, "cancel.order_and_reason", "target_clarification_required"),
+             Setup(stated_ids=frozenset({"#W9999999"}))),
+    RuleCase("return-other-stated-target-denied", "return.order_and_items", "deny", (return_items(),),
+             Expect("error", DENIED, "return.order_and_items", "target_clarification_required"),
+             Setup(status="delivered", stated_ids=frozenset({"#W9999999"}))),
+)
+
+# CASES also supplies the registered historical safety matrix's rule case IDs.
 CASES: tuple[RuleCase, ...] = (
     # authentication and scope
     RuleCase("lookup-by-email-authenticates", "auth.lookup_required", "allow",
@@ -637,7 +664,9 @@ def gateway_for(setup: Setup, *, retail: FakeRetail | None = None, sessions: Mem
                                         payments=setup.payments, item_c_available=setup.item_c_available))
     sessions = sessions or (authenticated_sessions() if setup.authenticated else MemorySessions())
     history = IncompleteHistory() if setup.history is None else TestOnlyCompleteHistory(setup.history)
-    gateway = Gateway(SCOPE, retail=retail, sessions=sessions, clock=clock or FixedClock(W.now), history=history)
+    target_evidence = StaticTargetEvidence(setup.stated_ids) if setup.stated_ids is not None else None
+    gateway = Gateway(SCOPE, retail=retail, sessions=sessions, clock=clock or FixedClock(W.now), history=history,
+                      target_evidence=target_evidence)
     return gateway, retail, sessions
 
 
@@ -659,7 +688,7 @@ def coverage_cases() -> tuple[CoverageCase, ...]:
     return tuple(CoverageCase(case_id=case.case_id, rule_id=case.rule_id, outcome=case.outcome, tool=case.tool,
                               asserted_code=None if case.expect.code is None else str(case.expect.code),
                               asserted_rule_id=case.expect.rule_id, via=case.via, history=case.history_label)
-                 for case in CASES)
+                 for case in (*CASES, *TARGET_CASES))
 
 
 def coverage_bytes() -> bytes:

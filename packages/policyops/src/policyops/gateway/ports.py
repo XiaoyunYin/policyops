@@ -19,7 +19,7 @@ Ports and their implementations:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from sqlalchemy import Engine
@@ -152,6 +152,12 @@ class DecisionStore(Protocol):
     def consent(self, run: RunScope, consent_id: UUID) -> CustomerConsent | None: ...
 
     def approval(self, run: RunScope, approval_id: UUID) -> ApprovalDecision | None: ...
+
+    def proposal_target_ids(self, proposal: ActionProposal) -> frozenset[str] | Literal["unguarded", "unavailable"]: ...
+
+
+class TargetEvidencePort(Protocol):
+    def stated_ids(self, run: RunScope) -> frozenset[str]: ...
 
 
 class EvidencePort(Protocol):

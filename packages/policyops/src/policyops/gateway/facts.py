@@ -21,11 +21,11 @@ check under its case lock stays authoritative at commit.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from policyops.adapters.retail_client import Refused, Unknown
-from policyops.domain.retail_rules import ONCE_PER_ORDER, RetailFacts
+from policyops.domain.retail_rules import MAX_SIBLING_READS, ONCE_PER_ORDER, ORDER_TARGETS, RetailFacts, TargetSelection
 from policyops.gateway.ports import GatewayScope, HistoryPort, RetailPort
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.retail import (
@@ -71,6 +71,8 @@ INVALID = FactsRefused(ErrorCode.UNAVAILABLE, None, "facts_invalid", False)
 INCONSISTENT = FactsRefused(ErrorCode.UNAVAILABLE, None, "facts_inconsistent", True)
 UNAVAILABLE = FactsRefused(ErrorCode.UNAVAILABLE, None, "retail_unavailable", True)
 REFUSED = FactsRefused(ErrorCode.UNAVAILABLE, None, "retail_refused", False)
+SIBLING_LIMIT = FactsRefused(ErrorCode.UNAVAILABLE, None, "target_selection_read_limit", False)
+ORDER_NOT_FOUND = FactsRefused(ErrorCode.NOT_FOUND, "scope.single_customer", "order_not_found", False)
 NOT_FOUND_STATUSES = frozenset({404})
 REJECTED = frozenset({"not_found", "upstream_rejected"})
 
@@ -97,7 +99,18 @@ def _item_prefix(call: WriteToolCall) -> str:
     return "items" if isinstance(call, ModifyPendingOrderItems) else "exchange"
 
 
-def _collect_once(retail: RetailPort, scope: GatewayScope, call: WriteToolCall) -> tuple[RetailFacts, list[ReadResult]]:
+def _read_order(retail: RetailPort, order_id: str, absent: FactsRefused) -> tuple[OrderOutput, ReadResult]:
+    result = _read(retail, GetOrderDetails(order_id=order_id), absent)
+    output = result.output
+    if not isinstance(output, OrderOutput) or output.order.order_id != order_id or \
+            result.resource_versions != _version("order", order_id, output.order.version):
+        raise _Stop(INVALID)
+    return output, result
+
+
+def _collect_once(retail: RetailPort, scope: GatewayScope, call: WriteToolCall, *,
+                  stated_ids: frozenset[str] | None, sibling_budget: int
+                  ) -> tuple[RetailFacts, list[ReadResult], list[ReadResult]]:
     customer_id = scope.customer_user_id
     results: list[ReadResult] = []
     user_result = _read(retail, GetUserDetails(user_id=customer_id), INVALID)
@@ -108,14 +121,31 @@ def _collect_once(retail: RetailPort, scope: GatewayScope, call: WriteToolCall) 
     results.append(user_result)
     customer = output.user.to_snapshot()
     if isinstance(call, ModifyUserAddress):
-        return RetailFacts(customer=customer), results
-    order_result = _read(retail, GetOrderDetails(order_id=call.order_id),
-                         FactsRefused(ErrorCode.NOT_FOUND, "scope.single_customer", "order_not_found", False))
-    order_output = order_result.output
-    if not isinstance(order_output, OrderOutput) or order_output.order.order_id != call.order_id or \
-            order_result.resource_versions != _version("order", call.order_id, order_output.order.version):
-        raise _Stop(INVALID)
+        return RetailFacts(customer=customer), results, []
+    order_output, order_result = _read_order(retail, call.order_id, ORDER_NOT_FOUND)
     results.append(order_result)
+    order = order_output.order
+    siblings: list[ReadResult] = []
+    selection = TargetSelection(stated_ids) if stated_ids is not None else None
+    if stated_ids == frozenset() and order.user_id == customer_id:
+        order_ids = output.user.order_ids
+        if len(set(order_ids)) != len(order_ids):
+            raise _Stop(INVALID)
+        if user_result.case_version == order_result.case_version and call.order_id not in order_ids:
+            raise _Stop(INVALID)
+        sibling_ids = tuple(oid for oid in order_ids if oid != call.order_id)
+        if len(sibling_ids) > sibling_budget:
+            raise _Stop(SIBLING_LIMIT)
+        required, _ = ORDER_TARGETS[ToolName(call.tool)]
+        eligible = {call.order_id} if order.status == required else set()
+        for sibling_id in sibling_ids:
+            sibling, sibling_result = _read_order(retail, sibling_id, INVALID)
+            siblings.append(sibling_result)
+            if sibling.order.user_id != customer_id:
+                raise _Stop(INVALID)
+            if sibling.order.status == required:
+                eligible.add(sibling_id)
+        selection = TargetSelection(stated_ids, frozenset(eligible))
     variants = []
     if isinstance(call, ModifyPendingOrderItems | ExchangeDeliveredOrderItems):
         absent = FactsRefused(ErrorCode.NOT_FOUND, f"{_item_prefix(call)}.same_product_other_option",
@@ -129,19 +159,23 @@ def _collect_once(retail: RetailPort, scope: GatewayScope, call: WriteToolCall) 
                 raise _Stop(INVALID)
             results.append(item_result)
             variants.append(item_output.variant.to_snapshot())
-    return RetailFacts(customer=customer, order=order_output.order.to_snapshot(), variants=tuple(variants)), results
+    return RetailFacts(customer=customer, order=order.to_snapshot(), variants=tuple(variants),
+                       target_selection=selection), results, siblings
 
 
-def collect(retail: RetailPort, scope: GatewayScope, call: WriteToolCall, history: HistoryPort) -> \
-        Collected | FactsRefused:
+def collect(retail: RetailPort, scope: GatewayScope, call: WriteToolCall, history: HistoryPort, *,
+            stated_ids: frozenset[str] | None = None) -> Collected | FactsRefused:
     reads = 0
+    sibling_budget = MAX_SIBLING_READS
     for attempt in range(1, MAX_COLLECTIONS + 1):
         try:
-            facts, results = _collect_once(retail, scope, call)
+            facts, results, siblings = _collect_once(retail, scope, call, stated_ids=stated_ids,
+                                                     sibling_budget=sibling_budget)
         except _Stop as stop:
             return stop.refusal
-        reads += len(results)
-        case_versions = {result.case_version for result in results}
+        sibling_budget -= len(siblings)
+        reads += len(results) + len(siblings)
+        case_versions = {result.case_version for result in (*results, *siblings)}
         if len(case_versions) != 1:
             continue
         (case_version,) = case_versions
@@ -149,8 +183,7 @@ def collect(retail: RetailPort, scope: GatewayScope, call: WriteToolCall, histor
             recorded = history.history(facts.order.order_id, case_version=case_version)
             if recorded.order_id != facts.order.order_id:
                 return INVALID
-            facts = RetailFacts(customer=facts.customer, order=facts.order, variants=facts.variants,
-                                history=recorded)
+            facts = replace(facts, history=recorded)
         versions = tuple(sorted({version for result in results for version in result.resource_versions},
                                 key=lambda v: (v.kind, v.resource_id)))
         return Collected(facts=facts, case_version=case_version, resource_versions=versions, collections=attempt,

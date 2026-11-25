@@ -4,7 +4,7 @@ This analysis concerns a fictional online retailer in the τ²-bench retail simu
 
 ## Summary and status
 
-**Mitigated, residual open.** Pre-production evaluation caught a candidate
+**Deterministic guard implemented, acceptance pending.** Pre-production evaluation caught a candidate
 proposing a cancellation when the customer had supplied no order ID and multiple
 orders matched the request. The development safety guard rejected the candidate
 despite a large gain in exact proposals. A prompt revision met the admission
@@ -104,6 +104,14 @@ the admission limit. The one-shot held-out comparison then measured
 **171/192 vs 3/192** exact first proposals, revised profile versus the paired baseline.
 [Development verification](evaluation.md#one-revision-and-fresh-development) · [Held-out verification](evaluation.md#held-out-result)
 
+The gateway now requires a customer-stated ID or a sole actionable order
+before it can prepare an investigation proposal. It uses persisted customer
+messages and authoritative order status. A stated ID establishes that the
+customer mentioned the order. Consent and separate approval still bind the
+specific action. Description-only requests with several actionable orders now
+require clarification. A fixture census puts this at 56/149 of the original
+description-resolvable cancellation pool. [Target panel](evaluation.md#guarded-order-targeting-and-model-to-receipt-acceptance)
+
 ## What remains
 
 - The revision made **2/16** unsafe attempts in held-out ambiguous cases. Across
@@ -116,6 +124,11 @@ the admission limit. The one-shot held-out comparison then measured
 - The result covers one model alias as served for the study. The public retail
   data and policy leave training contamination possible. The rate at which
   reviewers catch ambiguous proposals remains unmeasured.
+- Reservation, dispatch and resend recheck the target against current retail
+  facts. A sibling can still become eligible between precheck and send. The
+  simulator locks and checks the existing expected resource versions at commit.
+  The design keeps those versions and request fingerprints stable for recovery
+  and accepts the residual race. [Execution precheck](architecture.md#execution-precheck)
 
 [Held-out safety and limits](evaluation.md#held-out-result)
 
@@ -137,8 +150,9 @@ retail fixture tree. [Asset setup](operations.md#development-setup)
 python -B ../scripts/devenv.py uv run --frozen pytest -m postgres tests/test_scenario_gate.py -k first-match
 ```
 
-The scripted checks demonstrate that the grader detects this failure on controlled
-inputs. The live-model attempt rate comes from the historical evaluation.
+The scripted checks assert the original pre-gateway grading and the gateway's
+refusal with zero persisted proposals. The live-model attempt rate comes from
+the historical evaluation.
 [Grader test](../evals/tests/test_scenario_grading.py) · [PostgreSQL gate](../evals/tests/test_scenario_gate.py)
 
 The historical paid commands cover the baseline diagnostic, the first candidate
@@ -155,7 +169,6 @@ paid comparison. [Historical commands](evaluation.md#scenario-reproduction) · [
 
 | Proposed action | Evidence to collect |
 |---|---|
-| Add a deterministic gateway check for requests with no customer-supplied order ID. Refuse the write when more than one order on the profile matches the request's selectors. Require staff to obtain clarification or have the investigation abstain. | Replay ambiguous negative cases and uniquely resolvable controls. Verify refusal and the absence of a simulator effect for ambiguous requests. Count false blocks separately. |
 | Show the reviewer the other matching orders beside the proposed target and the selectors they satisfy. | Check whether reviewers can explain why the target remains ambiguous using the displayed order facts. |
 | Measure the approval-stage catch rate in shadow review. | Count proposals rejected for ambiguity over all labelled ambiguous proposals shown. Record misses and undecided reviews separately. |
 | Enlarge the ambiguous stratum using fresh development fixtures with labels known by construction. | Report unsafe attempts, clean abstentions, and cap stops separately, with their denominators and uncertainty. |

@@ -1,7 +1,7 @@
 """Local operator composition of the existing workbench investigation."""
 
 from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager
+from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -62,6 +62,7 @@ SCOPE = RetrievalScope(corpus_key=POLICY_CORPUS)
 RETRIEVAL = RetrievalConfig(mode="lexical", max_chunks=2, max_evidence_tokens=512)
 SMOKE_CAP = Decimal("0.03")
 Handler = Callable[[httpx2.Request], httpx2.Response]
+type RetailSession = Callable[[Store, Slot, Scenario], AbstractContextManager[RetailClient]]
 
 
 def configuration(cache_mode: str = "none") -> Configuration:
@@ -235,18 +236,19 @@ class Profile:
                      profile: InvestigationProfile = InvestigationProfile.BASELINE,
                      bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None,
                      observe_queue: Callable[[Worker], None] | None = None,
-                     cache_mode: str = "none") -> Summary:
+                     cache_mode: str = "none", retail_session: RetailSession = retail_client) -> Summary:
         token = secrets.token_urlsafe(24)
         return self._run(scenario, slot, tape, lambda: httpx2.MockTransport(handler),
                          env="test", credential=token, redactor=slot.redactor((token,)),
-                         profile=profile, bind_spec=bind_spec, observe_queue=observe_queue, cache_mode=cache_mode)
+                         profile=profile, bind_spec=bind_spec, observe_queue=observe_queue, cache_mode=cache_mode,
+                         retail_session=retail_session)
 
     def _run(self, scenario: Scenario, slot: Slot, tape: Tape, transport: Callable[[], httpx2.AsyncBaseTransport],
              *, env: str, credential: str, redactor: Redactor, expected_generation: UUID | None = None,
              profile: InvestigationProfile = InvestigationProfile.BASELINE,
              bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None,
              observe_queue: Callable[[Worker], None] | None = None,
-             cache_mode: str = "none") -> Summary:
+             cache_mode: str = "none", retail_session: RetailSession = retail_client) -> Summary:
         if env != "test" and in_test_context():
             raise ValueError("test scenarios require a mock provider transport")
         scenario.verify(self.retail.fixture.raw)
@@ -268,7 +270,7 @@ class Profile:
         def providers() -> Providers:
             return Providers({"openai": SecretStr(credential)}, recording_transport)
 
-        with retail_client(self.retail, slot, scenario) as client:
+        with retail_session(self.retail, slot, scenario) as client:
             spec = scenario_spec(
                 env=env, engine=self.app, policy=self.policy, bindings=(binding,), retail=lambda _: client,
                 providers=providers, tokenizer=self.tokenizer, clock=lease, wall_clock=wall, profile=profile,

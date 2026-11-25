@@ -28,7 +28,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from policyops.adapters.retail_client import Refused, Unknown
 from policyops.domain.protocol import step_violation
-from policyops.domain.retail_rules import Allowed, Denied, Escalated, evaluate_write
+from policyops.domain.retail_rules import ORDER_TARGETS, Allowed, Denied, Escalated, evaluate_write
 from policyops.domain.session import (
     Authenticated,
     CustomerMismatch,
@@ -47,6 +47,7 @@ from policyops.gateway.ports import (
     IncompleteHistory,
     RetailPort,
     SessionStore,
+    TargetEvidencePort,
     check_retail_binding,
 )
 from policyops.persistence.customer_authentications import AuthenticationConflict
@@ -151,11 +152,12 @@ def _versions(kind: str, resource_id: str, version: int) -> tuple[ResourceVersio
 
 class Gateway:
     def __init__(self, scope: GatewayScope, *, retail: RetailPort, sessions: SessionStore, clock: Clock,
-                 history: HistoryPort | None = None) -> None:
+                 history: HistoryPort | None = None, target_evidence: TargetEvidencePort | None = None) -> None:
         check_retail_binding(scope, retail)  # before any request
         self.scope = scope
         self._retail, self._sessions, self._clock = retail, sessions, clock
         self._history = history if history is not None else IncompleteHistory()
+        self._target_evidence = target_evidence
 
     def session(self) -> CustomerSession:
         """The run's session from the durable authentication (`ValueError` if a stored record does not match)."""
@@ -279,7 +281,10 @@ class Gateway:
     # -- writes ----------------------------------------------------------------------------------------------
 
     def _write(self, session: CustomerSession, call: Any) -> StepResult:
-        collected = collect(self._retail, self.scope, call, self._history)
+        stated_ids = None
+        if self._target_evidence is not None and ToolName(call.tool) in ORDER_TARGETS:
+            stated_ids = self._target_evidence.stated_ids(self.scope.run)
+        collected = collect(self._retail, self.scope, call, self._history, stated_ids=stated_ids)
         if isinstance(collected, FactsRefused):
             return StepResult(observations.facts_refused(collected))
         decision = evaluate_write(call, session, collected.facts)

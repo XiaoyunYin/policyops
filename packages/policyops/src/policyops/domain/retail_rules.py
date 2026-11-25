@@ -74,6 +74,22 @@ from policyops_contracts.timing import expiry_after
 ResourceKind = Literal["user", "order", "product"]
 ONCE_PER_ORDER = frozenset({ToolName.MODIFY_PENDING_ORDER_ADDRESS, ToolName.MODIFY_PENDING_ORDER_PAYMENT,
                             ToolName.MODIFY_PENDING_ORDER_ITEMS, ToolName.EXCHANGE_DELIVERED_ORDER_ITEMS})
+ORDER_TARGETS = {
+    ToolName.CANCEL_PENDING_ORDER: ("pending", "cancel.order_and_reason"),
+    ToolName.MODIFY_PENDING_ORDER_ADDRESS: ("pending", "modify.allowed_fields"),
+    ToolName.MODIFY_PENDING_ORDER_PAYMENT: ("pending", "payment.single_different_method"),
+    ToolName.MODIFY_PENDING_ORDER_ITEMS: ("pending", "items.same_product_other_option"),
+    ToolName.RETURN_DELIVERED_ORDER_ITEMS: ("delivered", "return.order_and_items"),
+    ToolName.EXCHANGE_DELIVERED_ORDER_ITEMS: ("delivered", "exchange.delivered_only_all_items"),
+}
+MAX_SIBLING_READS = 16
+
+
+@dataclass(frozen=True)
+class TargetSelection:
+    stated_ids: frozenset[str]
+    # Only collected when no ID was stated, from the same snapshot as the target.
+    eligible_ids: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +98,7 @@ class RetailFacts:
     order: OrderSnapshot | None = None
     variants: tuple[VariantSnapshot, ...] = ()
     history: OrderOperationHistory | None = None
+    target_selection: TargetSelection | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +122,20 @@ class Escalated:
 
 
 Outcome = Allowed | Denied | Escalated
+
+
+def select_order_target(tool: ToolName, order_id: str, selection: TargetSelection) -> (
+        Literal["customer_stated", "sole_eligible"] | Denied | Escalated):
+    """Check customer statements or complete owned-order eligibility for an order write."""
+    _, rule_id = ORDER_TARGETS[tool]
+    if order_id in selection.stated_ids:
+        return "customer_stated"
+    if not selection.stated_ids:
+        if selection.eligible_ids is None or len(selection.eligible_ids) > MAX_SIBLING_READS + 1:
+            return Escalated(rule_id, "target_selection_facts_incomplete")
+        if selection.eligible_ids == {order_id}:
+            return "sole_eligible"
+    return Denied(ErrorCode.POLICY_DENIED, rule_id, "target_clarification_required")
 
 
 class _Stop(Exception):
@@ -161,6 +192,10 @@ class _Context:
             raise _escalate("status.actionable", "no current snapshot of the order was supplied")
         if order.user_id != self.customer.user_id:
             raise _deny("scope.single_customer", "the order belongs to another customer", ErrorCode.CUSTOMER_MISMATCH)
+        if self.facts.target_selection is not None:
+            selection = select_order_target(ToolName(tool), order_id, self.facts.target_selection)
+            if isinstance(selection, Denied | Escalated):
+                raise _Stop(selection)
         if order.status not in ("pending", "delivered"):
             raise _deny("status.actionable", f"order status is {order.status!r}")
         if tool in ONCE_PER_ORDER:

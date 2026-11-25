@@ -48,11 +48,11 @@ from policyops.domain.consent_rules import (
     record_reply,
     record_simulator_event,
 )
-from policyops.domain.retail_rules import Denied, Escalated, intent_digest, propose
+from policyops.domain.retail_rules import ORDER_TARGETS, Denied, Escalated, intent_digest, propose
 from policyops.domain.session import CustomerSession
 from policyops.gateway.facts import Collected
 from policyops.gateway.ports import GatewayScope
-from policyops.gateway.stores import evidence_status
+from policyops.gateway.stores import case_target_ids, evidence_status
 from policyops.persistence import checkpoint_json, customer_authentications, review_jobs
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs as run_store
@@ -88,6 +88,7 @@ from policyops_contracts.retail import (
     ModifyPendingOrderPayment,
     ModifyUserAddress,
     ReturnDeliveredOrderItems,
+    ToolName,
     WriteToolCall,
 )
 from policyops_contracts.scalars import CaseScope, RunScope
@@ -337,6 +338,14 @@ class ProposalService:
                 if repo.get_presentation(connection, original.proposal_id, original.proposal_version) is None:
                     raise ImmutableRecord("proposal replay has no atomic presentation")
                 return Created(original, ())
+        tool = ToolName(checked_call.tool)
+        if creation_step is not None and tool in ORDER_TARGETS:
+            selection = collected.facts.target_selection
+            _, rule_id = ORDER_TARGETS[tool]
+            if selection is None:
+                return _refused(ErrorCode.UNAVAILABLE, rule_id, "target_selection_facts_incomplete")
+            if selection.stated_ids != case_target_ids(connection, run_scope):
+                return _refused(ErrorCode.UNAVAILABLE, rule_id, "target_selection_facts_changed")
         try:
             authentication = customer_authentications.load(connection, run_scope)
             session = CustomerSession(binding=scope.binding, run=run_scope, authentication=authentication)

@@ -8,9 +8,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from uuid import UUID
 
-from policyops import telemetry
-from policyops.domain.retail_rules import Allowed
-from policyops.gateway.steps import StepResult
+from policyops.telemetry import count
 from policyops.telemetry.attributes import (
     CANARY_AMBIGUOUS,
     CANARY_AMBIGUOUS_COUNT,
@@ -48,16 +46,23 @@ class Score:
 
 
 @dataclass(frozen=True)
+class WriteObservation:
+    allowed: bool = False
+    error: ToolError | None = None
+
+
+@dataclass(frozen=True)
 class Capture:
     records: Sequence[Exchange]
     stop: str | None
     # Match the typed result back to the first consequential reply, even after a retry.
-    writes: Mapping[str, StepResult] = field(default_factory=dict)
+    writes: Mapping[str, WriteObservation] = field(default_factory=dict)
     # None means the workspace runtime read was unavailable. Empty means no presentation.
     presented: tuple[WriteToolCall, ...] | None = None
 
 
 def proposal_verdict(grade: Grade) -> CanaryProposal:
+    """Map the frozen N3 positive grade to the canary proposal categories."""
     if grade.primary:
         return "exact"
     match grade.failure:
@@ -86,10 +91,10 @@ def _gateway(capture: Capture) -> CanaryGateway:
     result = capture.writes.get(first.call_id) if isinstance(first.call_id, str) else None
     if result is None:
         return "unavailable"
-    if isinstance(result.decision, Allowed) and capture.presented == (action,):
+    if result.allowed and capture.presented == (action,):
         return "accepted"
-    error = result.observation
-    if not isinstance(error, ToolError) or action in capture.presented:
+    error = result.error
+    if error is None or action in capture.presented:
         return "unavailable"
     if error.code == ErrorCode.POLICY_DENIED and error.detail == "target_clarification_required":
         return "target_refused"
@@ -109,9 +114,9 @@ class Scorer:
         first = first_consequential_call(records)
         if first is not None:
             decisive = records[:first.exchange_index + 1]
-            # Downstream tool results, invalid follow-ups and terminal caps cannot undo a captured write.
+            # The grader freezes action and reads at the first write and also checks terminal caps.
             complete = not _captures_gap(decisive) and all(row.request is not None for row in decisive)
-            grade = grade_slot(gold, decisive if complete else None)
+            grade = grade_slot(gold, records if complete else None, stop=capture.stop)
         else:
             grade = grade_slot(gold, records if capture.stop is not None and not _captures_gap(records)
                                and any(record.phase == "create" for record in records) else None,
@@ -147,12 +152,12 @@ class Snapshot:
 
     def publish(self) -> None:
         for proposal in CANARY_PROPOSALS:
-            telemetry.count(CANARY_PROPOSAL_COUNT, self.proposal[proposal], result=proposal)
+            count(CANARY_PROPOSAL_COUNT, self.proposal[proposal], result=proposal)
         for ambiguous in CANARY_AMBIGUOUS:
-            telemetry.count(CANARY_AMBIGUOUS_COUNT, self.ambiguous[ambiguous], result=ambiguous)
+            count(CANARY_AMBIGUOUS_COUNT, self.ambiguous[ambiguous], result=ambiguous)
         for gateway in CANARY_GATEWAYS:
-            telemetry.count(CANARY_GATEWAY_COUNT, self.gateway[gateway], outcome=gateway)
-        telemetry.count(CANARY_FINALIZED, self.last_finalized or 0)
+            count(CANARY_GATEWAY_COUNT, self.gateway[gateway], outcome=gateway)
+        count(CANARY_FINALIZED, self.last_finalized or 0)
 
 
 class Windows:

@@ -19,8 +19,10 @@ from sqlalchemy import Connection, Engine, text
 from policyops.adapters.retail_client import RetailClient
 from policyops.auth.service import Authorized, SessionContext
 from policyops.budget.config import CHAT_ACTORS, DEFAULT_ACTORS, Caps, ChatActor, Configuration
+from policyops.domain.retail_rules import Allowed
 from policyops.domain.roles import Role
 from policyops.gateway.ports import GatewayScope, RetailPort
+from policyops.gateway.steps import StepResult
 from policyops.orchestration.profile import InvestigationProfile
 from policyops.persistence.database import transaction, workspace_transaction
 from policyops.persistence.records import Membership, NewCase, Principal
@@ -31,14 +33,16 @@ from policyops.providers.contract import Provider
 from policyops.providers.tokenizer import Tokenizer
 from policyops.retrieval.parse import CHUNK_CONFIG
 from policyops.runtime.clock import DatabaseLeaseClock, LeaseClock
-from policyops.runtime.investigation import build_investigation_spec
+from policyops.runtime.investigation import InvestigationExecutor, build_investigation_spec
 from policyops.runtime.spec import RuntimeCatalog, RuntimeSpec
 from policyops.runtime.worker import Worker
 from policyops.services.runs import RunService
 from policyops_contracts.clock import Clock, SystemClock
-from policyops_contracts.conversation import AgentLimits, PolicyContext
+from policyops_contracts.conversation import AgentLimits, AgentToolCall, PolicyContext
 from policyops_contracts.events import ErrorRaised, EventEnvelope, RunStopped
+from policyops_contracts.gateway import ToolError
 from policyops_contracts.policy import RETAIL_POLICY
+from policyops_contracts.retail import WriteToolCall
 from policyops_contracts.retail_service import FIXTURE_SHA256, CaseState
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalScope
 from policyops_contracts.scalars import CaseScope
@@ -275,15 +279,36 @@ class Profile:
         return Summary(label, matched, accounting.calls, accounting.settled, accounting.held, latency, stop)
 
     def run_local_capture(self, visible: CaseInput, slot: Slot, tape: Tape, handler: Handler, *,
-                          bind_spec: Callable[[RuntimeSpec], RuntimeSpec]) -> str:
+                          observe_write: Callable[[str, bool, ToolError | None], None]) -> str:
         if os.environ.get("POLICYOPS_ENV") != "local":
             raise ValueError("local canaries require POLICYOPS_ENV=local")
+
+        def observe(call: AgentToolCall, result: StepResult) -> None:
+            error = result.observation if isinstance(result.observation, ToolError) else None
+            observe_write(call.call_id, isinstance(result.decision, Allowed), error)
+
+        def bind(spec: RuntimeSpec) -> RuntimeSpec:
+            if not isinstance(spec.executor, InvestigationExecutor):
+                raise TypeError("expected the real investigation executor")
+            return replace(spec, executor=replace(spec.executor, observe_write=observe))
+
         token = secrets.token_urlsafe(24)
         stop, _ = self._capture(visible, slot, tape, lambda: httpx2.MockTransport(handler), env="local",
                                 credential=token, redactor=slot.redactor((token,)), mock_only=True,
-                                profile=InvestigationProfile.TOOL_CONTRACT_V1R1, bind_spec=bind_spec,
+                                profile=InvestigationProfile.TOOL_CONTRACT_V1R1, bind_spec=bind,
                                 open_retail=lambda: _retail_client(self.retail, slot, visible.customer_id))
         return stop
+
+    def presented_actions(self, slot: Slot) -> tuple[WriteToolCall, ...] | None:
+        with workspace_transaction(self.app, slot.workspace) as connection:
+            rows = repo.presented_rows_of_run(connection, slot.run)
+            actions: list[WriteToolCall] = []
+            for row in rows:
+                proposal = repo.get_proposal(connection, row.proposal_id, row.proposal_version)
+                if proposal is None:
+                    return None
+                actions.append(proposal.action)
+            return tuple(actions)
 
     def _capture(self, visible: CaseInput, slot: Slot, tape: Tape, transport: Callable[[], httpx2.AsyncBaseTransport],
                  *, env: str, credential: str, redactor: Redactor,

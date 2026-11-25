@@ -1,0 +1,12 @@
+# Apply after observability.yaml. The config is extracted from the pinned image with scripts/n15_prometheus.py.
+services:
+  observability:
+    volumes:
+      - type: bind
+        source: ${POLICYOPS_CANARY_PROMETHEUS_CONFIG:?prepare the pinned config first}
+        target: /otel-lgtm/prometheus.yaml
+        read_only: true
+      - type: bind
+        source: ../observability/rules/canary.yaml
+        target: /otel-lgtm/policyops-canary.yaml
+        read_only: true

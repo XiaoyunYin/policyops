@@ -1,0 +1,141 @@
+# The timeline has 15s evaluations. A 60s dip clears before the two-minute hold.
+rule_files:
+  - canary.yaml
+evaluation_interval: 15s
+tests:
+  - interval: 15s
+    input_series:
+      - series: 'policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}'
+        values: '0 15 30 45 60 75 90 105 120 135 150 165 180 195 210 225 240 255 270 285 300 315 330 345 360 375 390 405 420 420 420 420 420 420 420 420 420'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="exact"}'
+        values: '0 1 2 3 4 5 6 7 15 15 12 12 12 12 15 15 12 12 12 12 12 12 12 12 12 12 12 12 15 15 15 15 15 15 15 15 15'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="wrong_target"}'
+        values: '0 0 0 0 0 0 0 0 5 5 8 8 8 8 5 5 8 8 8 8 8 8 8 8 8 8 8 8 5 5 5 5 5 5 5 5 5'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="abstain"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="invalid"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="other_miss"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="unavailable"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="clarified"}'
+        values: '0 0 0 0 0 0 0 0 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="unsafe_attempt"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="other"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="unavailable"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="accepted"}'
+        values: '0 1 2 3 4 5 6 7 15 15 12 12 12 12 15 15 12 12 12 12 12 12 12 12 12 12 12 12 15 15 15 15 15 15 15 15 15'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="target_refused"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="other_refused"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="not_reached"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="unavailable"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 0s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: CanaryMonitorBlind
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 195s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 225s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 345s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 360s
+        alertname: CanaryProposalQualityLow
+        exp_alerts:
+          - exp_labels: {}
+      - eval_time: 375s
+        alertname: CanaryUnsafeAttempts
+        exp_alerts:
+          - exp_labels: {}
+      - eval_time: 405s
+        alertname: CanaryUnsafeAttempts
+        exp_alerts: []
+      - eval_time: 405s
+        alertname: CanaryProposalQualityLow
+        exp_alerts:
+          - exp_labels: {}
+      - eval_time: 420s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 510s
+        alertname: CanaryMonitorBlind
+        exp_alerts: []
+      - eval_time: 525s
+        alertname: CanaryMonitorBlind
+        exp_alerts:
+          - exp_labels: {}
+      - eval_time: 525s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+  - interval: 15s
+    input_series:
+      - series: 'policyops_canary_last_finalized_timestamp_seconds{job="policyops-canary"}'
+        values: '0 15 30 45 60 75 90 stale stale'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="exact"}'
+        values: '0 20 20 20 12 12 12 stale stale'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="wrong_target"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="abstain"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="invalid"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="other_miss"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_proposal_window_count{job="policyops-canary",result="unavailable"}'
+        values: '0 0 0 0 8 8 8 stale stale'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="clarified"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="unsafe_attempt"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="other"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_ambiguous_window_count{job="policyops-canary",result="unavailable"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="accepted"}'
+        values: '0 20 20 20 12 12 12 stale stale'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="target_refused"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="other_refused"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="not_reached"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+      - series: 'policyops_canary_gateway_window_count{job="policyops-canary",outcome="unavailable"}'
+        values: '0 0 0 0 0 0 0 stale stale'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: CanaryMonitorBlind
+        exp_alerts: []
+      - eval_time: 60s
+        alertname: CanaryMonitorBlind
+        exp_alerts:
+          - exp_labels: {}
+      - eval_time: 60s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []
+      - eval_time: 120s
+        alertname: CanaryMonitorBlind
+        exp_alerts:
+          - exp_labels: {}
+      - eval_time: 120s
+        alertname: CanaryProposalQualityLow
+        exp_alerts: []

@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
+import os
 from pathlib import Path
 import secrets
 import time
@@ -187,7 +188,7 @@ def usage(engine: Engine, slot: Slot) -> Usage:
 
 
 @contextmanager
-def retail_client(store: Store, slot: Slot, scenario: Scenario) -> Iterator[RetailClient]:
+def _retail_client(store: Store, slot: Slot, customer_id: str) -> Iterator[RetailClient]:
     """Run the real signed simulator API in process over ASGI, without a listening socket."""
     from policyops_evals.harness.inprocess import OwnedLoop
 
@@ -209,13 +210,23 @@ def retail_client(store: Store, slot: Slot, scenario: Scenario) -> Iterator[Reta
 
     try:
         with closing(RetailClient("http://retail.invalid", key, tenant_id=slot.workspace,
-                                  case_id=slot.case, customer_id=scenario.world.customer_id,
+                                  case_id=slot.case, customer_id=customer_id,
                                   transport=httpx.MockTransport(bridge))) as client:
             if not isinstance(client.initialize(), CaseState):
                 raise ValueError("retail case initialization unavailable")
             yield client
     finally:
         loop.close(seconds=2)
+
+
+def retail_client(store: Store, slot: Slot, scenario: Scenario) -> AbstractContextManager[RetailClient]:
+    return _retail_client(store, slot, scenario.world.customer_id)
+
+
+@dataclass(frozen=True)
+class CaseInput:
+    customer_id: str
+    message: str
 
 
 @dataclass(frozen=True)
@@ -252,25 +263,55 @@ class Profile:
         if env != "test" and in_test_context():
             raise ValueError("test scenarios require a mock provider transport")
         scenario.verify(self.retail.fixture.raw)
+        visible = CaseInput(scenario.world.customer_id, scenario.visible.message)
+        stop, latency = self._capture(visible, slot, tape, transport, env=env, credential=credential,
+                                      redactor=redactor, expected_generation=expected_generation, profile=profile,
+                                      bind_spec=bind_spec, observe_queue=observe_queue, cache_mode=cache_mode,
+                                      open_retail=lambda: retail_session(self.retail, slot, scenario))
+        accounting = usage(self.app, slot)
+        complete = accounting.calls > 0 and accounting.calls == sum(
+            item.phase == "create" and item.complete and item.response is not None for item in tape.records)
+        label, matched = grade(scenario, tape.records, stop, complete_capture=complete)
+        return Summary(label, matched, accounting.calls, accounting.settled, accounting.held, latency, stop)
+
+    def run_local_capture(self, visible: CaseInput, slot: Slot, tape: Tape, handler: Handler, *,
+                          bind_spec: Callable[[RuntimeSpec], RuntimeSpec]) -> str:
+        if os.environ.get("POLICYOPS_ENV") != "local":
+            raise ValueError("local canaries require POLICYOPS_ENV=local")
+        token = secrets.token_urlsafe(24)
+        stop, _ = self._capture(visible, slot, tape, lambda: httpx2.MockTransport(handler), env="local",
+                                credential=token, redactor=slot.redactor((token,)), mock_only=True,
+                                profile=InvestigationProfile.TOOL_CONTRACT_V1R1, bind_spec=bind_spec,
+                                open_retail=lambda: _retail_client(self.retail, slot, visible.customer_id))
+        return stop
+
+    def _capture(self, visible: CaseInput, slot: Slot, tape: Tape, transport: Callable[[], httpx2.AsyncBaseTransport],
+                 *, env: str, credential: str, redactor: Redactor,
+                 open_retail: Callable[[], AbstractContextManager[RetailClient]],
+                 expected_generation: UUID | None = None,
+                 profile: InvestigationProfile = InvestigationProfile.BASELINE,
+                 bind_spec: Callable[[RuntimeSpec], RuntimeSpec] | None = None,
+                 observe_queue: Callable[[Worker], None] | None = None, cache_mode: str = "none",
+                 mock_only: bool = False) -> tuple[str, int]:
         generation = self.corpus_generation(slot.workspace)
         if expected_generation is not None and generation != expected_generation:
             raise ValueError("registered policy generation changed")
         wall, lease = SystemClock(), DatabaseLeaseClock()
         authorized = self._operator(slot, wall)
-        binding = self._seed(scenario, slot, lease)
+        binding = self._seed(visible, slot, lease)
 
         def recording_transport(provider: Provider) -> httpx2.AsyncBaseTransport:
             if provider != "openai":
                 raise ValueError("unexpected scenario provider")
             inner = transport()
-            if env == "test" and not isinstance(inner, httpx2.MockTransport):
-                raise ValueError("test scenarios require a mock provider transport")
+            if (mock_only or env == "test") and not isinstance(inner, httpx2.MockTransport):
+                raise ValueError("scripted scenarios require a mock provider transport")
             return Recorder(inner, tape, redactor)
 
         def providers() -> Providers:
             return Providers({"openai": SecretStr(credential)}, recording_transport)
 
-        with retail_session(self.retail, slot, scenario) as client:
+        with open_retail() as client:
             spec = scenario_spec(
                 env=env, engine=self.app, policy=self.policy, bindings=(binding,), retail=lambda _: client,
                 providers=providers, tokenizer=self.tokenizer, clock=lease, wall_clock=wall, profile=profile,
@@ -291,11 +332,7 @@ class Profile:
                 observe_queue(worker)
         if self.corpus_generation(slot.workspace) != generation:
             raise ValueError("policy generation changed during the slot")
-        accounting = usage(self.app, slot)
-        complete = accounting.calls > 0 and accounting.calls == sum(
-            item.phase == "create" and item.complete and item.response is not None for item in tape.records)
-        label, matched = grade(scenario, tape.records, stop, complete_capture=complete)
-        return Summary(label, matched, accounting.calls, accounting.settled, accounting.held, latency, stop)
+        return stop, latency
 
     def _operator(self, slot: Slot, wall: SystemClock) -> Authorized:
         issuer = "https://policyops-scenario-operator.invalid"
@@ -314,7 +351,9 @@ class Profile:
                                          now + timedelta(minutes=5), "0" * 64), slot.workspace,
                           frozenset({Role.ANALYST}))
 
-    def _seed(self, scenario: Scenario, slot: Slot, lease: DatabaseLeaseClock) -> CaseCustomerBinding:
+    def _seed(self, case_input: Scenario | CaseInput, slot: Slot, lease: DatabaseLeaseClock) -> CaseCustomerBinding:
+        visible = (CaseInput(case_input.world.customer_id, case_input.visible.message)
+                   if isinstance(case_input, Scenario) else case_input)
         scope = CaseScope(workspace_id=slot.workspace, case_id=slot.case)
         with workspace_transaction(self.app, slot.workspace) as connection:
             connection.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
@@ -324,15 +363,15 @@ class Profile:
                 now = lease.now(connection)
                 case = repo.create_case(connection, NewCase(
                     id=slot.case, workspace_id=slot.workspace, scenario="retail",
-                    customer_user_id=scenario.world.customer_id, created_by=None, created_at=now))
+                    customer_user_id=visible.customer_id, created_by=None, created_at=now))
                 repo.append_message(connection, message_id=slot.message, scope=scope, source="seeded", entered_by=None,
-                                    text_value=scenario.visible.message, created_at=now)
+                                    text_value=visible.message, created_at=now)
             message = repo.message_by_id(connection, scope, slot.message)
-            if (case.customer_user_id != scenario.world.customer_id or message is None
-                    or message.source != "seeded" or message.text != scenario.visible.message):
+            if (case.customer_user_id != visible.customer_id or message is None
+                    or message.source != "seeded" or message.text != visible.message):
                 raise ValueError("slot case input changed")
         return CaseCustomerBinding(scope=scope, seed_id=f"retail-demo-{slot.case.int % 10_000:04d}",
-                                   user_id=scenario.world.customer_id, bound_at=case.created_at)
+                                   user_id=visible.customer_id, bound_at=case.created_at)
 
     def _work(self, worker: Worker, slot: Slot, tape: Tape, lease: DatabaseLeaseClock) -> tuple[str, int]:
         deadline = time.monotonic() + ACTIVE_SECONDS + 5

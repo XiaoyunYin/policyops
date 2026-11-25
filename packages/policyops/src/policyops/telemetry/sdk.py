@@ -34,6 +34,7 @@ from opentelemetry.trace import SpanContext
 
 from policyops.settings import TelemetrySettings
 from policyops.telemetry import ServiceRole, detach
+from policyops.telemetry.attributes import CANARY_FINALIZED, CANARY_LABELS
 
 
 SCHEMA_URL = "https://policyops.local/schemas/telemetry/v1"
@@ -188,7 +189,7 @@ class Backend:
     def __init__(self, settings: TelemetrySettings, *, role: ServiceRole = "api",
                  span_exporter: SpanExporter | None = None,
                  metric_exporter: MetricExporter | None = None) -> None:
-        if role not in ("api", "worker", "demo"):
+        if role not in ("api", "worker", "demo", "canary"):
             raise ValueError("invalid telemetry service role")
         if settings.exporter == "otlp":
             if span_exporter is not None or metric_exporter is not None:
@@ -240,10 +241,19 @@ class Backend:
             ("jobs", "{job}"), ("reviews", "{review}"), ("executions", "{execution}"))}
         self.gauges = {"queue.depth": meter.create_gauge("policyops.queue.depth", unit="{job}"),
                        "queue.oldest_due_age": meter.create_gauge("policyops.queue.oldest_due_age", unit="s")}
+        if role == "canary":
+            self.gauges.update({name: meter.create_gauge("policyops." + name, unit="1") for name in CANARY_LABELS})
+            self.gauges[CANARY_FINALIZED] = meter.create_gauge("policyops." + CANARY_FINALIZED, unit="s")
         self.dispatch_duration = meter.create_histogram(DISPATCH_HISTOGRAM, unit="s")
 
     def measure(self, name: str, value: int | float, attributes: dict[str, str | int]) -> None:
         if type(value) not in (int, float) or not 0 <= value <= 2**53:
+            return
+        if name in CANARY_LABELS:
+            label, values = CANARY_LABELS[name]
+            if attributes.keys() != {label} or attributes[label] not in values:
+                return
+        if name == CANARY_FINALIZED and attributes:
             return
         if name in self.gauges:
             self.gauges[name].set(value, attributes)

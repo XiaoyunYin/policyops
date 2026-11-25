@@ -551,3 +551,37 @@ host's published collector port. The Compose worker configures telemetry for `co
 `memory` (process-local inspection). Leave all `OTEL_*` variables unset. The profile uses the standard
 OpenTelemetry exporter and the image's Prometheus OTLP receiver.
 [Pinned collector config](https://github.com/grafana/docker-otel-lgtm/blob/v0.39.0/docker/otelcol-config.yaml).
+
+## Local canary monitor
+
+Run from the checkout root with the [local observability prerequisites](#local-observability-profile). Set `POLICYOPS_TEMP_DIR` to an existing external directory, prepare the pinned tokenizer, and point `$fixtureRoot` at the reviewed upstream retail fixture tree. The driver owns its PostgreSQL container and simulator. Use an isolated local Compose project and a free Grafana and OTLP port pair.
+
+```powershell
+$env:POLICYOPS_ENV = 'local'
+$env:PYTHONPATH = (Resolve-Path tests/support).Path
+$env:POLICYOPS_CANARY_PROMETHEUS_CONFIG = Join-Path $env:POLICYOPS_TEMP_DIR 'canary-prometheus.yaml'
+python -B scripts/n15_prometheus.py --prepare $env:POLICYOPS_CANARY_PROMETHEUS_CONFIG
+python -B scripts/n15_prometheus.py --test
+docker compose -p policyops-canary -f infra/compose/observability.yaml -f infra/compose/observability-canary.yaml up -d --wait
+Invoke-RestMethod 'http://127.0.0.1:3000/api/datasources/proxy/uid/prometheus/api/v1/rules' |
+  ForEach-Object { $_.data.groups.rules | Select-Object name, health }
+python -B scripts/devenv.py uv --project evals run --frozen --extra otlp -- python -B -m policyops_evals.scenarios.n15_canary --fixture-root $fixtureRoot
+```
+
+The prep step reads the default Prometheus configuration from the pinned LGTM image and adds the canary rule file to a new copy. The check should show `CanaryProposalQualityLow`, `CanaryUnsafeAttempts` and `CanaryMonitorBlind` with healthy evaluation. The driver uses the real in-process worker class and sends OTLP to the loopback collector. Its default wrong-target run schedules 25 healthy, 30 faulted and 30 recovered slots, then pauses to let freshness expire. It prints `fire`, `clear`, and `blind` after observing those states via Grafana's Prometheus proxy. The clear requires a fresh, covered window back at or above 75%. This single run demonstrates the signal path. If using alternate ports, set the corresponding Compose variables and pass the same values to the driver with `--grafana-port` and `--otlp-port`.
+
+After inspecting the canary panel, tear down the isolated project and remove the generated configuration when it is no longer needed.
+
+```powershell
+docker compose -p policyops-canary -f infra/compose/observability.yaml -f infra/compose/observability-canary.yaml down --volumes
+```
+
+The controlled-clock study and private regrade run offline without PostgreSQL. Record the controlled-clock result before opening the tapes. Set `$recordingRoot` and `$manifests` to the recorded N13 input locations under `POLICYOPS_TEMP_DIR` and keep the regrade output there.
+
+```powershell
+python -B scripts/devenv.py uv --project evals run --frozen -- python -B -m policyops_evals.scenarios.n15_monitor |
+  Set-Content -Encoding ascii -LiteralPath (Join-Path $env:POLICYOPS_TEMP_DIR 'n15-schedule-study.json')
+python -B scripts/devenv.py uv --project evals run --frozen -- python -B -m policyops_evals.scenarios.n15_replay `
+  --recording-root $recordingRoot --manifests $manifests --fixture-root $fixtureRoot `
+  --out (Join-Path $env:POLICYOPS_TEMP_DIR 'n15-private-aggregates.json')
+```

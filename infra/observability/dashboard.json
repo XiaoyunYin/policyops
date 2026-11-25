@@ -13,7 +13,7 @@
       {
         "name": "service",
         "type": "custom",
-        "query": "policyops-demo,policyops-api,policyops-worker",
+        "query": "policyops-demo,policyops-api,policyops-worker,policyops-canary",
         "current": {
           "text": "policyops-demo",
           "value": "policyops-demo"
@@ -472,6 +472,19 @@
           "instant": false,
           "range": true
         }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Canary exact proposal rate and alerts",
+      "description": "Exact share of classified write positives in the last 20 scheduled write-positive slots. The rate requires 16 classified slots and a fresh sample. Alert lines show firing states.",
+      "gridPos": {"x": 0, "y": 30, "w": 24, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "policyops:canary_exact_rate", "legendFormat": "Exact proposal rate", "range": true},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "ALERTS{alertname=~\"CanaryProposalQualityLow|CanaryUnsafeAttempts|CanaryMonitorBlind\",alertstate=\"firing\"}", "legendFormat": "{{alertname}}", "range": true}
       ]
     }
   ]

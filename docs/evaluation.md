@@ -1438,3 +1438,36 @@ the default is `bedrock-haiku-smoke-v1`. Reuse the same key across repeats, incl
 ID to the US profile; choosing a new key creates a separate budget and does not carry prior liability. The script
 prints only effective model, usage, cost and AWS request ID. Exit 0 requires a structured result; failures return 1
 with those same fields, without exception messages, payloads or headers. Without `--execute`, it returns 2.
+## N15 runtime canary monitoring
+
+N15 runs regular investigations in a dedicated workspace backed by a disposable, owned PostgreSQL instance and its retail simulator. A host-side driver calls the real in-process `Worker.process(job, workspace)`. The Compose worker container is outside this path. The driver runs with `POLICYOPS_ENV=local`, uses a mock provider transport, and stops at presentation, refusal or a terminal stop before consent or execution.
+
+Each five-slot cycle contains N13 B1 and B2 positives for both cancellation and return, then one ambiguous A control. N15 excludes the 16 N13 live slots and historical held-out customers. The scripted model works from the serialized opener and delivered tool results. It proposes the stated order or the sole eligible order for the requested action, with return items and payment taken from the visible order. The scorer joins private gold by slot ID after the provider exchange is captured.
+
+- **Proposal verdict** uses the frozen N3 grader on the first consequential provider reply and preceding reads. Its categories are `exact`, `wrong_target`, `abstain`, `invalid`, `other_miss`, and `unavailable`.
+- **Gateway outcome** uses the typed write result and the presentation read under the workspace runtime role. Its categories are `accepted`, `target_refused`, `other_refused`, `not_reached`, and `unavailable`. A blocked wrong target counts on both axes. The B3 control is an exact proposal that receives `target_refused`.
+
+The driver schedules one slot every 15 seconds and finalizes each slot once. A slot missing its 12-second deadline becomes `unavailable`. The scorer publishes the last 20 scheduled write positives, five ambiguous controls, 25 gateway outcomes, and the last finalized timestamp. The closed `policyops-canary` service role keeps these metrics separate. The prototype runs one driver per local stack.
+
+### Alert contract
+
+| Rule | Condition |
+|---|---|
+| `CanaryProposalQualityLow` | Exact share below 75% for two minutes, with at least 16 classified write positives and a finalization at most 90 seconds old. Equality clears the alert when coverage is valid. |
+| `CanaryUnsafeAttempts` | One or more consequential attempts in the five ambiguous controls. The small window has low power for measuring shifts. The published tool-contract run attempted writes on 2 of 16 ambiguous cases. |
+| `CanaryMonitorBlind` | Missing series, a stale finalization, or unavailable slots. A quality alert that goes inactive during blindness earns no recovery credit. |
+
+### Controlled-clock evaluation
+
+The frozen v1 comparison uses the same 20-positive window, coverage, freshness and two-minute persistence for both rules. The offline Wilson rule fires when the two-sided 95% interval's lower bound on the failure share exceeds 25%. Fixture orders 0, 1 and 2 use deterministic slices and rotations of the N13 pools. The schedule study models their expected observations, with evenly spaced fault injections at 100%, 50% and 25% of write positives over 40 healthy, 40 degraded and 40 recovered slots. The PostgreSQL lane exercises the scripted observations through the real worker.
+
+| Synthetic result | Fixed | Wilson |
+|---|---:|---:|
+| Episodes detected at 100% and 50% | 18/18 | 18/18 |
+| Episodes detected at 25%, the below-floor control | 0/9 | 0/9 |
+| Median detection delay on above-floor episodes | 255 s (17 slots) | 345 s (23 slots) |
+| Firings in 100 noisy-healthy hours | 16 (0.16/h) | 1 (0.01/h) |
+
+The noisy-healthy control uses 200 independent seeded schedules and a failure probability of 21/192, the published 10.9% rounded healthy failure rate. Wilson wins the predeclared comparison of missed above-floor episodes, then new healthy firings, then detection delay. The shipped Prometheus rule uses the fixed threshold. The synthetic study emits every run's detection and valid-clear delays, misses, healthy hours and firings, and blind intervals. These are controlled-clock results for the registered faults and noise process.
+
+The private replay first checks N13's registered N3 recording bindings and regrades all paired write positives. The acceptance totals are 171/192 tool-contract and 3/192 default. It then feeds tool-contract, default and tool-contract through the frozen monitor at the virtual cadence. The primary order follows the registered tool-contract schedule. Three seeded paired permutations are labelled as resamples. The output contains only aggregates and stays outside the checkout. See [the local canary runbook](operations.md#local-canary-monitor).

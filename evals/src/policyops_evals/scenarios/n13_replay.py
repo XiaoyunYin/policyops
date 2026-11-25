@@ -23,7 +23,7 @@ from policyops_contracts.retail import ModifyUserAddress, ToolName
 from policyops_contracts.retail_service import FIXTURE_SHA256
 from policyops_evals.scenarios import Refused, n3, read_bounded, study
 from policyops_evals.scenarios.arms import Arm
-from policyops_evals.scenarios.batch import read_result, slot_directory
+from policyops_evals.scenarios.batch import Result, read_result, slot_directory
 from policyops_evals.scenarios.cases import POSITIVES, Scenario
 from policyops_evals.scenarios.generator import FixtureData
 from policyops_evals.scenarios.grading import _arguments, _output, _write
@@ -94,17 +94,25 @@ def replay_frame(source: Path, manifests: Path, fixture: FixtureData) -> tuple[s
     return str(digest), frame
 
 
-def replay_slot(source: Path, digest: str, fixture: FixtureData, item: n3.Assignment) -> ReplayRow:
+def verified_tape(source: Path, digest: str, item: n3.Assignment) -> tuple[Result, Tape] | None:
     result = read_result(source, item.slot, digest)
     directory = study.private_child(slot_directory(source, item.slot), "tape")
     if result is None or not directory.is_dir():
-        return ReplayRow("missing_tape")
+        return None
     for exchange in directory.glob("[0-9][0-9].json"):
         study.private_child(directory, exchange.name)
     tape = Tape(directory)
     tape_digest = sha256(b"\n".join(exchange.model_dump_json().encode() for exchange in tape.records)).hexdigest()
     if tape_digest != result.tape_sha256:
         raise Refused("recorded N3 tape digest mismatch")
+    return result, tape
+
+
+def replay_slot(source: Path, digest: str, fixture: FixtureData, item: n3.Assignment) -> ReplayRow:
+    verified = verified_tape(source, digest, item)
+    if verified is None:
+        return ReplayRow("missing_tape")
+    result, tape = verified
     return replay(item.case, fixture, tape, exact_proposal=result.grade.primary is True)
 
 

@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 import re
-from typing import Literal, TypedDict
+from typing import Final, Literal, TypedDict, get_args
 from uuid import UUID
 
 from policyops_contracts.retail import ToolName
@@ -11,6 +11,21 @@ from policyops_contracts.retail import ToolName
 Outcome = Literal["ok", "error", "cancelled", "retry", "refused", "unknown", "skipped", "completed",
                   "failed", "deadline", "budget", "contract_gap", "result", "invalid_output", "structured",
                   "truncated", "settled", "capped", "recorded", "lost_claim", "unchanged", "contradiction"]
+CanaryProposal = Literal["exact", "wrong_target", "abstain", "invalid", "other_miss", "unavailable"]
+CanaryAmbiguous = Literal["clarified", "unsafe_attempt", "other", "unavailable"]
+CanaryGateway = Literal["accepted", "target_refused", "other_refused", "not_reached", "unavailable"]
+CANARY_PROPOSALS: tuple[CanaryProposal, ...] = get_args(CanaryProposal)
+CANARY_AMBIGUOUS: tuple[CanaryAmbiguous, ...] = get_args(CanaryAmbiguous)
+CANARY_GATEWAYS: tuple[CanaryGateway, ...] = get_args(CanaryGateway)
+CANARY_PROPOSAL_COUNT: Final = "canary.proposal_window_count"
+CANARY_AMBIGUOUS_COUNT: Final = "canary.ambiguous_window_count"
+CANARY_GATEWAY_COUNT: Final = "canary.gateway_window_count"
+CANARY_FINALIZED: Final = "canary.last_finalized_timestamp"
+CANARY_LABELS: dict[str, tuple[str, tuple[str, ...]]] = {
+    CANARY_PROPOSAL_COUNT: ("result", CANARY_PROPOSALS),
+    CANARY_AMBIGUOUS_COUNT: ("result", CANARY_AMBIGUOUS),
+    CANARY_GATEWAY_COUNT: ("outcome", CANARY_GATEWAYS),
+}
 
 
 class Attributes(TypedDict, total=False):
@@ -24,6 +39,7 @@ class Attributes(TypedDict, total=False):
     model: str
     operation: str
     outcome: str
+    result: str
     cost_class: str
     input_tokens: int
     output_tokens: int
@@ -51,7 +67,8 @@ ENUMS: dict[str, frozenset[str]] = {
     "outcome": frozenset({"ok", "error", "cancelled", "retry", "refused", "unknown", "skipped", "completed",
                           "failed", "deadline", "budget", "contract_gap", "result", "invalid_output", "structured",
                           "truncated", "settled", "capped", "recorded", "lost_claim", "unchanged", "contradiction",
-                          "succeeded", "reconciled", "reserved", "dispatched"}),
+                          "succeeded", "reconciled", "reserved", "dispatched", *CANARY_GATEWAYS}),
+    "result": frozenset((*CANARY_PROPOSALS, *CANARY_AMBIGUOUS)),
     "cost_class": frozenset({"known", "unconfirmed", "not_dispatched"}),
     "tool": frozenset(t.value for t in ToolName),
     "access": frozenset({"read", "write", "control"}),
@@ -85,7 +102,7 @@ STARTUP_ROLE_CATEGORIES = frozenset({
     "RuntimeRoleError: a pooled connection authenticated as a different role",
     "RuntimeRoleError: this engine was already verified for a different runtime role",
 })
-METRIC_KEYS = frozenset({"provider", "model", "outcome", "error_code", "kind"})
+METRIC_KEYS = frozenset({"provider", "model", "outcome", "result", "error_code", "kind"})
 
 
 def clean(values: Mapping[str, object], *, metric: bool = False) -> dict[str, str | int]:

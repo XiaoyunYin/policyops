@@ -177,6 +177,26 @@ jobs:
       - name: Evaluator PostgreSQL integration tests (retail simulator database)
         working-directory: evals
         run: python3 -B ../scripts/devenv.py uv run --frozen pytest -m postgres
+      - name: Canary Prometheus rules in the pinned LGTM image
+        run: |
+          export POLICYOPS_CANARY_PROMETHEUS_CONFIG="$POLICYOPS_TEMP_DIR/canary-prometheus.yaml"
+          python3 -B scripts/n15_prometheus.py --test --prepare "$POLICYOPS_CANARY_PROMETHEUS_CONFIG"
+          compose=(docker compose -p policyops-canary-ci -f infra/compose/observability.yaml -f infra/compose/observability-canary.yaml)
+          cleanup() {
+            status=$?
+            "${compose[@]}" down --volumes || status=1
+            exit "$status"
+          }
+          trap cleanup EXIT
+          "${compose[@]}" up -d --wait --wait-timeout 120
+          url=http://127.0.0.1:3000/api/datasources/proxy/uid/prometheus/api/v1/rules
+          for i in {1..30}; do
+            if payload=$(curl -fs --max-time 2 "$url") && python3 -c 'import json, sys; r=json.load(sys.stdin); names={x["name"] for g in r["data"]["groups"] for x in g["rules"] if x["health"] == "ok"}; sys.exit(not {"CanaryProposalQualityLow", "CanaryUnsafeAttempts", "CanaryMonitorBlind"} <= names)' <<<"$payload"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
       - name: No owned container or new volume remains
         if: always()
         run: |

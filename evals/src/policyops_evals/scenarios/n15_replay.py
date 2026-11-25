@@ -13,7 +13,7 @@ from policyops_evals.scenarios.cases import POSITIVES
 from policyops_evals.scenarios.grading import grade_slot
 from policyops_evals.scenarios.n13_replay import _temp_path, replay_frame, verified_tape
 from policyops_evals.scenarios.n15_monitor import CADENCE, RULES, evaluate
-from policyops_evals.scenarios.n15_scorer import Capture, Score, Scorer
+from policyops_evals.scenarios.n15_scorer import Capture, Score, Scorer, proposal_verdict
 
 
 EXPECTED = {Arm.REVISION: 171, Arm.BASELINE: 3}
@@ -33,14 +33,19 @@ def report(source: Path, manifests: Path, fixture_root: Path) -> dict[str, objec
         if bound is None:
             raise Refused("recorded N3 positive is missing its tape")
         result, tape = bound
-        grade = grade_slot(item.case.gold, tape.records or None, stop=result.stop_reason)
-        if grade.primary != result.grade.primary:
+        records = tape.records if tape.records or result.failure_kind == "provider" else None
+        grade = grade_slot(item.case.gold, records, stop=result.stop_reason)
+        expected = proposal_verdict(result.grade)
+        if grade.primary != result.grade.primary or proposal_verdict(grade) != expected:
             raise Refused("recorded N3 grade does not reconcile")
         regraded[item.arm] += int(grade.primary is True)
         pair = (item.case.key, item.repeat)
         if pair in scored[item.arm]:
             raise Refused("duplicate recorded N3 positive")
-        scored[item.arm][pair] = scorer.score(item.slot.id, Capture(tuple(tape.records), result.stop_reason))
+        score = scorer.score(item.slot.id, Capture(tuple(tape.records), result.stop_reason))
+        if score.proposal != expected:
+            raise Refused("canary proposal verdict does not reconcile to N3")
+        scored[item.arm][pair] = score
     revision, baseline = scored[Arm.REVISION], scored[Arm.BASELINE]
     if len(revision) != PAIRS or revision.keys() != baseline.keys() or regraded != EXPECTED:
         raise Refused("N3 paired positive totals do not reconcile")
@@ -81,6 +86,7 @@ def main() -> int:
         with output.open("x", encoding="utf-8", newline="\n") as handle:
             json.dump(values, handle, sort_keys=True)
             handle.write("\n")
+        print(json.dumps({key: values[key] for key in ("pairs", "n3_exact", "canary_exact")}, sort_keys=True))
     except Exception as error:
         print(json.dumps({"error": type(error).__name__}))
         return 1

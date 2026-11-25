@@ -128,6 +128,8 @@ SCENARIO_IMPORTS = {
         "policyops.providers.contract", "policyops.providers.tokenizer", "policyops.retrieval.parse",
         "policyops.runtime.clock", "policyops.runtime.investigation", "policyops.runtime.spec",
         "policyops.runtime.worker", "policyops.services.runs",
+        "policyops.domain.retail_rules",  # N15 reduces the policy decision to an allowed flag.
+        "policyops.gateway.steps",  # N15 receives the typed write result at the runtime boundary.
     },
     # N13 drives the real proposal, review and execution services from the local acceptance harness.
     "src/policyops_evals/scenarios/n13_acceptance.py": {
@@ -146,6 +148,27 @@ SCENARIO_IMPORTS = {
         "policyops.adapters.retail_client", "policyops.domain.retail_rules", "policyops.domain.session",
         "policyops.gateway.facts", "policyops.gateway.ports", "policyops.gateway.steps",
         "policyops.persistence.database", "policyops.runtime.clock",
+    },
+    "src/policyops_evals/scenarios/n15_canary.py": {
+        "policyops.api.logging",  # Apply the shared allowlisted JSON formatter on the canary host.
+        "policyops.persistence.roles",  # Open the disposable app database with runtime and auth roles.
+        "policyops.providers.tokenizer",  # Count scripted request tokens with the pinned app vocabulary.
+        "policyops.settings",  # Validate canary OTLP settings before configuring the exporter.
+        "policyops.telemetry",  # Start the opt-in canary telemetry backend through its facade.
+    },
+    "src/policyops_evals/scenarios/n15_scorer.py": {
+        "policyops.telemetry",  # Publish window metrics through the application facade.
+        "policyops.telemetry.attributes",  # Share the registered metric names and closed label sets.
+    },
+    "tests/test_scenario_n15.py": {
+        "policyops.providers.tokenizer",  # Exercise the scripted transport with the pinned tokenizer.
+        "policyops.settings",  # Configure the telemetry backend for the in-memory contract test.
+        "policyops.telemetry",  # Verify metric publication and filtering through the facade.
+        "policyops.telemetry.attributes",  # Check the exported gauge series against their registered label sets.
+        "policyops.telemetry.sdk",  # Inspect the memory exporter's actual OTel metrics.
+    },
+    "tests/test_scenario_n15_pg.py": {
+        "policyops.runtime.worker",  # Verify canary slots never invoke the worker discovery path.
     },
     "src/policyops_evals/scenarios/setup.py": {
         "policyops.persistence.database", "policyops.persistence.migrate", "policyops.persistence.records",

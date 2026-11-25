@@ -30,6 +30,7 @@ from policyops.telemetry import configure
 
 
 if TYPE_CHECKING:
+    from policyops.services.execution import Step
     from policyops_contracts.seeds import CaseCustomerBinding
 
 
@@ -306,15 +307,29 @@ def retail() -> None:
                     timeout_graceful_shutdown=10, log_config=SERVE_LOG_CONFIG)
 
 
-def worker_loop(stop: threading.Event, passes: tuple[Callable[[], Any], ...], *, idle: float = 1) -> None:
+def worker_loop(stop: threading.Event, passes: tuple[Callable[[], int | list[Step] | None], ...], *,
+                idle: float = 1, drain: bool = False) -> None:
     """One bounded batch per pass; SIGTERM stops discovery, in-flight writes keep their operation IDs."""
+    busy_passes = 0
     while not stop.is_set():
+        busy = False
         for run in passes:
             if stop.is_set():
                 break
-            run()
+            result = run()
+            if drain:
+                busy |= result > 0 if isinstance(result, int) else bool(result)
         HEARTBEAT.touch()
-        stop.wait(idle)
+        if drain and stop.is_set():
+            break
+        if not busy:
+            busy_passes = 0
+            stop.wait(idle)
+        else:
+            busy_passes += 1
+            if busy_passes == 50:
+                busy_passes = 0
+                stop.wait(0.05)
 
 
 def worker(*, execution_hooks: Any = None) -> None:
@@ -326,6 +341,10 @@ def worker(*, execution_hooks: Any = None) -> None:
     from policyops.runtime.worker import build_worker
     from policyops_contracts.retail_service import FIXTURE_SHA256
 
+    drain_setting = os.environ.get("POLICYOPS_WORKER_DRAIN", "0")
+    if drain_setting not in {"0", "1"}:
+        raise ValueError("POLICYOPS_WORKER_DRAIN must be 0 or 1")
+    drain = drain_setting == "1"
     if execution_hooks is not None and (os.environ.get("POLICYOPS_COMPOSE_DRILL") != "1"
                                         or os.environ.get("POLICYOPS_ENV") != "local"):
         raise RuntimeError("execution fault hooks require the explicit local Compose drill")
@@ -354,12 +373,13 @@ def worker(*, execution_hooks: Any = None) -> None:
             scopes = BoundScopes(app, demo_bindings(app), FIXTURE_SHA256)
             review.executor.scopes = executions.executor.scopes = scopes
 
-        passes = (refresh_bindings, jobs.run_once, executions.dispatch_once, outbox.dispatch_once)
+        passes: tuple[Callable[[], int | list[Step] | None], ...] = (
+            refresh_bindings, jobs.run_once, executions.dispatch_once, outbox.dispatch_once,
+        )
         if helpdesk is not None:
             connector = HelpdeskWorker(env="local", app=app, discovery=discovery, settings=helpdesk)
-            worker_loop(stop, (*passes, connector.run_once))
-        else:
-            worker_loop(stop, passes)
+            passes = (*passes, connector.run_once)
+        worker_loop(stop, passes, drain=drain)
 
 
 def main() -> int:

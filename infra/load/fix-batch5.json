@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "defaults": {
+    "warmup": 60,
+    "measured": 180,
+    "drain": 90
+  },
+  "stages": [
+    {"id": "fix-a1", "w1": 2, "batch": 5},
+    {"id": "fix-b1", "w1": 2, "batch": 5},
+    {"id": "fix-b2", "w1": 2, "batch": 5},
+    {"id": "fix-a2", "w1": 2, "batch": 5},
+    {"id": "fix-a3", "w1": 2, "batch": 5},
+    {"id": "fix-b3", "w1": 2, "batch": 5},
+    {"id": "fix-b4", "w1": 2, "batch": 5},
+    {"id": "fix-a4", "w1": 2, "batch": 5},
+    {"id": "fix-a5", "w1": 2, "batch": 5},
+    {"id": "fix-b5", "w1": 2, "batch": 5}
+  ]
+}

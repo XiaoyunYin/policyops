@@ -185,9 +185,20 @@ def test_ready_route_requires_started_lifespan_and_returns_503(runtime: Any) -> 
     asyncio.run(scenario())
 
 
+class RecordingStop(threading.Event):
+    def __init__(self) -> None:
+        super().__init__()
+        self.waits: list[float | None] = []
+
+    def wait(self, timeout: float | None = None) -> bool:
+        self.waits.append(timeout)
+        return self.is_set()
+
+
+@pytest.mark.parametrize("drain", [False, True])
 def test_worker_finishes_current_pass_and_stops_discovery(runtime: Any, monkeypatch: pytest.MonkeyPatch,
-                                                       tmp_path: Path) -> None:
-    stop = threading.Event()
+                                                        tmp_path: Path, drain: bool) -> None:
+    stop = RecordingStop()
     calls = []
 
     def finish_inflight() -> None:
@@ -195,8 +206,54 @@ def test_worker_finishes_current_pass_and_stops_discovery(runtime: Any, monkeypa
         stop.set()  # same event the service's SIGTERM handler sets
 
     monkeypatch.setitem(runtime.worker_loop.__globals__, "HEARTBEAT", tmp_path / "heartbeat")
-    runtime.worker_loop(stop, (finish_inflight, lambda: calls.append("unexpected_dispatch")), idle=0)
+    runtime.worker_loop(stop, (finish_inflight, lambda: calls.append("unexpected_dispatch")), drain=drain)
     assert calls == ["inflight_finished"] and (tmp_path / "heartbeat").is_file()
+    assert stop.waits == ([] if drain else [1])
+
+
+@pytest.mark.parametrize("options,expected_waits", [({}, [1] * 5), ({"drain": True}, [1])])
+def test_worker_waits_after_idle_passes(runtime: Any, monkeypatch: pytest.MonkeyPatch,
+                                        options: dict[str, bool], expected_waits: list[float]) -> None:
+    stop = RecordingStop()
+    jobs = iter([1, 0, 0, 0, 1])
+    steps = iter([[], [object()], [], [], []])
+    published = iter([0, 0, 1, 0, 0])
+    heartbeat_waits = []
+
+    def heartbeat() -> None:
+        heartbeat_waits.append(list(stop.waits))
+        if len(heartbeat_waits) == 5:
+            stop.set()
+
+    monkeypatch.setitem(runtime.worker_loop.__globals__, "HEARTBEAT", SimpleNamespace(touch=heartbeat))
+    runtime.worker_loop(stop, (lambda: None, lambda: next(jobs), lambda: next(steps),
+                               lambda: next(published), lambda: None), **options)
+    assert stop.waits == expected_waits
+    assert heartbeat_waits == ([[], [], [], [], [1]] if options else [[1] * count for count in range(5)])
+
+
+def test_worker_drain_yields_after_consecutive_busy_passes(runtime: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    stop = RecordingStop()
+    heartbeat_waits = []
+    work = iter([1] * 49 + [0] + [1] * 100 + [0, 1])
+
+    def heartbeat() -> None:
+        heartbeat_waits.append(list(stop.waits))
+        if len(heartbeat_waits) == 152:
+            stop.set()
+
+    monkeypatch.setitem(runtime.worker_loop.__globals__, "HEARTBEAT", SimpleNamespace(touch=heartbeat))
+    runtime.worker_loop(stop, (lambda: next(work),), drain=True)
+    assert heartbeat_waits == ([[]] * 50 + [[1]] * 50 + [[1, 0.05]] * 50
+                               + [[1, 0.05, 0.05], [1, 0.05, 0.05, 1]])
+    assert stop.waits == [1, 0.05, 0.05, 1]
+
+
+@pytest.mark.parametrize("value", ["", "true", "2"])
+def test_worker_rejects_invalid_drain_at_startup(runtime: Any, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("POLICYOPS_WORKER_DRAIN", value)
+    with pytest.raises(ValueError, match="POLICYOPS_WORKER_DRAIN must be 0 or 1"):
+        runtime.worker()
 
 
 def test_engine_cleanup_preserves_setup_error(runtime: Any, monkeypatch: pytest.MonkeyPatch) -> None:

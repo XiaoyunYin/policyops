@@ -341,7 +341,9 @@ def test_full_investigation_to_customer_consent_staff_approval_dispatch_and_summ
                                                      spec.config_sha256, env.run.run_id))
         with workspace_transaction(env.app, env.run.workspace_id) as connection:
             repo.append_message(connection, message_id=uuid4(), scope=env.scope.binding.scope, source="seeded",
-                entered_by=None, text_value="Please cancel my pending order.", created_at=env.clock.now())
+                # N13: an agent order write needs a customer-stated ID or a sole actionable order.
+                entered_by=None, text_value=f"Please cancel my pending order {env.order}.",
+                created_at=env.clock.now())
             run = store.get_run(connection, env.run.run_id)
             assert run is not None
             execute_id = store.create_execute_job(connection, run, max_attempts=3, now=env.clock.now())

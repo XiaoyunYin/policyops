@@ -211,6 +211,10 @@ simulated customer consent, separate staff approval and simulator execution. Pub
 demo roles are restricted to the fictional tenant, and the nightly reset discards
 demo activity. The host has no model provider keys.
 
+[![Watch the demo walkthrough](docs/assets/policyops-demo.png)](docs/assets/policyops-demo.webm)
+
+The walkthrough shows staff entering simulated customer consent on a fictional address-change case, a reviewer approving it, and a receipt from the retail simulator. The flow makes no model call.
+
 Release `3609714` passed all 28 live verifier checks, including HTTPS and Dex login.
 The schema-compatible A/B/A drill passed 28/28 at each step, with a docs-only B release.
 PostgreSQL clients enforce `verify-full` with an explicit trust root. The public profile

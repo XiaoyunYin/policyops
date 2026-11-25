@@ -511,6 +511,34 @@ It retains secret values and ACME state. Missed timers run at next activation. I
 `systemctl list-timers policyops-reset.timer` and `journalctl -u policyops-reset.service`;
 a failed reset requires operator intervention. Never run this against retained real data.
 
+### Record the demo walkthrough
+
+From `apps/web`, use Node 26, the locked web dependencies, and the matching Playwright Chromium installation.
+Put the public demo passwords listed above in separate files named `alice` and `bob` in an external directory.
+
+```powershell
+$env:POLICYOPS_TEMP_DIR = 'D:\path\to\external\scratch'
+$env:TEMP = $env:TMP = $env:npm_config_cache = $env:POLICYOPS_TEMP_DIR
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$env:NODE_DISABLE_COMPILE_CACHE = '1'
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:POLICYOPS_TEMP_DIR 'playwright-browsers'
+$env:POLICYOPS_DEMO_ORIGIN = 'https://52-11-210-0.sslip.io'
+node .\demo\record-demo.ts --password-dir 'D:\path\to\demo-passwords'
+```
+
+Create the scratch directory before running and set `PLAYWRIGHT_BROWSERS_PATH` to your prepared Chromium installation.
+The recorder prints the WebM and PNG paths under `POLICYOPS_TEMP_DIR/N12/<run>/`. Review both files before copying
+them to `docs/assets/policyops-demo.webm` and `docs/assets/policyops-demo.png` for the README.
+
+The run uses one pending fictional fixture. It records staff-entered simulated customer consent, a separate approval,
+and the committed receipt from the simulated retail system. There is no model call. If a write or its outcome is
+unclear, inspect the same proposal before starting another run.
+
+For a disposable local rehearsal, start the [loopback Compose stack](operations.md#start-and-stop) and present a fresh
+fixture from the repository root with `docker compose exec -T worker python -B infra/compose/scenario.py seed`.
+Set `POLICYOPS_DEMO_ORIGIN` to `http://127.0.0.1:8080`, add `--local`, and point `--password-dir` at that stack's
+`alice` and `bob` password files.
+
 ## Hardening and live acceptance
 
 - Confirm Lightsail ingress: TCP 80/443 from all IPv4, 22 only from admin `/32`, no IPv6.

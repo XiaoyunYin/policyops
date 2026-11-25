@@ -58,7 +58,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    include: ["src/**/*.test.{ts,tsx}", "e2e/**/*.unit.ts"],
+    include: ["src/**/*.test.{ts,tsx}", "e2e/**/*.unit.ts", "demo/**/*.unit.ts"],
     setupFiles: ["src/test/setup.ts"],
     restoreMocks: true,
     sequence: { shuffle: false },

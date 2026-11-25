@@ -18,7 +18,7 @@ export default tseslint.config(
     rules: reactHooks.configs.recommended.rules,
   },
   {
-    files: ["vite.config.ts", "playwright.config.ts", "e2e/**/*.ts"],
+    files: ["vite.config.ts", "playwright.config.ts", "e2e/**/*.ts", "demo/**/*.ts"],
     extends: typeChecked,
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },

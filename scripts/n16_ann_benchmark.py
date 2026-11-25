@@ -129,7 +129,7 @@ def error_code(error: BaseException) -> str:
 
 def hardware(directory: Path) -> dict[str, Any]:
     memory: int | None = None
-    if os.name == "nt":
+    if sys.platform == "win32":  # mypy narrows platform-only ctypes attributes on sys.platform, not os.name
         from ctypes import byref, c_ulonglong, windll
 
         kib = c_ulonglong()

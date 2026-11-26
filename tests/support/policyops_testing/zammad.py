@@ -1,4 +1,4 @@
-"""Synthetic, documentation-derived Zammad HTTP fixtures. No live credentials or data."""
+"""Fictional Zammad HTTP fixtures shaped by the sanitized 7.2.3-0019 capture."""
 
 from datetime import UTC, datetime
 import hmac
@@ -12,7 +12,6 @@ import httpx
 from pydantic import SecretStr
 
 from policyops.settings import HelpdeskConnection, HelpdeskSettings
-from policyops_contracts.helpdesk import TicketWakeup
 
 
 NOW = datetime(2026, 11, 24, 10, tzinfo=UTC)
@@ -28,7 +27,10 @@ def settings(workspace: UUID | None = None, *, enabled: bool = True) -> Helpdesk
 
 
 def webhook(ticket_id: int = 42, updated_at: datetime = NOW) -> bytes:
-    return TicketWakeup(ticket_id=ticket_id, updated_at=updated_at).model_dump_json().encode()
+    if ticket_id == 42 and updated_at == NOW:
+        return (FIXTURES / "zammad-webhook.json").read_bytes().rstrip(b"\n")
+    timestamp = updated_at.isoformat().replace("+00:00", "Z")
+    return json.dumps({"ticket_id": ticket_id, "updated_at": timestamp}, separators=(",", ":")).encode()
 
 
 def sign(config: HelpdeskConnection, body: bytes) -> bytes:
@@ -72,7 +74,8 @@ class FakeZammad:
             raise httpx.ReadError("simulated broken response", request=request)
         if fault in {"401", "403", "404", "422"}:
             return httpx.Response(int(fault))
-        note = self.add(payload["body"], article_id=max(row["id"] for row in self.articles) + 1)
+        note = self.add(payload["body"], article_id=max(row["id"] for row in self.articles) + 1,
+                        subject=payload["subject"])
         if fault == "lost":
             raise httpx.ReadTimeout("simulated lost response", request=request)
         if fault == "commit_503":
@@ -80,12 +83,12 @@ class FakeZammad:
         return httpx.Response(201, json=note)
 
     def add(self, body: str, *, article_id: int, author: int | None = None,
-            internal: bool = True) -> dict[str, Any]:
+            internal: bool = True, subject: str = "Fictional ticket article") -> dict[str, Any]:
         article = {
             "id": article_id, "ticket_id": 42, "internal": internal,
             "created_by_id": self.config.integration_user_id if author is None else author,
             "created_at": self.ticket["updated_at"], "sender": "Agent" if author is None else "Customer",
-            "content_type": "text/plain", "body": body,
+            "content_type": "text/plain", "body": body, "type": "note", "subject": subject,
         }
         self.articles.append(article)
         return article

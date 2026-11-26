@@ -67,7 +67,7 @@ def corpus(directory: Path) -> tuple[dict[str, Any], Iterator[Vector]]:
                 if len(line) > MAX_LINE_BYTES or count > ROWS:
                     raise ValueError("corpus_row_limit")
                 row = json.loads(line)
-                source_id, values = row.get("id"), row.get("embedding")
+                source_id, values = row.get("id"), row.get("text-embedding-ada-002")
                 if not isinstance(source_id, str) or not isinstance(values, list):
                     raise ValueError("corpus_row_shape")
                 yield vector(source_id, values)

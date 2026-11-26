@@ -82,20 +82,25 @@ def provision(zammad: httpx.Client) -> dict[str, Any]:
             "requester_id": customer, "customer_user_id": demo()["customer_id"]}
 
 
-def wire(zammad: httpx.Client, settings_file: Path, connection_id: str, port: int) -> dict[str, int]:
+def wire(zammad: httpx.Client, settings_file: Path, connection_id: str, port: int,
+         disallowed_group_id: int) -> dict[str, int]:
     config = HelpdeskSettings.from_secret_file(settings_file).connection(connection_id)
     if config is None or not 1 <= port <= 65535:
         raise SeedError("invalid connection or receiver port")
-    # Management JSON is a smoke assumption. The admin UI has equivalent options.
+    if not 1 <= disallowed_group_id < 2**53 or disallowed_group_id in config.allowed_group_ids:
+        raise SeedError("invalid disallowed fixture group")
+    groups = [str(group) for group in sorted(config.allowed_group_ids)] + [str(disallowed_group_id)]
     webhook_id = create(zammad, "webhooks", {
         "name": f"PolicyOps {connection_id}", "active": True, "ssl_verify": True,
         "endpoint": f"http://policyops-helpdesk:{port}/api/v1/integrations/zammad/{connection_id}/events",
-        "signature_token": config.signing_secret.get_secret_value(), "custom_payload": True,
-        "payload": '{"ticket_id":#{ticket.id},"updated_at":"#{ticket.updated_at}"}',
+        "signature_token": config.signing_secret.get_secret_value(), "customized_payload": True,
+        "custom_payload": '{"ticket_id":"#{ticket.id}","updated_at":"#{ticket.updated_at.iso8601}"}',
     })
     trigger = create(zammad, "triggers", {
-        "name": f"PolicyOps {connection_id}", "active": True, "condition": {},
-        "perform": {"notification.webhook": {"webhook_id": webhook_id}}, "execution": "always",
+        "name": f"PolicyOps {connection_id}", "active": True, "activator": "action",
+        "execution_condition_mode": "always",
+        "condition": {"ticket.group_id": {"operator": "is", "value": groups}},
+        "perform": {"notification.webhook": {"webhook_id": webhook_id}},
     })
     return {"webhook_id": webhook_id, "trigger_id": trigger}
 
@@ -221,6 +226,7 @@ def main() -> int:
         mode.add_argument("--admin-token-file", type=Path, required=True)
     webhook.add_argument("--settings-file", type=Path, required=True)
     webhook.add_argument("--receiver-port", type=int, default=8080)
+    webhook.add_argument("--disallowed-group-id", type=int, required=True)
     for mode in (webhook, bind, inspection, capturing):
         mode.add_argument("--connection", required=True)
     bind.add_argument("--requester-id", type=int, required=True)
@@ -232,7 +238,8 @@ def main() -> int:
         if args.mode in {"provision", "wire"}:
             with admin(args.admin_origin, args.admin_token_file) as zammad:
                 result = (provision(zammad) if args.mode == "provision" else
-                          wire(zammad, args.settings_file, args.connection, args.receiver_port))
+                          wire(zammad, args.settings_file, args.connection, args.receiver_port,
+                               args.disallowed_group_id))
         elif args.mode == "bind":
             result = binding(args.connection, args.requester_id)
         elif args.mode == "prepare":

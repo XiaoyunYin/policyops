@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import gzip
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -12,10 +13,11 @@ import pytest
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts import n16_ann_data as ann_data
 from scripts.bm25_latency_probe import percentile
 from scripts.n16_ann_benchmark import digest
 from scripts.n16_ann_data import DIMENSION, FILLER, SCOPES, K, Vector, cutoff_ties, split, tenant_layout, vector
-from scripts.n16_ann_fetch import verify_sha
+from scripts.n16_ann_fetch import ARCHIVE, REVISION, SHA256, verify_sha
 from scripts.n16_ann_report import read, recall_at_10, render, spread
 
 
@@ -57,6 +59,32 @@ def test_split_and_tenant_counts_are_order_independent() -> None:
 def test_float32_vectors_refuse_unindexable_values(value: float) -> None:
     with pytest.raises(ValueError):
         vector("source", [value] + [0.0] * (DIMENSION - 1))
+
+
+@pytest.mark.parametrize("key", ["text-embedding-ada-002", "embedding"])
+def test_corpus_requires_the_archive_embedding_key(key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    card = b"license: mit\n224,482 rows\n"
+    licence = (b"the embeddings are published under MIT license\n"
+               b"en.wikipedia.org/wiki/Wikipedia:Copyrights\nCopyright (c) 2023 Stephan Sturges\n")
+    (tmp_path / "README.md").write_bytes(card)
+    (tmp_path / "Original_License").write_bytes(licence)
+    monkeypatch.setattr(ann_data, "ROWS", 1)
+    # The production archive is too large for a unit test. Only its file-level pin is bypassed.
+    monkeypatch.setattr(ann_data, "verify_archive", lambda _: None)
+    (tmp_path / "source.json").write_text(json.dumps({
+        "revision": REVISION, "sha256": SHA256, "rows": 1,
+        "card_sha256": sha256(card).hexdigest(), "licence_sha256": sha256(licence).hexdigest(),
+    }), encoding="utf-8")
+    values = [1.0] + [0.0] * (DIMENSION - 1)
+    with gzip.open(tmp_path / ARCHIVE, "wb") as archive:
+        archive.write((json.dumps({"id": "fictional", key: values}) + "\n").encode())
+
+    _, rows = ann_data.corpus(tmp_path)
+    if key == "embedding":
+        with pytest.raises(ValueError, match=r"^corpus_row_shape$"):
+            list(rows)
+    else:
+        assert list(rows) == [vector("fictional", values)]
 
 
 def test_fetch_verifier_rejects_a_bad_sha(tmp_path: Path) -> None:

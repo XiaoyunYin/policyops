@@ -4,10 +4,15 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta
+import hmac
+import json
+from pathlib import Path
+import runpy
 from types import SimpleNamespace
 from typing import Any, Never, cast
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import RowMapping
@@ -24,6 +29,51 @@ from policyops.services.helpdesk_writeback import Note, Result, deliver, expired
 from policyops_contracts.clock import FixedClock
 from policyops_contracts.helpdesk import TicketWakeup
 from policyops_testing.zammad import NOW, FakeZammad, Fault, settings, sign, webhook
+
+
+def test_seed_wires_the_zammad_7_2_webhook_and_trigger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = Path(__file__).resolve().parents[2] / "infra" / "compose"
+    monkeypatch.syspath_prepend(str(directory))
+    wire = runpy.run_path(str(directory / "helpdesk_seed.py"))["wire"]
+    config = settings().connections[0]
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"connections": [config.model_dump(mode="json") | {
+        "api_token": config.api_token.get_secret_value(), "signing_secret": config.signing_secret.get_secret_value(),
+    }]}), encoding="utf-8")
+    requests: list[tuple[str, str, dict[str, Any]]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        signing_secret = body.pop("signature_token", None)
+        if request.url.path == "/api/v1/webhooks":
+            if not isinstance(signing_secret, str) or not hmac.compare_digest(
+                    signing_secret, config.signing_secret.get_secret_value()):
+                pytest.fail("webhook signing secret did not match the configured value")
+        elif signing_secret is not None:
+            pytest.fail("unexpected signing secret in a non-webhook request")
+        requests.append((request.method, request.url.path, body))
+        return httpx.Response(201, json={"id": len(requests)})
+
+    with httpx.Client(base_url="http://127.0.0.1:8081", transport=httpx.MockTransport(handle)) as zammad:
+        assert wire(zammad, settings_file, "fixture", 8080, 8) == {"webhook_id": 1, "trigger_id": 2}
+
+    template = '{"ticket_id":"#{ticket.id}","updated_at":"#{ticket.updated_at.iso8601}"}'
+    assert requests == [
+        ("POST", "/api/v1/webhooks", {
+            "name": "PolicyOps fixture", "active": True, "ssl_verify": True,
+            "endpoint": "http://policyops-helpdesk:8080/api/v1/integrations/zammad/fixture/events",
+            "customized_payload": True, "custom_payload": template,
+        }),
+        ("POST", "/api/v1/triggers", {
+            "name": "PolicyOps fixture", "active": True, "activator": "action",
+            "execution_condition_mode": "always",
+            "condition": {"ticket.group_id": {"operator": "is", "value": ["7", "8"]}},
+            "perform": {"notification.webhook": {"webhook_id": 1}},
+        }),
+    ]
+    assert json.loads(requests[0][2]["custom_payload"]) == {
+        "ticket_id": "#{ticket.id}", "updated_at": "#{ticket.updated_at.iso8601}",
+    }
 
 
 def test_verify_before_opening_a_workspace_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,6 +106,9 @@ def test_verify_before_opening_a_workspace_transaction(monkeypatch: pytest.Monke
     assert transactions == []
     old = webhook(updated_at=NOW - timedelta(days=1, seconds=1))
     assert service.receive(config.connection_id, old, [sign(config, old)], []) == 400
+    assert received == []
+    ruby_time = raw.replace(b"2026-11-24T10:00:00Z", b"2026-11-24 10:00:00 UTC")
+    assert service.receive(config.connection_id, ruby_time, [sign(config, ruby_time)], []) == 400
     assert received == []
     assert service.receive(config.connection_id, raw, [signature], [b"delivery"]) == 202
     assert transactions == [config.workspace_id] * 2
@@ -192,7 +245,7 @@ def test_remote_mark_mapping_and_article_provenance() -> None:
         articles = client.articles(42)
     destination = destination_digest(config.api_origin, config.integration_user_id)
     link = Link(uuid4(), config.workspace_id, config.connection_id, ticket.id, ticket.customer_id, "demo_user_1",
-                destination, uuid4(), ticket.group_id, ticket.state_id, NOW, 100, NOW)
+                destination, uuid4(), ticket.group_id, ticket.state_id, ticket.updated_at, 100, NOW)
     decide = helpdesk_inbound.disposition
     assert decide(config, ticket, articles, link, "demo_user_1").state == "applied"
     advanced = replace(link, ticket_updated_at=NOW + timedelta(seconds=1), max_article_id=102)
@@ -288,7 +341,7 @@ def test_possibly_sent_recovers_by_lookup_after_restart(fault: Fault) -> None:
     assert send(fake, note).state == "dispatching"
     retry = send(fake, note, possibly_sent=True)
     assert retry.state == "succeeded" and retry.matches[0].id == 102
-    assert retry.matches[0].created_at == NOW
+    assert retry.matches[0].created_at == datetime.fromisoformat(fake.ticket["updated_at"])
     assert len(fake.posts) == 1
 
 

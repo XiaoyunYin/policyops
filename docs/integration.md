@@ -164,51 +164,104 @@ python -B scripts/devenv.py uv run --frozen pytest -m postgres tests/integration
 ```
 
 The PostgreSQL test uses the real runtime roles and simulator with `httpx.MockTransport` for Zammad. The
-proposal is scripted. No model is called. The fake's ticket fixture follows the Tickets API and its articles
-fixture follows the Ticket Articles API. The wake-up fixture is an independently authored minimal template
-based on the webhook documentation. These fixtures precede confirmation against the real service.
+proposal is scripted. No model is called. The fake ticket and article fields and the rendered webhook body
+follow sanitized captures from one disposable local Zammad instance on 2026-11-25
+(`zammad-docker-compose` `v17.5.10`, image `ghcr.io/zammad/zammad:7.2.3-0019`). Fixture values are fictional.
+The REST timestamps include milliseconds. The rendered webhook carries an integer `ticket_id` and a UTC
+`updated_at` with whole seconds.
 [Tickets API](https://docs.zammad.org/en/latest/api/ticket/index.html) · [Articles API](https://docs.zammad.org/en/latest/api/ticket/articles.html) · [Webhook payload](https://admin-docs.zammad.org/en/latest/manage/webhook/payload.html)
 
 ## Coordinator smoke on disposable stacks
 
-1. Select and record an upstream `zammad-docker-compose` release tag and image digests. Use an unmodified checkout
-   of that tag, the upstream scenario for disabling Elasticsearch, and a host loopback-only web port. Set
-   `ELASTICSEARCH_ENABLED=false`. Allocate at least 4 GB of memory to this stack. Create a disposable bridge for
-   the web service and the Zammad process that sends webhooks. Give the web service alias `zammad-nginx` and set
-   `POLICYOPS_ZAMMAD_NETWORK` to the bridge name. Confirm which upstream service sends webhooks for the pinned
-   release. Configure a private-address allowlist for the local receiver if the release requires one.
+1. Use an unmodified checkout of upstream `zammad-docker-compose` tag `v17.5.10` and record the image digests.
+   The 2026-11-25 smoke used this tag and `ghcr.io/zammad/zammad:7.2.3-0019` on one local instance. Allocate
+   at least 4 GB of memory to this stack. Connect nginx, the scheduler and the Rails API server to the
+   disposable bridge. The scheduler sends webhooks, and the API server resolves the endpoint when saving
+   it. Zammad 7.2 permits private addresses for webhook endpoints, so this bridge needs no allowlist.
    [Upstream tagged releases](https://github.com/zammad/zammad-docker-compose/releases) · [Compose setup](https://docs.zammad.org/en/latest/install/docker-compose.html)
 
    ```powershell
-   # Set $upstream, $zammadComposeTag and $zammadProject to the disposable checkout, reviewed tag and project.
-   git -C $upstream describe --tags --exact-match HEAD
+   # Set $upstream and $zammadProject to the disposable checkout and its project name.
+   $zammadComposeTag = 'v17.5.10'
+   $actualTag = git -C $upstream describe --tags --exact-match HEAD
+   if ($LASTEXITCODE -ne 0 -or $actualTag -ne $zammadComposeTag) { throw 'Unexpected upstream tag' }
+   $env:VERSION = '7.2.3-0019'
+   $env:NGINX_EXPOSE_PORT = '127.0.0.1:8081'
    $env:ELASTICSEARCH_ENABLED = 'false'
+   $env:RESTART = 'no'
    $zammadCompose = @('-p',$zammadProject,'--project-directory',$upstream,
-     '-f',"$upstream/docker-compose.yml",'-f',"$upstream/scenarios/disable-elasticsearch-service.yml")
+     '-f',"$upstream/docker-compose.yml",'-f',"$upstream/scenarios/disable-elasticsearch-service.yml",
+     '-f',"$upstream/scenarios/disable-backup-service.yml")
    docker compose @zammadCompose up -d
    $zammadWeb = docker compose @zammadCompose ps -q zammad-nginx
    $zammadSender = docker compose @zammadCompose ps -q zammad-scheduler
+   $zammadApi = docker compose @zammadCompose ps -q zammad-railsserver
+   # Set POLICYOPS_ZAMMAD_NETWORK to a unique bridge name for this run.
    docker network create --internal $env:POLICYOPS_ZAMMAD_NETWORK
    docker network connect --alias zammad-nginx $env:POLICYOPS_ZAMMAD_NETWORK $zammadWeb
    docker network connect $env:POLICYOPS_ZAMMAD_NETWORK $zammadSender
+   docker network connect $env:POLICYOPS_ZAMMAD_NETWORK $zammadApi
    ```
 
-   Compare the reported tag to `$zammadComposeTag` before startup. Edit only external local environment or
-   invocation settings when setting the loopback port and administrative access.
-2. Set up Zammad's administrator and store a temporary admin API token in an external file. Run provisioning
-   to obtain the group, integration user and fictional requester IDs. Use the local UI to give the integration
-   user its own API token. Keep the admin token on the host. Provisioning expects fresh objects.
+2. Set up Zammad's administrator and API token through the local UI or use the Rails runner below on a fresh,
+   healthy instance. Keep the admin token on the host. Provisioning expects fresh objects and returns the
+   allowed and disallowed group IDs, integration user ID and fictional requester ID. Give the integration user
+   its own API token in the UI or with the second Rails runner snippet.
    [REST authentication](https://docs.zammad.org/en/latest/api/intro.html) · [Groups API](https://docs.zammad.org/en/latest/api/group.html) · [Users API](https://docs.zammad.org/en/latest/api/user.html) · [Roles API](https://docs.zammad.org/en/latest/api/role.html)
+
+   Rails logs go to stdout and can contain sensitive values. Capture only the marked token line, write the
+   value to a private external file, and keep command output and the token value out of transcripts and logs.
+
+   ```powershell
+   # Set $adminTokenFile and $integrationTokenFile inside the private external run directory.
+   function Save-ZammadSmokeToken($ruby, $destination) {
+     $tokenLine = @($ruby | docker compose @zammadCompose exec -T zammad-railsserver bundle exec rails r - 2>$null |
+       Where-Object { $_ -cmatch '^POLICYOPS_SMOKE_MARKER=[A-Za-z0-9_-]{24,256}$' })
+     if ($LASTEXITCODE -ne 0 -or $tokenLine.Count -ne 1) { throw 'Zammad token creation failed' }
+     [IO.File]::WriteAllText($destination, $tokenLine[0].Substring('POLICYOPS_SMOKE_MARKER='.Length))
+   }
+
+   $adminRuby = @'
+   Setting.set('system_init_done', true)
+   login = 'policyops-smoke-admin'
+   user = User.find_by(login: login) || User.create!(login: login, firstname: 'Smoke', lastname: 'Admin',
+     email: 'policyops-smoke-admin@example.invalid', password: SecureRandom.hex(24), active: true,
+     created_by_id: 1, updated_by_id: 1)
+   user.roles = Role.where(name: ['Admin', 'Agent'])
+   token = Token.create!(action: 'api', persistent: true, user_id: user.id, name: 'PolicyOps smoke admin',
+     preferences: { permission: ['admin', 'ticket.agent'] })
+   puts "POLICYOPS_SMOKE_MARKER=#{token.token}"
+   '@
+   Save-ZammadSmokeToken $adminRuby $adminTokenFile
+   ```
 
    ```powershell
    $zammadOrigin = 'http://127.0.0.1:8081'
-   python -B scripts/devenv.py uv run --frozen python -B infra/compose/helpdesk_seed.py provision --admin-origin $zammadOrigin --admin-token-file $adminTokenFile
+   $provisioned = python -B scripts/devenv.py uv run --frozen python -B infra/compose/helpdesk_seed.py provision --admin-origin $zammadOrigin --admin-token-file $adminTokenFile
+   if ($LASTEXITCODE -ne 0) { throw 'Zammad provisioning failed' }
+   $fixture = $provisioned | ConvertFrom-Json
+   $requesterId = $fixture.requester_id
+
+   # Optional token creation for the provisioned integration user.
+   $integrationRuby = @'
+   user = User.find_by!(login: 'policyops-n11')
+   token = Token.create!(action: 'api', persistent: true, user_id: user.id, name: 'PolicyOps smoke integration',
+     preferences: { permission: ['ticket.agent'] })
+   puts "POLICYOPS_SMOKE_MARKER=#{token.token}"
+   '@
+   Save-ZammadSmokeToken $integrationRuby $integrationTokenFile
    ```
 
 3. Follow [local Compose operations](operations.md#start-and-stop) using a fresh PolicyOps project and external
    secret directory. Create the mounted JSON file `$env:POLICYOPS_SECRETS_DIR/helpdesk` with the following shape.
    Use a generated signing secret and the integration user's token, the demo workspace ID, and the numeric IDs
-   printed by provisioning. Use the web service's internal port in `api_origin`.
+   from `provision`. Populate `allowed_group_ids` with `$fixture.group_id` and `integration_user_id` with
+   `$fixture.integration_user_id`. Use the web service's internal port in `api_origin`.
+
+   For the historical import check in step 6, add a second entry to `connections` before starting PolicyOps.
+   Copy the workspace, allowed group, API origin, integration user and API token from the first entry. Set
+   `connection_id` to `zammad-history`, generate a distinct `signing_secret`, and set `writeback_enabled` to
+   `false`. This connection starts with no linked tickets or inbound webhook events.
 
    ```json
    {"connections":[{"connection_id":"zammad-n11","workspace_id":"00000000-0000-0000-0000-000000003801",
@@ -218,20 +271,26 @@ based on the webhook documentation. These fixtures precede confirmation against 
    ```
 
    ```powershell
-   $compose = @('-f','compose.yaml','-f','infra/compose/helpdesk.yaml')
+   $compose = @('-p',$env:COMPOSE_PROJECT_NAME,'-f','compose.yaml','-f','infra/compose/helpdesk.yaml')
    $connection = 'zammad-n11'
    $settingsFile = Join-Path $env:POLICYOPS_SECRETS_DIR 'helpdesk'
-   docker compose @compose up -d --build
+   docker compose @compose up -d --build --wait
    docker compose @compose exec -T worker python -B infra/compose/helpdesk_seed.py bind --connection $connection --requester-id $requesterId
-   python -B scripts/devenv.py uv run --frozen python -B infra/compose/helpdesk_seed.py wire --admin-origin $zammadOrigin --admin-token-file $adminTokenFile --settings-file $settingsFile --connection $connection --receiver-port $env:POLICYOPS_HTTP_PORT
+   python -B scripts/devenv.py uv run --frozen python -B infra/compose/helpdesk_seed.py wire --admin-origin $zammadOrigin --admin-token-file $adminTokenFile --settings-file $settingsFile --connection $connection --receiver-port $env:POLICYOPS_HTTP_PORT --disallowed-group-id $fixture.disallowed_group_id
+   if ($LASTEXITCODE -ne 0) { throw 'Zammad wiring failed' }
    ```
 
-   The management REST JSON and trigger interpolation need verification on the selected release. If its
-   management interface differs, configure the webhook and trigger in the Zammad admin UI using the same URL,
-   signing secret and payload. The template is `{"ticket_id":#{ticket.id},"updated_at":"#{ticket.updated_at}"}`.
-   Configure a ticket-create/update trigger that can fire for both fixture groups. The trigger's result must have
-   exactly the two fields and a UTC RFC3339 timestamp. Confirm the integration user can read both fixture groups
-   and write only in the allowed group.
+   The first smoke verified this REST configuration with manual wiring. The webhook uses
+   `customized_payload: true` and `custom_payload` with the JSON template
+   `{"ticket_id":"#{ticket.id}","updated_at":"#{ticket.updated_at.iso8601}"}`. Zammad parses the template
+   before interpolation, emits `ticket_id` as an integer, and renders the timestamp as RFC 3339 UTC.
+   The trigger uses `activator: "action"`, `execution_condition_mode: "always"` and
+   `{"ticket.group_id":{"operator":"is","value":["<allowed group ID>","<disallowed group ID>"]}}` as
+   `condition`. The seed reads allowed IDs from the connection and appends the provisioned
+   `--disallowed-group-id` so both fixture groups emit deliveries. Keep only the allowed group in the
+   connection's allowlist. Confirm the integration user can read both groups and write only in the allowed
+   group. If the management interface differs on another release, configure the same endpoint, signing
+   secret, template and trigger in the admin UI.
    [Webhook settings](https://admin-docs.zammad.org/en/latest/manage/webhook.html) · [Triggers](https://admin-docs.zammad.org/en/latest/manage/trigger.html)
 
 4. Create a ticket with one public plain-text article as the fictional requester in the allowed group. Wait for
@@ -277,7 +336,69 @@ based on the webhook documentation. These fixtures precede confirmation against 
    python -B scripts/devenv.py uv run --frozen pytest -m helpdesk tests/integration/test_helpdesk_smoke.py -k 'not real_trigger_replay'
    ```
 
-6. Check the upstream request header names and timestamp interpolation and compare the sanitized ticket and
+6. Run the historical import check after the allowed ticket and its internal outcome note are settled.
+   This check is pending the coordinator rerun. Fetch the real ticket and its complete article list
+   for `$ticketId`, encode a single v1 CSV row, and stream the unchanged bytes to the worker's private
+   tmpfs. Use the separate `zammad-history` connection configured in step 3.
+
+   ```powershell
+   $historyConnection = 'zammad-history'
+   $archive = Join-Path $env:POLICYOPS_TEMP_DIR 'zammad-history.csv'
+   $exportScript = @'
+   import csv
+   from datetime import UTC, datetime
+   import json
+   from pathlib import Path
+   import sys
+   from urllib.request import ProxyHandler, Request, build_opener
+
+   origin, ticket_id, token_file, destination = sys.argv[1:]
+   headers = {"Authorization": "Token token=" + Path(token_file).read_text(encoding="ascii").strip()}
+   opener = build_opener(ProxyHandler({}))
+
+   def get(resource):
+       with opener.open(Request(f"{origin}/api/v1/{resource}", headers=headers), timeout=5) as response:
+           return json.load(response)
+
+   ticket = get(f"tickets/{int(ticket_id)}")
+   articles = get(f"ticket_articles/by_ticket/{int(ticket_id)}")
+   article_fields = ("id", "ticket_id", "internal", "sender", "created_by_id", "content_type", "body", "created_at")
+   snapshot = [{name: article[name] for name in article_fields} for article in articles]
+   with Path(destination).open("w", newline="", encoding="utf-8") as export:
+       writer = csv.writer(export, lineterminator="\n")
+       writer.writerow(["policyops_helpdesk_v1_ticket_id", "group_id", "customer_id", "state_id", "updated_at", "articles_json"])
+       writer.writerow([ticket[name] for name in ("id", "group_id", "customer_id", "state_id", "updated_at")]
+                       + [json.dumps(snapshot, ensure_ascii=False)])
+   print(datetime.now(UTC).isoformat().replace("+00:00", "Z"))
+   '@
+   $exportedAt = $exportScript | python -B - $zammadOrigin $ticketId $adminTokenFile $archive
+   if ($LASTEXITCODE -ne 0) { throw 'Zammad CSV export failed' }
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes($archive)) |
+     docker compose @compose exec -T worker python -B -c 'import base64, sys; from pathlib import Path; Path(sys.argv[1]).write_bytes(base64.b64decode(sys.stdin.buffer.read().strip(), validate=True))' /tmp/zammad-history.csv |
+     Out-Null
+   if ($LASTEXITCODE -ne 0) { throw 'Worker archive transfer failed' }
+
+   docker compose @compose @invoke bind --connection $historyConnection --requester-id $requesterId
+   if ($LASTEXITCODE -ne 0) { throw 'Historical requester binding failed' }
+   $importer = @('exec','-T','worker','python','-B','infra/compose/helpdesk_import.py')
+   $plan = docker compose @compose @importer plan --connection $historyConnection --file /tmp/zammad-history.csv --exported-at $exportedAt
+   if ($LASTEXITCODE -ne 0) { throw 'Historical import plan failed' }
+   $planned = $plan | ConvertFrom-Json
+   if ($planned.records_total -ne 1 -or $planned.valid -ne 1) { throw 'Expected one valid historical snapshot' }
+   $sha = $planned.file_sha256
+   docker compose @compose @importer run --connection $historyConnection --file /tmp/zammad-history.csv --exported-at $exportedAt --sha256 $sha
+   if ($LASTEXITCODE -ne 0) { throw 'Historical import run failed' }
+   docker compose @compose @importer report --connection $historyConnection --sha256 $sha
+   if ($LASTEXITCODE -ne 0) { throw 'Historical import report failed' }
+   docker compose @compose @invoke inspect --connection $historyConnection --ticket-id $ticketId
+   if ($LASTEXITCODE -ne 0) { throw 'Historical import inspection failed' }
+   ```
+
+   Expect the report to show `completed`, one `accepted` row with reason `case_created`, and no quarantines or
+   rejections. Expect the inspection to show a case with one imported customer message, zero webhook events
+   and zero write-backs. Retain a sanitized report and inspection under the external run root.
+
+7. Check the upstream request header names and timestamp interpolation and compare the sanitized ticket and
    article response fields to the fake. Strip tokens, signatures and unrelated fields before retaining captures.
    Keep a mismatch as a repair item with a minimal sanitized response. Tear down the two disposable projects
    using their explicit project names and remove their dedicated bridge and external secrets after the containers

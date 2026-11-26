@@ -909,10 +909,11 @@ python -B scripts/devenv.py uv run --offline --frozen python -B scripts/run_safe
 ```
 
 The smoke, real-browser and recovery-driver commands are in
-[operations](operations.md#deployment-smoke). No banking trajectory retrieval study,
-ANN/HNSW, graph quality comparison or context-layout optimization result is part of this
-release. Implemented retrieval components and synthetic mechanics tests are described in
-[architecture](architecture.md#retrieval-steps); they supply no measured retrieval-quality claim.
+[operations](operations.md#deployment-smoke). The banking trajectory retrieval study, graph quality
+comparison and context-layout optimization remain outside this release. See the
+[N16 filtered HNSW results](performance.md#n16-100k-results) for the ANN benchmark.
+The implemented retrieval components and synthetic mechanics tests are described in
+[architecture](architecture.md#retrieval-steps).
 
 ### Additional harness details
 

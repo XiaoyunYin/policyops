@@ -96,7 +96,7 @@ The bracket depends on a single burstable SUT per session, short trials and synt
 
 ## N16 filtered HNSW protocol
 
-N16 has no measured results yet. It measures cosine nearest-neighbor recall and client latency on a standalone PostgreSQL table with forced workspace and ready-generation RLS. Live PolicyOps ranks documents by their best eligible chunk. Exact dense search preserves that ranking on the 4,110-passage MultiDoc2Dial corpus without maintaining an approximate index.
+N16 measures cosine nearest-neighbor recall and client latency on a standalone PostgreSQL table with forced workspace and ready-generation RLS. Live PolicyOps ranks documents by their best eligible chunk. Exact dense search preserves that ranking on the 4,110-passage MultiDoc2Dial corpus without maintaining an approximate index.
 
 - **Corpus.** Use the pinned Supabase Simple English Wikipedia OpenAI archive. The fetcher verifies the published SHA-256 and retains the card and original licence privately. Import only source IDs and 1,536-dimensional `text-embedding-ada-002` vectors under the embeddings' MIT grant. The source article text is covered by Wikipedia CC BY-SA and is discarded during parsing. Keep the archive and raw evidence outside the checkout. These document embeddings measure index mechanics and differ from the live `text-embedding-3-small` embeddings. [Dataset card](https://huggingface.co/datasets/Supabase/wikipedia-en-embeddings) · [Pinned archive checksum](https://huggingface.co/datasets/Supabase/wikipedia-en-embeddings/commit/a46c85b41829b8c94ec939e1402c3f45133cd717) · [Original licence](https://huggingface.co/datasets/Supabase/wikipedia-en-embeddings/blob/main/Original_License)
 - **Sampling and visibility.** Reserve 500 queries by seeded source-ID hash, then select 100,000 indexed vectors and optionally extend the same prefix to 200,000. Use the same insertion order and queries in both physical layouts. One layout places all vectors in one ready workspace. The other hash-assigns exactly 10%, 1% and 0.1% to three ready workspaces and places the remainder in a filler workspace. Tenant placement is independent of vector content, which stresses post-filtering. The table owner also queries the shared graph in the filtered layout as an unfiltered control.
@@ -106,13 +106,89 @@ N16 has no measured results yet. It measures cosine nearest-neighbor recall and 
 
 The versioned protocol and benchmark-only DDL live in `evals/ann/`. Run `scripts.n16_ann_fetch`, `scripts.n16_ann_benchmark` and `scripts.n16_ann_report` as Python modules from the checkout root through `scripts/devenv.py`. Use the evaluator's frozen uv environment for NumPy. The runner also accepts `--fixture` for a 2,000-vector smoke with one build and pass per layout. At 0.1% visibility the fixture has two eligible rows. The optional MultiDoc2Dial development replay requires both an existing generation and cached query vectors. Its labelled recall@5 comparison remains unverified until that cache-backed replay is run.
 
+### N16 100k results
+
+The run completed both layouts at 100,000 vectors on one Windows 11 host with 32 logical CPUs and a
+12 GB Docker Desktop WSL2 VM. With about 5 GB of host memory free at setup, the run reduced the
+predeclared container memory, shared memory and `maintenance_work_mem` settings from 4,096 MiB,
+1,280 MiB and 1,024 MB to 3,072 MiB, 1,024 MiB and 768 MB, respectively. The parallel maintenance
+worker cap was zero. Host free memory dropped to 0.35 GB around 12:55 local and Windows paged the
+client. An unrelated offline test suite overlapped the filtered layout from about 16:25 to 16:42 local.
+
+**Builds.** Every index was 819,208,192 bytes. Sampled peak container memory, including file cache,
+ranged from 3,004.7 to 3,071.9 MiB. The reported container lifetime high-water mark reached the 3,072 MiB
+cap, and the builds recorded no graph spills. The table gives build time in seconds as median [min, max]
+for the repeated graph and elapsed time for the single build per layout at the larger setting.
+
+| Layout | `m / ef_construction` 16 / 64 | `m / ef_construction` 32 / 128 |
+|---|---:|---:|
+| Filtered | 62.783 [62.090, 64.735] | 181.843 |
+| Single workspace | 63.536 [61.786, 63.548] | 165.389 |
+
+Search entries give the median [min, max] across started passes for the observed plan. Latency is
+client execute-through-fetch p95 for successful queries. Recall@10 is over all scheduled queries.
+
+**Unfiltered owner control.** With iteration off, increasing `ef_search` improved recall and raised
+latency for both graphs. At each `ef_search`, the higher `m` and `ef_construction` setting improved
+recall and took longer.
+
+| `ef_search` | 16 / 64 recall@10 / p95 ms | 32 / 128 recall@10 / p95 ms |
+|---:|---|---|
+| 20 | 0.926 [0.919, 0.927] / 2.198 [2.073, 2.775] | 0.968 [0.968, 0.968] / 2.921 [2.837, 3.263] |
+| 40 | 0.962 [0.959, 0.963] / 2.749 [2.645, 3.113] | 0.986 [0.986, 0.986] / 3.936 [3.861, 4.185] |
+| 80 | 0.982 [0.981, 0.984] / 3.885 [3.751, 4.533] | 0.995 [0.995, 0.995] / 6.061 [5.733, 6.146] |
+| 160 | 0.991 [0.991, 0.991] / 6.261 [5.646, 6.555] | 0.998 [0.998, 0.998] / 9.343 [9.297, 10.024] |
+| 400 | 0.998 [0.998, 0.998] / 11.233 [10.904, 12.826] | 0.999 [0.999, 0.999] / 19.131 [18.466, 20.206] |
+
+**Tenant-filtered RLS.** Across the sweep, the natural planner chose B-tree access plus exact sort at
+1% and 0.1% visibility and kept recall at 1.000 with iteration off, strict or relaxed. At 10% visibility,
+both planners chose HNSW for the approximate query. The table holds the graph at 16 / 64 and `ef_search`
+at 160 to compare iteration modes. Every `prefer-hnsw` entry used HNSW.
+
+| Visible share | Iteration | Natural plan | Natural recall@10 / p95 ms | `prefer-hnsw` recall@10 / p95 ms |
+|---:|---|---|---|---|
+| 10% | Off | HNSW | 0.970 [0.970, 0.971] / 6.330 [6.117, 6.904] | 0.970 [0.970, 0.971] / 6.372 [6.054, 7.086] |
+| 10% | Strict | HNSW | 0.974 [0.974, 0.975] / 6.653 [6.388, 7.848] | 0.974 [0.974, 0.975] / 6.633 [6.328, 7.699] |
+| 10% | Relaxed | HNSW | 0.975 [0.975, 0.976] / 6.661 [6.187, 7.771] | 0.975 [0.975, 0.976] / 69.717 [68.746, 76.845] |
+| 1% | Off | B-tree + exact sort | 1.000 [1.000, 1.000] / 4.479 [4.292, 5.681] | 0.162 [0.162, 0.162] / 6.327 [6.048, 7.181] |
+| 1% | Strict | B-tree + exact sort | 1.000 [1.000, 1.000] / 4.486 [4.134, 5.804] | 0.945 [0.944, 0.946] / 33.032 [31.987, 37.371] |
+| 1% | Relaxed | B-tree + exact sort | 1.000 [1.000, 1.000] / 4.663 [4.259, 5.293] | 0.977 [0.975, 0.977] / 96.368 [95.209, 107.684] |
+| 0.1% | Off | B-tree + exact sort | 1.000 [1.000, 1.000] / 1.406 [1.301, 2.131] | 0.017 [0.017, 0.017] / 10.564 [10.362, 11.452] |
+| 0.1% | Strict | B-tree + exact sort | 1.000 [1.000, 1.000] / 1.370 [1.270, 1.574] | 0.879 [0.876, 0.880] / 72.764 [72.297, 80.840] |
+| 0.1% | Relaxed | B-tree + exact sort | 1.000 [1.000, 1.000] / 1.411 [1.316, 2.041] | 0.891 [0.888, 0.891] / 133.729 [132.128, 145.399] |
+
+At that setting, forcing HNSW with iteration off returned fewer than ten neighbors for all 500 queries per
+pass at 1% and 0.1% visibility. At 10%, both planners recorded a median of 17 short queries per pass
+[17, 18] with iteration off. At 1% and 0.1%, strict and relaxed scans restored most of the lost recall
+at a latency cost. Both iterative modes eliminated short results at the settings shown.
+
+**Exact baselines.** All exact rows had recall@10 of 1.000 [1.000, 1.000]. The owner used a sequential
+scan and sort. The runtime baselines used B-tree access and exact sort. The table gives p50 / p95 in ms,
+grouped by the graph build setting in the report.
+
+| Scope | Planner | 16 / 64 p50 / p95 ms | 32 / 128 p50 / p95 ms |
+|---|---|---:|---:|
+| Unfiltered owner | Natural | 471.766 [470.221, 482.710] / 493.417 [486.742, 519.597] | 502.297 [483.713, 502.913] / 521.266 [502.625, 523.935] |
+| Single workspace (100%) | Natural | 498.978 [489.362, 515.728] / 528.012 [506.668, 541.458] | 487.160 [486.601, 488.082] / 503.904 [500.952, 508.252] |
+| 10% | Natural | 42.597 [42.283, 45.648] / 45.401 [43.863, 47.875] | 44.249 [43.510, 45.373] / 46.342 [45.828, 47.720] |
+| 10% | `prefer-btree` | 43.383 [42.325, 46.408] / 46.001 [44.136, 48.776] | 44.655 [44.331, 46.564] / 46.703 [46.623, 49.096] |
+| 1% | Natural | 5.555 [5.397, 5.993] / 6.305 [5.998, 7.152] | 5.626 [5.399, 5.927] / 6.523 [6.112, 6.973] |
+| 1% | `prefer-btree` | 5.472 [5.374, 6.118] / 6.115 [5.899, 7.490] | 5.710 [5.542, 6.023] / 6.641 [6.223, 7.437] |
+| 0.1% | Natural | 1.387 [1.329, 1.429] / 1.613 [1.519, 2.107] | 1.391 [1.346, 1.431] / 1.726 [1.672, 1.816] |
+| 0.1% | `prefer-btree` | 1.382 [1.304, 1.600] / 1.561 [1.484, 2.179] | 1.415 [1.399, 1.421] / 1.656 [1.646, 1.759] |
+
+The Wikipedia `text-embedding-ada-002` vectors differ from live embeddings. The optional 200,000-vector
+extension was not run, and the cache-backed MultiDoc2Dial replay remains unverified. PolicyOps keeps
+live dense search exact. Using HNSW with selective tenant filters would require iterative scan or
+per-tenant partitioning to address short results. The benchmark exercised iterative scan on a shared graph.
+
 ## Targets and limits
 
 - The live demo receives zero study traffic, including readiness and token probes. CD builds and probes share burst credits with visitors. Periodic seeding, reset, visitor writes and the public rate limit would change the workload during a trial.
 - A dedicated loopback Compose project and volume are used for the harness pilot, correctness checks and query plans. Label those observations **workstation**. Record the hardware, Docker VM allocation, version and competing load.
 - The SUT is one disposable Ubuntu 24.04 Lightsail `small_3_0` in `us-west-2`. Use the unchanged deploy script and public profile, then start a fresh study project with the load overlay. Record the release, image IDs, memory limits, swap, TLS and project name. Omit the CD agent and keep both demo timers disabled. The load overlay disables the public limiter for the main study and mounts the `policyops_auth_runtime` secret on the worker for the seed and check tools.
 - The generator is a second disposable Ubuntu 24.04 host in the same region. Begin with `nano_3_0`, the smallest IPv4 bundle proposed for a Python process, six or seven sessions and at most 164 HTTP connections. Check the currently offered regional bundles and costs before provisioning. Keep that size only if the 32 rps and 100-stream validity pilots pass on it. Record generator CPU and send lag as the justification. A larger bundle requires the same checks and must fit the cap.
-- Cap incremental spend at **$3** and total instance time at **10 instance-hours**. Before applying, include the existing roughly $12/month demo host in the read-only AWS month-to-date check against **$20/month**. Defer or obtain approval if the total would exceed the budget. Tear down the same day and verify deletion of both instances and their static IPs. Keep provider credentials off both hosts.
+- Cap incremental spend at **$3** and total instance time at **16 instance-hours**. The time cap was raised from 10 instance-hours before session 2. Before applying, include the existing roughly $12/month demo host in the read-only AWS month-to-date check against **$20/month**. Defer or obtain approval if the total would exceed the budget. Tear down the same day and verify deletion of both instances and their static IPs. Keep provider credentials off both hosts.
 
 Provision into a separate local backend and configuration directory under the study temp root. Retain the source layout `infra/terraform/aws` and `infra/deploy/bootstrap.sh.tftpl` in that directory. Copy `infra/load/budget_override.tf` into its `infra/terraform/aws` directory and set `name_suffix = "-load"`, `create_budget = false`, and `create_loadgen = true`. The override avoids moving the live budget to an indexed resource address. Initialize and plan with a dedicated state path and private variables. Review that the plan adds no budget and restricts SUT HTTPS on port 443 to the generator static IPv4 address and operator /32. Port 80 stays open to `0.0.0.0/0` in both plans for the redirect and ACME HTTP-01. The generator accepts the operator /32 on SSH only. In a separate live-state plan with the new variables left at defaults, verify that the six existing resources keep their addresses and arguments.
 

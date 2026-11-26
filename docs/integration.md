@@ -280,7 +280,10 @@ The REST timestamps include milliseconds. The rendered webhook carries an intege
    if ($LASTEXITCODE -ne 0) { throw 'Zammad wiring failed' }
    ```
 
-   The first smoke verified this REST configuration with manual wiring. The webhook uses
+   The coordinator rerun on 2026-11-25 verified the repaired `wire` command at `c75b79b` on one local
+   instance (`zammad-docker-compose` `v17.5.10`, image `7.2.3-0019`). The command succeeded with
+   `--disallowed-group-id`. The signed delivery from the allowed group was applied, and the disallowed
+   group's delivery was rejected. The webhook uses
    `customized_payload: true` and `custom_payload` with the JSON template
    `{"ticket_id":"#{ticket.id}","updated_at":"#{ticket.updated_at.iso8601}"}`. Zammad parses the template
    before interpolation, emits `ticket_id` as an integer, and renders the timestamp as RFC 3339 UTC.
@@ -337,9 +340,14 @@ The REST timestamps include milliseconds. The rendered webhook carries an intege
    ```
 
 6. Run the historical import check after the allowed ticket and its internal outcome note are settled.
-   This check is pending the coordinator rerun. Fetch the real ticket and its complete article list
-   for `$ticketId`, encode a single v1 CSV row, and stream the unchanged bytes to the worker's private
-   tmpfs. Use the separate `zammad-history` connection configured in step 3.
+   Fetch the real ticket and its complete article list for `$ticketId` with `$integrationTokenFile`.
+   The admin user lacks agent access to the fixture groups, and Zammad returned HTTP 403 for the ticket
+   request with its token. Encode a single v1 CSV row and stream the unchanged bytes to the worker's
+   private tmpfs. Use the separate `zammad-history` connection configured in step 3.
+
+   Windows PowerShell 5.1 prepended a UTF-8 BOM to the base64 stream piped into `docker compose exec -T`
+   and strips inner double quotes from native arguments. The receiver strips the BOM with byte values
+   before validating the base64, and the plan's digest must match the SHA-256 of the local CSV.
 
    ```powershell
    $historyConnection = 'zammad-history'
@@ -371,10 +379,10 @@ The REST timestamps include milliseconds. The rendered webhook carries an intege
                        + [json.dumps(snapshot, ensure_ascii=False)])
    print(datetime.now(UTC).isoformat().replace("+00:00", "Z"))
    '@
-   $exportedAt = $exportScript | python -B - $zammadOrigin $ticketId $adminTokenFile $archive
+   $exportedAt = $exportScript | python -B - $zammadOrigin $ticketId $integrationTokenFile $archive
    if ($LASTEXITCODE -ne 0) { throw 'Zammad CSV export failed' }
    [Convert]::ToBase64String([IO.File]::ReadAllBytes($archive)) |
-     docker compose @compose exec -T worker python -B -c 'import base64, sys; from pathlib import Path; Path(sys.argv[1]).write_bytes(base64.b64decode(sys.stdin.buffer.read().strip(), validate=True))' /tmp/zammad-history.csv |
+     docker compose @compose exec -T worker python -B -c 'import base64, sys; from pathlib import Path; Path(sys.argv[1]).write_bytes(base64.b64decode(sys.stdin.buffer.read().strip().lstrip(bytes([239,187,191])), validate=True))' /tmp/zammad-history.csv |
      Out-Null
    if ($LASTEXITCODE -ne 0) { throw 'Worker archive transfer failed' }
 
@@ -385,7 +393,8 @@ The REST timestamps include milliseconds. The rendered webhook carries an intege
    if ($LASTEXITCODE -ne 0) { throw 'Historical import plan failed' }
    $planned = $plan | ConvertFrom-Json
    if ($planned.records_total -ne 1 -or $planned.valid -ne 1) { throw 'Expected one valid historical snapshot' }
-   $sha = $planned.file_sha256
+   $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+   if ($planned.file_sha256 -cne $sha) { throw 'Historical import plan digest differs from the local CSV SHA-256' }
    docker compose @compose @importer run --connection $historyConnection --file /tmp/zammad-history.csv --exported-at $exportedAt --sha256 $sha
    if ($LASTEXITCODE -ne 0) { throw 'Historical import run failed' }
    docker compose @compose @importer report --connection $historyConnection --sha256 $sha
@@ -394,9 +403,12 @@ The REST timestamps include milliseconds. The rendered webhook carries an intege
    if ($LASTEXITCODE -ne 0) { throw 'Historical import inspection failed' }
    ```
 
-   Expect the report to show `completed`, one `accepted` row with reason `case_created`, and no quarantines or
-   rejections. Expect the inspection to show a case with one imported customer message, zero webhook events
-   and zero write-backs. Retain a sanitized report and inspection under the external run root.
+   The 2026-11-25 coordinator rerun verified this check on the same local instance and release. The plan
+   found one valid record and its digest matched the local CSV SHA-256. The run completed with one
+   `accepted` row (`case_created`). Inspection showed one imported customer message, zero webhook events
+   and zero write-backs. A resume with a changed export timestamp was refused with
+   `run_parameters_changed` and left the state unchanged. Retain a sanitized report and inspection under
+   the external run root.
 
 7. Check the upstream request header names and timestamp interpolation and compare the sanitized ticket and
    article response fields to the fake. Strip tokens, signatures and unrelated fields before retaining captures.

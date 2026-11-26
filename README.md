@@ -249,10 +249,10 @@ on Ubuntu. The default checks make no model calls.
 - Banking trajectory retrieval (E01) is outside this release: ingestion, search, reranking
   and offline metric machinery exist, but its study controller/evaluator contract and
   quality results do not. Retail E03 uses full policy context.
-- A reordered stable prefix and Anthropic caching remain unmeasured. ANN/HNSW scaling, graph-versus-loop
-  quality, an evaluation explorer and a production collector/dashboard stack are also
-  outside the current evidence. The supervised retail pilot and the RCA follow-up actions
-  are proposed.
+- A reordered stable prefix and Anthropic caching remain unmeasured. Graph-versus-loop quality, an
+  evaluation explorer and a production collector/dashboard stack are outside the current evidence.
+  The supervised retail pilot and the RCA follow-up actions are proposed.
+- See the [N16 filtered HNSW results](docs/performance.md#n16-100k-results) for the ANN scaling study.
 - The Bedrock adapter is verified offline only. Live access was declined for this new
   AWS account for now. [Bedrock adapter](docs/evaluation.md#bedrock-adapter).
 - No hard end-to-end deadline guarantee: synchronous SQL, in-flight remote calls and

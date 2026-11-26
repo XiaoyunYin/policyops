@@ -924,7 +924,7 @@ The descriptive dev config `g1-dev-retrieval-v3.json` retains v1/v2 as historica
 - The tests use synthetic fixture corpora, synthetic vectors, synthetic credentials and a scripted provider transport. A passing semantic fixture shows mechanics, not retrieval quality, and no real-corpus query result exists.
 - The local retrieval budget counts cl100k tokens of the formatted evidence string. It is not a provider token count and not the size of any serialized model prompt; provider request tokens and live limits are measured separately with the providers' counting (see the token notes in the data provenance page).
 - SQL transactions (intent, snapshot, size measurement, trace insert) are not interrupted by deadlines and runtime transactions set finite statement, lock and idle-in-transaction timeouts; provider awaits (the embedding request and, when enabled, the rerank request) can be cancelled, while synchronous SQL remains non-interruptible. No hard wall-clock bound is claimed.
-- Intent rows are permanent per run and step. Live dense search is exact and linear in generation size. The [N16 protocol](performance.md#n16-filtered-hnsw-protocol) benchmarks HNSW on a disposable table. The 4,110-passage MultiDoc2Dial corpus uses exact search. Reranking is optional and off by default. Entailment validation is outside the retrieval step.
+- Intent rows are permanent per run and step. Live dense search is exact and linear in generation size. The [N16 results](performance.md#n16-100k-results) cover HNSW on a disposable table. The 4,110-passage MultiDoc2Dial corpus uses exact search. Reranking is optional and off by default. Entailment validation is outside the retrieval step.
 
 ## Reranking and citation grounding
 

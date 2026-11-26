@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 import hashlib
@@ -14,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import signal
 import ssl
@@ -47,6 +49,22 @@ BUILD_BUDGET = 1800
 ACTIVATION_BUDGET = 480
 GATE_BUDGET = 600
 RESET_BUDGET = 900
+TAIL_LIMIT = 64 * 1024
+CHILD_EXIT_CHECK = 0.25
+OUTPUT_DRAIN_GRACE = 0.25
+ATTEMPT_LIMIT = 20
+ATTEMPT_BYTES = 1024 * 1024
+ATTEMPT_ID = re.compile(r"[0-9a-f]{32}")
+COMMAND_KEY = re.compile(r"[a-z][a-z0-9_-]*")
+TAIL_FILE = re.compile(r"(?:[a-z][a-z0-9_-]*\.log|\.[a-z][a-z0-9_-]*\.log\.[a-z0-9_]+)")
+ANSI = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*(?:[@-~]|$)|"
+                  r"(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f])(?:[^\x07\x1b\x9c]|\x1b(?!\\))*"
+                  r"(?:\x07|\x1b\\|\x9c|$)|\x1b(?:[ -/]*[0-~])?")
+PEM = re.compile(r"-----(BEGIN|END) [A-Z0-9][A-Z0-9 -]{0,60}-----")
+SECRET = re.compile(
+    r"""(["']?\b(?:(?:password|token|secret)["']?[ \t]*[:=]|authorization["']?[ \t]*:)[ \t]*)"""
+    r"[^\r\n]*", re.I,
+)
 SCHEMA_PREFIXES = ("packages/policyops/src/policyops/persistence/migrations/", "evals/migrations/retail/")
 SCHEMA_FILES = {
     "infra/compose/runtime.py", "infra/compose/postgres.sh",
@@ -99,6 +117,12 @@ class State(TypedDict):
     backoff_until: int
 
 
+class TailRef(TypedDict):
+    path: str
+    bytes: int
+    sha256: str
+
+
 class Stop(Exception):
     """A command or local precondition failed."""
 
@@ -120,11 +144,11 @@ def sync_dir(path: Path) -> None:
             os.close(fd)
 
 
-def write_json(path: Path, body: object) -> None:
+def write_bytes(path: Path, body: bytes) -> None:
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as stream:
         temporary = Path(stream.name)
         try:
-            stream.write((json.dumps(body, separators=(",", ":")) + "\n").encode())
+            stream.write(body)
             stream.flush()
             os.fsync(stream.fileno())
             stream.close()
@@ -132,6 +156,10 @@ def write_json(path: Path, body: object) -> None:
             sync_dir(path.parent)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+def write_json(path: Path, body: object) -> None:
+    write_bytes(path, (json.dumps(body, separators=(",", ":")) + "\n").encode())
 
 
 def remove(path: Path) -> None:
@@ -199,7 +227,7 @@ def load_state(path: Path) -> State:
         or not valid_sha(flight["candidate"]) or flight["previous"] != state["last_healthy"]
         or not valid_sha(flight["previous"])
         or flight["phase"] not in ("building", "built", "deploying", "gating", "rolling_back")
-        or not isinstance(flight["attempt_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", flight["attempt_id"])
+        or not isinstance(flight["attempt_id"], str) or not ATTEMPT_ID.fullmatch(flight["attempt_id"])
         or type(flight["started_at"]) is not int or flight["started_at"] < 0
         or type(flight["rollback_attempts"]) is not int or not 0 <= flight["rollback_attempts"] <= 2
         or type(flight["rollback_in_progress"]) is not int
@@ -376,6 +404,213 @@ def deploy_lock(base: Path) -> Iterator[int]:
         yield stream.fileno()
 
 
+class TailBoundary:
+    """Track clipping and PEM state before the first retained byte of one pipe."""
+
+    def __init__(self) -> None:
+        self.in_pem = False
+        self.partial_line = False
+        self.partial_secret = False
+        self.marker_prefix = ""
+
+    def discard(self, chunk: bytes) -> None:
+        text = self.marker_prefix + chunk.decode("latin-1")
+        if b"\n" in chunk:
+            self.partial_secret = False
+        self.partial_secret |= bool(SECRET.search(ANSI.sub("", text.rpartition("\n")[2])))
+        end = 0
+        for marker in PEM.finditer(text):
+            self.in_pem = marker[1] == "BEGIN"
+            end = marker.end()
+        # Keep only enough context to recognize labels and markers split by eviction.
+        self.marker_prefix = text[max(end, len(text) - 80):]
+        self.partial_line = not chunk.endswith(b"\n")
+
+    def redact(self, raw: bytes) -> str:
+        hidden = ""
+        if self.partial_line:
+            partial, newline, rest = raw.partition(b"\n")
+            cut = len(self.marker_prefix)
+            line = self.marker_prefix + partial.decode("latin-1")
+            split_pem = any(marker.start() < cut < marker.end() for marker in PEM.finditer(line))
+            # A clipped label may precede a value that otherwise looks like ordinary text.
+            split_secret = self.partial_secret or bool(SECRET.search(ANSI.sub("", line)))
+            if split_pem or split_secret:
+                self.discard(partial)
+                raw = rest
+                if split_secret:
+                    hidden = "[redacted]" + newline.decode("ascii")
+        text = ANSI.sub("", raw.decode("utf-8", errors="replace"))
+        in_pem = self.in_pem
+        safe = ["[redacted]"] if in_pem else []
+        end = 0
+        for marker in PEM.finditer(text):
+            if not in_pem:
+                safe.extend((text[end:marker.start()], "[redacted]"))
+            in_pem = marker[1] == "BEGIN"
+            end = marker.end()
+        if not in_pem:
+            safe.append(text[end:])
+        return hidden + SECRET.sub(r"\1[redacted]", "".join(safe))
+
+
+class OutputTail:
+    def __init__(self) -> None:
+        self.chunks: deque[tuple[bool, bytes]] = deque()
+        self.size = 0
+        self.boundaries = {False: TailBoundary(), True: TailBoundary()}
+
+    def append(self, stdout: bool, data: bytes) -> None:
+        while (excess := self.size + len(data) - TAIL_LIMIT) > 0:
+            source, chunk = self.chunks.popleft()
+            count = min(excess, len(chunk))
+            self.boundaries[source].discard(chunk[:count])
+            self.size -= count
+            if count < len(chunk):
+                self.chunks.appendleft((source, chunk[count:]))
+        self.chunks.append((stdout, data))
+        self.size += len(data)
+
+    def redacted(self) -> bytes:
+        # Parsed stdout and stderr have separate pipes. Redact each stream intact so
+        # interleaving can never split a credential marker or splice its value.
+        streams = [self.boundaries[source].redact(b"".join(chunk for pipe, chunk in self.chunks if pipe == source))
+                   for source in (True, False)]
+        raw = "\n".join(filter(None, streams)).encode("utf-8")
+        return raw[-TAIL_LIMIT:].decode("utf-8", errors="ignore").encode("utf-8")
+
+
+def read_output(pipes: dict[int, bool], selector: selectors.BaseSelector | None, tail: OutputTail,
+                stdout: bytearray | None, wait: float) -> None:
+    # Windows selectors only support sockets. Its nonblocking pipes are probed directly.
+    ready = tuple(pipes) if selector is None else tuple(key.fd for key, _ in selector.select(wait))
+    idle = True
+    for fd in ready:
+        try:
+            chunk = os.read(fd, 8192)
+        except BlockingIOError:
+            continue
+        idle = False
+        if chunk:
+            parsed = pipes[fd]
+            tail.append(parsed, chunk)
+            if parsed and stdout is not None:
+                stdout.extend(chunk)
+        else:
+            if selector is not None:
+                selector.unregister(fd)
+            del pipes[fd]
+    if selector is None and idle:
+        time.sleep(min(0.025, wait))
+
+
+def drain_output(pipes: dict[int, bool], selector: selectors.BaseSelector | None, tail: OutputTail,
+                 stdout: bytearray | None) -> None:
+    deadline = time.monotonic() + OUTPUT_DRAIN_GRACE
+    while pipes and (remaining := deadline - time.monotonic()) > 0:
+        read_output(pipes, selector, tail, stdout, remaining)
+
+
+def kill_command(child: subprocess.Popen[bytes]) -> None:
+    with suppress(ProcessLookupError):
+        if sys.platform == "linux":
+            os.killpg(child.pid, signal.SIGKILL)  # type: ignore[attr-defined,unused-ignore]
+        else:
+            child.kill()
+
+
+def run_command(args: list[str], timeout: float, output: bool, env: dict[str, str] | None,
+                pass_fds: tuple[int, ...], tail: OutputTail) -> tuple[int, str]:
+    with (
+        subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE if output else subprocess.STDOUT,
+                         bufsize=0, start_new_session=True, env=env, pass_fds=pass_fds) as child,
+        ExitStack() as stack,
+    ):
+        pipes = {}
+        if child.stdout is not None:
+            pipes[child.stdout.fileno()] = output
+        if child.stderr is not None:
+            pipes[child.stderr.fileno()] = False
+        stdout = bytearray() if output else None
+        deadline = time.monotonic() + timeout
+        selector: selectors.BaseSelector | None = None
+        try:
+            selector = None if sys.platform == "win32" else stack.enter_context(selectors.DefaultSelector())
+            for fd in pipes:
+                os.set_blocking(fd, False)
+                if selector is not None:
+                    selector.register(fd, selectors.EVENT_READ)
+            while pipes and child.poll() is None and (remaining := deadline - time.monotonic()) > 0:
+                read_output(pipes, selector, tail, stdout, min(CHILD_EXIT_CHECK, remaining))
+            code = child.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            kill_command(child)
+            with suppress(OSError):
+                drain_output(pipes, selector, tail, None)
+            return 124, ""
+        else:
+            # Descendants may keep the pipes open after the child's verdict is known.
+            with suppress(OSError):
+                drain_output(pipes, selector, tail, stdout)
+        finally:
+            if child.poll() is None:
+                kill_command(child)
+    return code, stdout.decode("utf-8", errors="surrogateescape") if stdout else ""
+
+
+def private_directory(path: Path) -> None:
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    else:
+        sync_dir(path.parent)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or path.is_junction():
+        raise OSError("invalid output tail directory")
+    if sys.platform == "linux" and info.st_uid != os.geteuid():  # type: ignore[attr-defined,unused-ignore]
+        raise OSError("invalid output tail directory owner")
+    if sys.platform == "linux" and stat.S_IMODE(info.st_mode) != 0o700:
+        path.chmod(0o700)
+
+
+def prune_output_tails(root: Path, current: Path) -> None:
+    attempts: list[tuple[int, Path, int]] = []
+    current_logs: list[tuple[int, Path, int]] = []
+    for attempt in root.iterdir():
+        if attempt.name != "no-attempt" and not ATTEMPT_ID.fullmatch(attempt.name):
+            continue
+        info = attempt.lstat()
+        if not stat.S_ISDIR(info.st_mode) or attempt.is_junction():
+            continue
+        logs = []
+        for path in attempt.iterdir():
+            if TAIL_FILE.fullmatch(path.name):
+                entry = path.lstat()
+                if stat.S_ISREG(entry.st_mode):
+                    logs.append((entry.st_mtime_ns, path, entry.st_size))
+        attempts.append((info.st_mtime_ns, attempt, sum(size for _, _, size in logs)))
+        if attempt == current.parent:
+            current_logs = logs
+    count = len(attempts)
+    total = sum(size for _, _, size in attempts)
+    for _, attempt, size in sorted(attempts):
+        if count <= ATTEMPT_LIMIT and total <= ATTEMPT_BYTES:
+            break
+        if attempt != current.parent:
+            shutil.rmtree(attempt)
+            count -= 1
+            total -= size
+    # A single attempt can exceed the aggregate cap. Keep its directory and newest log.
+    for _, path, size in sorted(current_logs):
+        if total <= ATTEMPT_BYTES:
+            break
+        if path != current:
+            remove(path)
+            total -= size
+    sync_dir(root)
+
+
 class Agent:
     def __init__(self, base: Path, tooling: Path, lock: int) -> None:
         self.base, self.tooling, self.lock = base, tooling, lock
@@ -392,6 +627,8 @@ class Agent:
         self.exits: dict[str, int] = {}
         self.checks: dict[str, int] = {}
         self.failed: dict[str, list[str]] = {}
+        self.output_tails: dict[str, TailRef] = {}
+        self.output_tail_errors: set[str] = set()
         digest = hashlib.sha256()
         for name in ("policyops-cd", "deploy.sh", "deploy_verify.py"):
             digest.update((tooling / name).read_bytes())
@@ -422,6 +659,7 @@ class Agent:
         record = {"at": datetime.now(UTC).isoformat(), "tip": self.tip or None, "candidate": self.candidate or None,
                   "attempt_id": self.attempt_id or None, "decision": decision, "reason": reason,
                   "durations": self.durations, "exit_codes": self.exits, "check_counts": self.checks,
+                  "output_tails": self.output_tails, "output_tail_errors": sorted(self.output_tail_errors),
                   "failed_checks": self.failed, "tooling_hash": self.tooling_hash, "forced": forced,
                   "true_result": true_result}
         with log.open("a", encoding="utf-8") as stream:
@@ -446,34 +684,50 @@ class Agent:
         write_json(self.cd / "quarantine" / f"{sha}.json", {
             "candidate": sha, "outcome": outcome, "reason": reason,
             "attempt_id": self.attempt_id, "at": datetime.now(UTC).isoformat(),
+            "output_tails": self.output_tails, "output_tail_errors": sorted(self.output_tail_errors),
         })
+
+    def record_output_tail(self, key: str, tail: OutputTail) -> None:
+        attempt = self.attempt_id or "no-attempt"
+        self.output_tails.pop(key, None)
+        self.output_tail_errors.discard(key)
+        try:
+            if (attempt != "no-attempt" and not ATTEMPT_ID.fullmatch(attempt)) or not COMMAND_KEY.fullmatch(key):
+                raise OSError("invalid output tail path")
+            root = self.cd / "attempts"
+            directory = root / attempt
+            private_directory(root)
+            private_directory(directory)
+            path = directory / f"{key}.log"
+            body = tail.redacted()
+            write_bytes(path, body)
+            self.output_tails[key] = {"path": path.relative_to(self.cd).as_posix(), "bytes": len(body),
+                                      "sha256": hashlib.sha256(body).hexdigest()}
+            prune_output_tails(root, path)
+        except OSError:
+            # A diagnostic write or retention failure must not change the deploy verdict.
+            self.output_tail_errors.add(key)
 
     def command(self, key: str, args: list[str], timeout: float, *, output: bool = False,
                 inherited: bool = False, env: dict[str, str] | None = None) -> tuple[int, str]:
+        tail = OutputTail()
         if timeout <= 0:
             self.exits[key] = 124
             self.durations[key] = 0
+            self.record_output_tail(key, tail)
             return 124, ""
         if inherited:
             args = ["bash", "-c", 'exec 9<&"$1"; shift; exec "$@"', "policyops-cd", str(self.lock), *args]
         start = time.monotonic()
         try:
-            with subprocess.Popen(args, stdout=subprocess.PIPE if output else subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, start_new_session=True, env=env,
-                                  pass_fds=(self.lock,) if inherited else ()) as child:
-                try:
-                    raw, _ = child.communicate(timeout=timeout)
-                    code = child.returncode
-                except subprocess.TimeoutExpired:
-                    with suppress(ProcessLookupError):
-                        os.killpg(child.pid, signal.SIGKILL)  # type: ignore[attr-defined,unused-ignore]
-                    child.communicate()
-                    raw, code = b"", 124
+            code, parsed = run_command(args, timeout, output, env, (self.lock,) if inherited else (), tail)
         except OSError:
-            raw, code = b"", 126
+            code, parsed = 126, ""
         self.exits[key] = code
         self.durations[key] = round(time.monotonic() - start, 3)
-        return code, raw.decode("utf-8", errors="surrogateescape") if raw else ""
+        if code:
+            self.record_output_tail(key, tail)
+        return code, parsed
 
     def git(self, *args: str) -> str:
         env = {"PATH": os.environ["PATH"], "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",

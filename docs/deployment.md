@@ -678,15 +678,18 @@ evidence.
 - For tooling changes, reinstall the reviewed host tools before releasing the
   tip. Review protected branch history before releasing a non-fast-forward tip.
   Before building, the agent checks the resolved service sets, single-replica
-  topology, and reserved image tags. Unsupported configs stay held.
+  topology, and reserved image tags. Unsupported configs stay held. The command
+  output tail change is CD tooling and requires an operator release.
 - A failed same-schema activation or gate restores the retained last healthy
   checkout and images locally, reseeds a proposal and gates the restored
   release. Keep those artifacts and both pinned dependency images when pruning.
   The agent quarantines failures by full SHA and freezes after two failed
   rollback attempts or three rollbacks within 24 hours.
 - A frozen host also pauses nightly reset and periodic seeding. Inspect
-  `/var/lib/policyops/cd/log.jsonl` and the quarantine entry. After repairing the
-  serving release, use `policyops-cd adopt` if the baseline needs to change and
+  `/var/lib/policyops/cd/log.jsonl` and `cd/quarantine/<full-sha>.json` under
+  `/var/lib/policyops`. Find the failed command in `output_tails` and read its
+  referenced file as root. After repairing the serving release, use
+  `policyops-cd adopt` if the baseline needs to change and
   `policyops-cd unfreeze` to resume. Preserve a damaged `state.json` for review,
   reconcile any recorded attempt, and adopt a verified baseline before enabling
   the timer again. Keep the enabled switch absent throughout recovery.
@@ -699,6 +702,31 @@ evidence.
   on the recorded release first, then run `policyops-cd adopt`. The agent gates the
   reset fixture before resuming a built candidate and freezes if verification
   fails.
+
+Failed commands save up to 64 KiB of combined stdout and stderr as UTF-8 in
+`/var/lib/policyops/cd/attempts/<attempt-id>/<key>.log`. Commands run outside
+an attempt use `no-attempt`. For commands with parsed stdout, the file groups
+the retained bytes by stream. The direct child's exit code determines the
+result. The agent closes the pipes after EOF or a quarter-second drain period
+following exit, so background descendants can contribute only during that
+period. On timeout the tail contains output captured before cleanup finished.
+An expired budget before launch or a spawn failure can produce a zero-byte file.
+
+`output_tails` records each file's path relative to `cd`, byte length and
+SHA-256. `output_tail_errors` lists commands whose diagnostics could not be
+fully saved or pruned. A later failure with the same attempt and key replaces
+that file, so check its length and digest against the record before relying on
+it. Retention keeps up to 20 attempt directories and 1 MiB of tail files,
+pruning the oldest directories by modification time. If needed, it prunes
+older logs within the current directory while keeping that directory and its
+latest write. Older audit and quarantine records can reference expired files.
+
+The agent strips terminal escape sequences and redacts obvious credential
+assignments, Authorization values and PEM blocks. It also redacts a leading
+partial line when clipping may have removed its credential label. Tails can
+still contain host-local diagnostic text. Root owns the mode-0700 directories
+and mode-0600 files. Audit and quarantine records contain metadata only, and
+tails stay out of the journal and command stdout.
 
 ### Rollback drill and trust
 

@@ -467,7 +467,12 @@ The scripted mode uses the same panel. Both modes use scripted operator-entered
 assent and separate reviewer approval, then check the run outcome, matching
 application and simulator receipts, and the committed effect count. The
 sanitized report contains allowlisted trace attributes, run events, usage and
-receipt digests. Provider capture stays private. The live result is pending.
+receipt digests. Provider capture stays private.
+
+One live run on 2026-11-25 recorded **15 verified receipts over the 16
+registered slots**. The one failure was a model abstention with no decision.
+There were no gateway refusals, cap stops or infrastructure failures. Settled
+provider spend was $0.0203 across 62 calls, under the $0.25 cap.
 
 The regression check uses a private replay of the recorded held-out attempts.
 It evaluates the first consequential call against the target rule using the

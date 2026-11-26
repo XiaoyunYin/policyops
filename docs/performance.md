@@ -114,6 +114,8 @@ predeclared container memory, shared memory and `maintenance_work_mem` settings 
 1,280 MiB and 1,024 MB to 3,072 MiB, 1,024 MiB and 768 MB, respectively. The parallel maintenance
 worker cap was zero. Host free memory dropped to 0.35 GB around 12:55 local and Windows paged the
 client. An unrelated offline test suite overlapped the filtered layout from about 16:25 to 16:42 local.
+The run recorded revision `dbb96c5` with a modified working tree: the corpus reader already read the
+`text-embedding-ada-002` field. The committed reader differs from the one that ran only by a code comment.
 
 **Builds.** Every index was 819,208,192 bytes. Sampled peak container memory, including file cache,
 ranged from 3,004.7 to 3,071.9 MiB. The reported container lifetime high-water mark reached the 3,072 MiB

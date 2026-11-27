@@ -63,7 +63,9 @@ def seed_failure_block() -> str:
 def test_deploy_seed_failure_reports_bounded_head_and_preserves_success_path() -> None:
     block = seed_failure_block()
     assert 'if "${compose[@]}" exec -T worker python -B infra/compose/scenario.py seed > "$seed"; then' in block
-    assert 'sync -f "$seed"\n    mv -f "$seed" "$base/logs/scenario-$commit.json"\n    sync -f "$base/logs"\n    trap - EXIT' in block
+    success = ('sync -f "$seed"\n    mv -f "$seed" "$base/logs/scenario-$commit.json"\n'
+               '    sync -f "$base/logs"\n    trap - EXIT')
+    assert success in block
     assert "seed_status=$?" in block
     assert "head -c 4096 -- \"$seed\" >&2" in block
     assert 'exit "$seed_status"' in block

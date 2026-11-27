@@ -18,7 +18,8 @@ export function activityLabel(item: ReplayItem): string {
     case "consent.clarification_requested": return `Customer clarification needed · ${p.reason.replaceAll("_", " ")}`;
     case "approval.decided": return p.decision === "approve" ? "Staff approval recorded · execution pending" : "Staff rejection recorded";
     case "escalation.requested": return "Human assistance requested";
-    case "error.raised": return `Reported error · ${p.code.replaceAll("_", " ")}`;
+    case "error.raised": return p.rule_id === "live_agent.aggregate_cap" ? "Workspace cost cap refused the investigation"
+      : `Reported error · ${p.code.replaceAll("_", " ")}`;
     case "execution.changed": return p.state === "unknown" ? "Execution outcome unconfirmed"
       : `Execution activity · ${p.state}`;
     case "review.outcome": return p.outcome === "unknown" ? "Outcome unconfirmed · reconciliation required"

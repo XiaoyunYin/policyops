@@ -1,8 +1,8 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
-import { type Role, type RunView } from "../api/client";
+import { type MessageView, type Role, type RunView } from "../api/client";
 import { FakeApi, envelope, json, me } from "../test/fakeApi";
-import { renderApp } from "../test/renderApp";
+import { renderApp, settle } from "../test/renderApp";
 import { CASE, CITATION_ID, NOW, RUN_ID, citation, evidence, event, frame, run, snapshot, byteStream,
   PROPOSAL_ID, DECISION_ID } from "../test/runFixtures";
 import { parseEvidence, parseSnapshot } from "./contracts";
@@ -93,6 +93,58 @@ describe("workbench routes and writes", () => {
     const after = api.callsTo("GET", `${CASE_PATH}/messages`).map((c) => new URL(c.url, "http://app.test").searchParams.get("after_sequence"));
     expect(after).toContain("499");
     expect(screen.getByRole("list", { name: "Latest messages" }).textContent).toContain(message.text);
+  });
+  test("a live agent message refreshes the case version before the next customer post", async () => {
+    const api = fixture(["analyst"], "running");
+    const messagesPath = `${CASE_PATH}/messages`;
+    const agent: MessageView = {
+      message_id: CITATION_ID, case_id: CASE.case_id, sequence: 1, source: "agent", entered_by: null,
+      text: "Review the proposed cancellation.", text_sha256: "a".repeat(64), created_at: NOW,
+    };
+    const customer: MessageView = {
+      ...agent, message_id: PROPOSAL_ID, sequence: 2, source: "operator_entered_customer",
+      entered_by: run().initiated_by, text: "yes",
+    };
+    const marker = event(1, { type: "case.message_posted", message_id: agent.message_id,
+      message_sequence: agent.sequence, source: agent.source });
+    let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+    api.stream(`${RUN_PATH}/events`, () => new ReadableStream({ start(controller) { stream = controller; } }));
+    api.on("POST", messagesPath, (call) => call.headers.get("If-Match") === '"2"'
+      ? new Response(JSON.stringify({ case: { ...CASE, version: 3 }, message: customer }),
+        { status: 201, headers: { ETag: '"3"' } })
+      : json(409, { ...envelope("stale_version", "The case changed."), rule_id: "api.stale_version" }));
+
+    const { user } = renderApp(`/cases/${CASE.case_id}/runs/${RUN_ID}`);
+    const summary = await screen.findByRole("region", { name: "Case summary" });
+    expect(within(summary).getByText("1", { exact: true })).toBeTruthy();
+    await waitFor(() => { expect(stream).toBeDefined(); });
+    const olderRead = api.defer("GET", CASE_PATH);
+    await user.click(within(summary).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => { expect(olderRead.call).not.toBeNull(); });
+
+    const liveRead = api.defer("GET", CASE_PATH);
+    api.on("GET", messagesPath, json(200, { items: [agent], next_after_sequence: null }));
+    act(() => { stream?.enqueue(new TextEncoder().encode(frame(marker))); });
+    await waitFor(() => { expect(liveRead.call).not.toBeNull(); });
+    expect(screen.queryByText(agent.text)).toBeNull();
+    expect(screen.getByRole("button", { name: "Start investigation" }).hasAttribute("disabled")).toBe(true);
+    await user.click(screen.getByRole("radio", { name: "Customer message, entered by me" }));
+    await user.type(screen.getByRole("textbox", { name: "Message" }), "yes");
+    expect(screen.getByRole("button", { name: "Post customer message…" }).hasAttribute("disabled")).toBe(true);
+    expect(api.callsTo("POST", messagesPath)).toHaveLength(0);
+
+    liveRead.resolve(new Response(JSON.stringify({ ...CASE, version: 2 }), { headers: { ETag: '"2"' } }));
+    expect(await screen.findByText(agent.text)).toBeTruthy();
+    expect(within(summary).getByText("2", { exact: true })).toBeTruthy();
+    olderRead.resolve(new Response(JSON.stringify(CASE), { headers: { ETag: '"1"' } }));
+    await settle();
+    expect(within(summary).getByText("2", { exact: true })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Post customer message…" }));
+    await user.click(screen.getByRole("button", { name: "Confirm post" }));
+    expect(await screen.findByText("yes", { selector: ".message-text" })).toBeTruthy();
+    expect(api.callsTo("POST", messagesPath).map((call) => call.headers.get("If-Match"))).toEqual(['"2"']);
+    expect(screen.queryByRole("heading", { name: "Your message wasn't posted" })).toBeNull();
   });
 });
 

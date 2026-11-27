@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import urllib.request
@@ -71,8 +72,11 @@ class GateError(Exception):
 
 
 def platform_key() -> str:
-    system = platform.system().lower()
-    machine = platform.machine().lower()
+    # Windows platform.uname() can spawn cmd.exe before the gate routes child temp paths.
+    if sys.platform == "win32":
+        system, machine = "windows", sysconfig.get_platform().removeprefix("win-").lower()
+    else:
+        system, machine = platform.system().lower(), platform.machine().lower()
     arch = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine)
     key = f"{system}_{arch}"
     if arch is None or key not in PINS:

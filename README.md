@@ -216,6 +216,15 @@ demo activity. The host has no model provider keys.
 
 The walkthrough shows staff entering simulated customer consent on a fictional address-change case, a reviewer approving it, and a receipt from the retail simulator. The flow makes no model call.
 
+[![Watch a live GPT-6-Luna investigation](docs/assets/policyops-live-agent.png)](docs/assets/policyops-live-agent.webm)
+
+A second recording comes from the opt-in local [live-agent profile](docs/deployment.md#local-live-agent-profile), which is never deployed. It shows the agent working with real GPT-6-Luna calls on a fictional cancellation case:
+- The analyst starts an investigation.
+- The agent reads the customer and the order, searches the cancellation policy, and proposes a cited cancellation.
+- Staff enter simulated consent, a separate reviewer approves, and the retail simulator returns a verified receipt.
+
+The recorded run used 6 model calls at an estimated USD 0.0022.
+
 Release `3609714` passed all 28 live verifier checks, including HTTPS and Dex login.
 The schema-compatible A/B/A drill passed 28/28 at each step, with a docs-only B release.
 PostgreSQL clients enforce `verify-full` with an explicit trust root. The public profile

@@ -41,9 +41,10 @@ import os
 import sys
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 import psycopg
 from pydantic import ValidationError
+from sqlalchemy import Engine
 from sqlalchemy.exc import DBAPIError
 from starlette.types import Receive, Scope, Send
 import uvicorn
@@ -51,9 +52,11 @@ import uvicorn
 from policyops.api.app import build_auth_runtime, create_app
 from policyops.api.auth import error_response
 from policyops.api.logging import LOG_CONFIG
+from policyops.api.runs import build_runs_runtime
 from policyops.auth.service import AuthError
 from policyops.persistence.database import DatabaseUnavailable, RuntimeRoleError, make_engine, verify_runtime_role
 from policyops.persistence.roles import APP_RUNTIME, AUTH_RUNTIME
+from policyops.runtime.spec import RuntimeCatalog
 from policyops.settings import REFUSED_LIBPQ_ENV as REFUSED_LIBPQ_ENV
 from policyops.settings import AuthSettings, DatabaseSettings, HelpdeskSettings, TelemetrySettings
 from policyops.telemetry import configure
@@ -98,13 +101,15 @@ class ServerClosed(RuntimeError):
 class ServeConfig:
     """Validated server configuration (both settings objects keep their secrets as `SecretStr`)."""
 
-    __slots__ = ("auth", "database", "helpdesk", "telemetry")
+    __slots__ = ("auth", "catalog", "database", "helpdesk", "local_router", "telemetry")
 
     def __init__(self, auth: AuthSettings, database: DatabaseSettings,
                  telemetry: TelemetrySettings | None = None, *, helpdesk: HelpdeskSettings | None = None) -> None:
         self.auth, self.database = auth, database
         self.telemetry = telemetry or TelemetrySettings(enabled=False)
         self.helpdesk = helpdesk
+        self.catalog: Callable[[Engine], RuntimeCatalog] | None = None
+        self.local_router: APIRouter | None = None
 
     def __repr__(self) -> str:
         return f"ServeConfig(env={self.auth.env!r})"
@@ -319,7 +324,14 @@ def open_runtime(config: ServeConfig) -> ServedRuntime:
                                   clock=SystemClock())
         runtime.own("OIDC client", auth.service.oidc.close)
         stage = "application"
-        runtime.app = create_app(auth, helpdesk_settings=config.helpdesk)
+        if config.catalog is None:
+            runtime.app = create_app(auth, helpdesk_settings=config.helpdesk)
+        else:
+            runs = build_runs_runtime(env=config.auth.env, app_engine=auth.app_engine, ledger_clock=auth.service.clock,
+                                      catalog=config.catalog(auth.app_engine))
+            runtime.app = create_app(auth, runs, helpdesk_settings=config.helpdesk)
+        if config.local_router is not None:
+            runtime.app.include_router(config.local_router, prefix="/api/v1", include_in_schema=False)
     except BaseException as error:
         if not isinstance(error, Exception):
             runtime.close_after(error)
@@ -396,12 +408,19 @@ class ServedApp:
         return [] if runtime is None else runtime.close_after(primary)
 
 
-def create_served_app(*, helpdesk: HelpdeskSettings | None = None) -> ServedApp:
+def create_served_app(*, helpdesk: HelpdeskSettings | None = None,
+                      catalog: Callable[[Engine], RuntimeCatalog] | None = None,
+                      local_router: APIRouter | None = None) -> ServedApp:
     """ASGI factory (`uvicorn --factory policyops.api.serve:create_served_app`, lifespan on): validated
     configuration only; nothing is opened until lifespan startup. Raises `ServeConfigError`."""
     config = load_config()
     if config.auth.env == "local":
         config.helpdesk = helpdesk
+    if catalog is not None or local_router is not None:
+        if config.auth.env not in {"local", "test"}:
+            raise ServeConfigError(("explicit local runtime wiring requires local or test",))
+        config.catalog = catalog
+        config.local_router = local_router
     return ServedApp(config)
 
 

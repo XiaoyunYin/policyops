@@ -1,0 +1,34 @@
+# Opt-in local recording only. Never load this file in a deployment.
+x-live-inputs: &live-inputs
+  volumes:
+    - type: bind
+      source: '${POLICYOPS_LIVE_AGENT_POLICY:?Set the pinned retail policy file}'
+      target: /opt/live-agent/data/tau2/domains/retail/policy.md
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: '${POLICYOPS_TEMP_DIR:?Provision the pinned tokenizer in an external directory}/tokenizers/cl100k_base.tiktoken'
+      target: /opt/live-agent/cl100k_base.tiktoken
+      read_only: true
+      bind: {create_host_path: false}
+
+services:
+  api:
+    <<: *live-inputs
+    environment:
+      POLICYOPS_LIVE_AGENT: "1"
+  worker:
+    <<: *live-inputs
+    environment:
+      POLICYOPS_LIVE_AGENT: "1"
+      POLICYOPS_LIVE_AGENT_MAX_USD: '${POLICYOPS_LIVE_AGENT_MAX_USD:-0.50}'
+    secrets: [openai_api_key]
+    networks:
+      default: {}
+      live-agent-egress:
+        gw_priority: 1
+secrets:
+  openai_api_key:
+    file: '${POLICYOPS_SECRETS_DIR:?Set an external secrets directory}/openai_api_key'
+networks:
+  live-agent-egress: {}

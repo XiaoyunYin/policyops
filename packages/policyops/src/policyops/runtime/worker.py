@@ -163,6 +163,7 @@ class Worker:
     batch: int = 10
     on_claimed: Callable[[store.ClaimToken], None] | None = None  # test observation hook (no behavior change)
     review: ReviewRuntime | None = None
+    claim_refusal: Callable[[Connection, store.Run], str | None] | None = None
 
     def discover(self) -> list[tuple[UUID, UUID]]:
         kinds = (store.EXECUTE_KIND,) if self.review is None else (store.EXECUTE_KIND, review_jobs.REVIEW_KIND)
@@ -289,6 +290,8 @@ class Worker:
             return "executor_unavailable", ErrorCode.UNAVAILABLE, "runtime.executor_unavailable"
         if run.initiated_by is None or not self._may_start(connection, run.initiated_by):
             return "initiator_not_authorized", ErrorCode.FORBIDDEN, "runtime.initiator_not_authorized"
+        if self.claim_refusal is not None and (rule := self.claim_refusal(connection, run)) is not None:
+            return rule, ErrorCode.UNAVAILABLE, rule
         return None
 
     @staticmethod

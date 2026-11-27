@@ -19,7 +19,13 @@ export async function within<T>(pending: Promise<T>, label: string, ms = CAPTURE
 
 // The locked Playwright's built-in recordVideo launches ffmpeg. Use Chromium's WebM encoder on
 // an isolated, blank page instead. The canvas receives pixels from just the one walkthrough page.
-export async function capture(workbench: Page, encoder: Page) {
+interface CaptureLimits {
+  readonly maxBytes: number;
+  readonly validate: (seconds: number, bytes: number) => void;
+}
+
+export async function capture(workbench: Page, encoder: Page,
+  limits: CaptureLimits = { maxBytes: MAX_VIDEO_BYTES, validate: validateVideo }) {
   const firstFrame = await workbench.screenshot({ type: "jpeg", quality: 85, timeout: CAPTURE_TIMEOUT });
   const surface = await within(encoder.evaluateHandle(async ({ frame, width, height }) => {
     const canvas = document.createElement("canvas");
@@ -94,8 +100,8 @@ export async function capture(workbench: Page, encoder: Page) {
         } finally {
           URL.revokeObjectURL(url);
         }
-      }, MAX_VIDEO_BYTES), "Finalizing WebM", 20_000);
-      validateVideo(video.seconds, video.bytes);
+      }, limits.maxBytes), "Finalizing WebM", 20_000);
+      limits.validate(video.seconds, video.bytes);
       const data = Buffer.from(video.base64, "base64");
       if (data.length !== video.bytes) throw new Error("Encoded WebM transfer was incomplete");
       return { data, seconds: video.seconds };

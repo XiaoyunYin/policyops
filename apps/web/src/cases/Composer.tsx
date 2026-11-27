@@ -15,10 +15,12 @@ import { MAX_MESSAGE_CODE_POINTS, TEXT_PROBLEMS, checkMessageText } from "./text
 
 const UNAVAILABLE = "simulated_customer";
 
-export function Composer({ draft, locked, focusSignal, onChange, onSend }: {
+export function Composer({ draft, locked, submitDisabled, focusSignal, onChange, onSend }: {
   draft: Draft;
   /** A message from this view is being sent or has an unconfirmed outcome: nothing can be edited or sent. */
   locked: boolean;
+  /** A case version refresh is in progress. The operator can still edit the draft. */
+  submitDisabled: boolean;
   /** Changes when focus should return to the message field (after a successful post). */
   focusSignal: number;
   onChange: (draft: Draft) => void;
@@ -45,6 +47,7 @@ export function Composer({ draft, locked, focusSignal, onChange, onSend }: {
   };
 
   const submit = (): void => {
+    if (submitDisabled) return;
     setAttempted(true);
     if (locked || draft.source === null || check.problem !== null) {
       return;
@@ -105,12 +108,13 @@ export function Composer({ draft, locked, focusSignal, onChange, onSend }: {
           <p id={confirmId}>Post this as a <strong>customer message entered by you</strong>? It's labeled as a
             staff-entered simulation. The server checks whether it confirms the presented action; posting alone does not establish consent.</p>
           <div className="actions">
-            <Button className="button button-primary" type="submit" autoFocus>Confirm post</Button>
+            <Button className="button button-primary" type="submit" isDisabled={locked || submitDisabled}
+                    autoFocus>Confirm post</Button>
             <Button className="button" onPress={backToEditing}>Back to editing</Button>
           </div>
         </div>
       ) : (
-        <Button className="button button-primary" type="submit" isDisabled={locked}>
+        <Button className="button button-primary" type="submit" isDisabled={locked || submitDisabled}>
           {draft.source === "operator_entered_customer" ? "Post customer message…" : "Post"}
         </Button>
       )}

@@ -2,15 +2,17 @@
 
 import asyncio
 from collections.abc import Callable
+from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import asdict, dataclass
 from datetime import timedelta
+from decimal import Decimal
 import time
 from typing import Any
 from uuid import UUID
 
 from langgraph.errors import GraphRecursionError, NodeCancelledError
 from langgraph.graph import START
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 
 from policyops.budget.config import Configuration
 from policyops.budget.ledger import Ledger, RunBinding
@@ -75,12 +77,14 @@ from policyops_contracts.clock import Clock, SystemClock
 from policyops_contracts.conversation import AgentLimits, AgentToolCall, PolicyContext, UserMessage
 from policyops_contracts.errors import ErrorCode
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalScope, canonical_sha256
+from policyops_contracts.scalars import CaseScope
 from policyops_contracts.seeds import CaseCustomerBinding
 from policyops_contracts.stops import StopDetails, StopReason
 
 
 # Bump deliberately for incompatible behavior changes not represented by the schemas/topology below.
 GRAPH_VERSION = "policyops.investigation-graph/v2"
+CaseBindingResolver = Callable[[Connection, CaseScope], CaseCustomerBinding | None]
 
 
 def graph_digest(profile: InvestigationProfile = InvestigationProfile.BASELINE) -> str:
@@ -128,6 +132,9 @@ class InvestigationExecutor:
     test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None
     profile: InvestigationProfile = InvestigationProfile.BASELINE
     observe_write: Callable[[AgentToolCall, StepResult], None] | None = None
+    case_binding: CaseBindingResolver | None = None
+    retail_session: Callable[[GatewayScope], AbstractContextManager[RetailPort]] | None = None
+    workspace_max_usd: Decimal | None = None
 
     @observed("investigation")
     def execute(self, context: StepContext) -> Outcome:
@@ -163,15 +170,22 @@ class InvestigationExecutor:
                 raise runs.Fenced("runtime_binding_changed")
 
     async def _execute(self, context: StepContext) -> Outcome:
+        with ExitStack() as owned:
+            return await self._investigate(context, owned)
+
+    async def _investigate(self, context: StepContext, owned: ExitStack) -> Outcome:
         self.fence(context)
         with workspace_transaction(self.engine, context.workspace_id) as connection:
             run, _, now = runs.check_fence(connection, context.claim_token, self.clock)
             observed_monotonic = time.monotonic()
             case = repo.get_case(connection, context.case_id)
+            seed = (None if self.case_binding is None else self.case_binding(
+                connection, CaseScope(workspace_id=context.workspace_id, case_id=context.case_id)))
         if case is None or case.customer_user_id is None:
             return Failed(ErrorCode.UNAVAILABLE, "investigation.case_binding")
-        seed = next((b for b in self.bindings if b.scope.workspace_id == context.workspace_id
-                     and b.scope.case_id == context.case_id), None)
+        if seed is None:
+            seed = next((b for b in self.bindings if b.scope.workspace_id == context.workspace_id
+                         and b.scope.case_id == context.case_id), None)
         if seed is None:
             return Failed(ErrorCode.UNAVAILABLE, "investigation.case_binding")
         scope = load_scope(self.engine, workspace_id=context.workspace_id, run_id=context.run_id, binding=seed,
@@ -245,7 +259,8 @@ class InvestigationExecutor:
             return outcome(state)
         deadline = observed_monotonic + runs.remaining_us(run, now) / 1_000_000
         ledger = build_app_ledger(env=self.env, engine=self.engine, workspace_id=context.workspace_id,
-                                  configuration=self.configuration, clock=self.clock, claim_token=context.claim_token)
+                                  configuration=self.configuration, clock=self.clock, claim_token=context.claim_token,
+                                  workspace_max_usd=self.workspace_max_usd)
         repaired = self.profile.tool_contract
         model = (self.test_model(ledger, RunBinding(context.run_id)) if self.test_model is not None else
                  agent_model_port(ledger, RunBinding(context.run_id), self.providers, detailed_tool_errors=repaired))
@@ -254,8 +269,10 @@ class InvestigationExecutor:
                               ledger=ledger, providers=self.providers, tokenizer=self.tokenizer, env=self.env,
                               rerank=self.retrieval_config.rerank is not None, stop_on_budget=True,
                               lexical_mode=self.profile.lexical_mode)
+        retail = owned.enter_context(nullcontext(self.retail(scope)) if self.retail_session is None
+                                     else self.retail_session(scope))
         adapters = InvestigationAdapters(retriever, self.retrieval_scope, self.retrieval_config,
-                                         Gateway(scope, retail=self.retail(scope), sessions=PgSessionStore(self.engine),
+                                         Gateway(scope, retail=retail, sessions=PgSessionStore(self.engine),
                                                  clock=self.wall_clock, target_evidence=PgTargetEvidence(self.engine)),
                                          ProposalService(self.engine, self.clock), context.claim_token,
                                          EvidenceValidator(self.engine, context.workspace_id),
@@ -345,7 +362,10 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
                              clock: LeaseClock | None = None, wall_clock: Clock | None = None,
                              lease: timedelta = timedelta(seconds=30),
                              test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None,
-                             profile: InvestigationProfile = InvestigationProfile.BASELINE) -> RuntimeSpec:
+                             profile: InvestigationProfile = InvestigationProfile.BASELINE,
+                             case_binding: CaseBindingResolver | None = None,
+                             retail_session: Callable[[GatewayScope], AbstractContextManager[RetailPort]] | None = None,
+                             workspace_max_usd: Decimal | None = None) -> RuntimeSpec:
     """Install the returned spec in the SAME catalog passed to the API runtime and worker."""
     if test_model is not None and env != "test":
         raise ValueError("test model factories require env=test")
@@ -377,11 +397,15 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
     }
     if profile.tool_contract:
         config_fields.update(profile=profile, lexical_mode=profile.lexical_mode)
+    if case_binding is not None:
+        config_fields["binding_source"] = "server_case_resolver"
     config_sha = canonical_sha256(config_fields)
     executor = InvestigationExecutor(engine, env, configuration, policy, selected, retrieval_scope, retrieval_config,
                                      bindings, fixture_sha256, retail, providers, tokenizer, lease_clock,
                                      wall_clock or SystemClock(), max_steps, lease, graph_digest(profile),
-                                     prompt.digest(profile), config_sha, test_model=test_model, profile=profile)
+                                     prompt.digest(profile), config_sha, test_model=test_model, profile=profile,
+                                     case_binding=case_binding, retail_session=retail_session,
+                                     workspace_max_usd=workspace_max_usd)
     spec_id = f"investigation.{profile}" if profile.tool_contract else "investigation.v2"
     return RuntimeSpec(spec_id, executor.graph_sha256, executor.prompt_sha256, config_sha, executor,
                        lease=lease, run_timeout=timedelta(seconds=configuration.caps.active_seconds),

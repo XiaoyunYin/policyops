@@ -5,7 +5,7 @@ import { ACTION_TIMEOUT, restrictPage } from "./browser.ts";
 import { capture, VIEWPORT, within } from "./capture.ts";
 
 type Schema = components["schemas"];
-type Fixture = Schema["ProposalSummaryView"];
+export type Fixture = Schema["ProposalSummaryView"];
 type Role = "analyst" | "reviewer";
 const check = expect.configure({ timeout: ACTION_TIMEOUT });
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -14,7 +14,7 @@ const WORKSPACE = "Fictional retail demo";
 const CASES = "/api/v1/cases";
 const PROPOSALS = "/api/v1/proposals";
 
-async function read<T>(context: BrowserContext, path: string, user?: Session): Promise<T> {
+export async function read<T>(context: BrowserContext, path: string, user?: Session): Promise<T> {
   const response = await context.request.get(path, {
     timeout: ACTION_TIMEOUT, maxRedirects: 0, maxRetries: 0,
     headers: user === undefined ? {} : { "PolicyOps-Expected-Principal": user.principal,
@@ -28,13 +28,13 @@ async function read<T>(context: BrowserContext, path: string, user?: Session): P
   }
 }
 
-interface Session {
+export interface Session {
   readonly principal: string;
   readonly workspace: string;
   readonly cookies: Awaited<ReturnType<BrowserContext["storageState"]>>["cookies"];
 }
 
-async function identity(context: BrowserContext, role: Role) {
+export async function identity(context: BrowserContext, role: Role) {
   const me = await read<Schema["MeOut"]>(context, "/api/v1/me");
   if (!UUID.test(me.principal_id) || me.workspace_id === null || !UUID.test(me.workspace_id)
       || !me.workspaces.some((space) => space.workspace_id === me.workspace_id && space.name === WORKSPACE)
@@ -44,12 +44,14 @@ async function identity(context: BrowserContext, role: Role) {
   return { principal: me.principal_id, workspace: me.workspace_id };
 }
 
-async function newContext(browser: Browser, origin: string): Promise<BrowserContext> {
+export async function newContext(browser: Browser, origin: string): Promise<BrowserContext> {
   return await within(browser.newContext({ baseURL: origin, viewport: VIEWPORT, deviceScaleFactor: 1,
-    serviceWorkers: "block", reducedMotion: "reduce", acceptDownloads: false }), "Opening browser context");
+    serviceWorkers: "block", reducedMotion: "reduce", acceptDownloads: false,
+    // Recordings must not inherit the recording machine's locale or time zone.
+    locale: "en-US", timezoneId: "UTC" }), "Opening browser context");
 }
 
-async function signIn(browser: Browser, origin: string, name: "alice" | "bob", role: Role, password: string,
+export async function signIn(browser: Browser, origin: string, name: "alice" | "bob", role: Role, password: string,
   discover: boolean) {
   const context = await newContext(browser, origin);
   try {
@@ -114,7 +116,7 @@ async function newestPending(context: BrowserContext, user: Session): Promise<Fi
   throw new Error("No pending address-change fixture requiring consent was found in the case queue");
 }
 
-async function verifyFixture(context: BrowserContext, user: Session, fixture: Fixture, postedId?: string): Promise<void> {
+export async function verifyFixture(context: BrowserContext, user: Session, fixture: Fixture, postedId?: string): Promise<void> {
   const detail = await read<Schema["ProposalDetailView"]>(context,
     `${PROPOSALS}/${fixture.proposal_id}?version=${String(fixture.proposal_version)}`, user);
   const { proposal, consent } = detail;
@@ -134,7 +136,7 @@ async function verifyFixture(context: BrowserContext, user: Session, fixture: Fi
   }
 }
 
-async function caption(page: Page, text: string): Promise<void> {
+export async function caption(page: Page, text: string): Promise<void> {
   await within(page.evaluate((content) => {
     let overlay = document.getElementById("policyops-demo-caption");
     if (overlay === null) {
@@ -150,13 +152,13 @@ async function caption(page: Page, text: string): Promise<void> {
   }, text), "Drawing walkthrough caption");
 }
 
-async function center(target: Locator): Promise<void> {
+export async function center(target: Locator): Promise<void> {
   await check(target).toBeVisible();
   await within(target.evaluate((node) => { node.scrollIntoView({ block: "center", behavior: "instant" }); }), "Framing walkthrough step");
 }
 
-async function submitOnce<T>(page: Page, guard: Awaited<ReturnType<typeof restrictPage>>, path: string,
-  button: string, label: string): Promise<T> {
+export async function submitOnce<T>(page: Page, guard: Awaited<ReturnType<typeof restrictPage>>, path: string,
+  button: string, label: string, statusCode = 201): Promise<T> {
   guard.allowOnce(path);
   try {
     const [response] = await Promise.all([
@@ -164,7 +166,7 @@ async function submitOnce<T>(page: Page, guard: Awaited<ReturnType<typeof restri
       page.getByRole("button", { name: button, exact: true }).click(),
     ]);
     guard.check();
-    if (response.status() !== 201 || response.headers()["idempotent-replayed"] !== undefined) {
+    if (response.status() !== statusCode || response.headers()["idempotent-replayed"] !== undefined) {
       throw new Error(`HTTP ${String(response.status())}`);
     }
     return await within(response.json() as Promise<T>, `Reading ${label} confirmation`);

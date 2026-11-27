@@ -1,7 +1,7 @@
 """Container-only composition. Secrets are read from files, never argv or logged environment.
 
-No test auth, provider client or model is installed by this launcher. Slice A seeds
-identity/case only; Slice B supplies a fresh deterministic proposal through real services.
+By default this launcher installs no investigation provider. The local live-agent
+overlay explicitly enables a credential-free API catalog and a provider-backed worker.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import base64
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
+from functools import partial
 import json
 import logging.config
 import os
@@ -19,18 +20,22 @@ import signal
 import sys
 import threading
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid5
 
 import httpx
 import psycopg
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Connection, Engine, create_engine, text
 
 from policyops.settings import REFUSED_LIBPQ_ENV, HelpdeskSettings, TelemetrySettings, validate_sslrootcert
 from policyops.telemetry import configure
 
 
 if TYPE_CHECKING:
+    from policyops.persistence.runs import Run
+    from policyops.runtime.spec import RuntimeCatalog
     from policyops.services.execution import Step
+    from policyops_contracts.scalars import CaseScope
     from policyops_contracts.seeds import CaseCustomerBinding
 
 
@@ -51,6 +56,48 @@ def helpdesk_settings() -> HelpdeskSettings | None:
     if os.environ.get("POLICYOPS_ENV") == "local" and os.environ.get("POLICYOPS_HELPDESK") == "1":
         return HelpdeskSettings.from_secret_file(SECRETS / "helpdesk")
     return None
+
+
+def live_agent_enabled() -> bool:
+    if os.environ.get("POLICYOPS_LIVE_AGENT") != "1":
+        return False
+    from policyops.runtime.live_agent import LiveAgentRefused
+
+    origin = urlsplit(os.environ.get("POLICYOPS_PUBLIC_ORIGIN", ""))
+    if os.environ.get("POLICYOPS_ENV") != "local" or (origin.scheme, origin.hostname) != (
+            "http", "127.0.0.1"):
+        raise LiveAgentRefused("live_agent.local_only")
+    return True
+
+
+def api_catalog(app: Engine) -> RuntimeCatalog:
+    from policyops.runtime.spec import UNCONFIGURED
+
+    if not live_agent_enabled():
+        return UNCONFIGURED
+    from policyops.runtime.live_agent import INPUTS, catalog, inputs, unavailable_providers
+
+    return catalog(env=os.environ["POLICYOPS_ENV"], engine=app, loaded=inputs(INPUTS),
+                   workspace=UUID(demo()["workspace_id"]), providers=unavailable_providers)
+
+
+def live_agent_seed(*, create_case: bool) -> None:
+    from policyops.runtime import live_agent
+
+    if not live_agent_enabled():
+        raise live_agent.LiveAgentRefused("live_agent.overlay_required")
+    workspace = UUID(demo()["workspace_id"])
+    providers = live_agent.provider_access(live_agent.provider_secret(SECRETS / "openai_api_key"))
+    with own_engine("policyops_app_runtime") as app:
+        generation = live_agent.prepare_corpus(
+            app, workspace, live_agent.INPUTS, lambda: providers, live_agent.max_usd(),
+            env=os.environ["POLICYOPS_ENV"])
+        if create_case:
+            case = live_agent.seed_case(app, workspace, retail_origin=os.environ["POLICYOPS_RETAIL_ORIGIN"],
+                                       retail_key=(SECRETS / "retail_key").read_bytes())
+            print(f"/cases/{case}")
+        else:
+            print(json.dumps({"generation_id": str(generation)}))
 
 
 def connect(role: str, database: str | None = None, *, autocommit: bool = False) -> psycopg.Connection[Any]:
@@ -271,7 +318,13 @@ def api() -> None:
                            ("POLICYOPS_OIDC_CLIENT_SECRET", "client_secret")):
         os.environ[variable] = secret(name)
     helpdesk = helpdesk_settings()
-    served = create_served_app() if helpdesk is None else create_served_app(helpdesk=helpdesk)
+    if live_agent_enabled():
+        from policyops.runtime.live_agent import usage_router
+
+        served = create_served_app(helpdesk=helpdesk, catalog=api_catalog,
+                                   local_router=usage_router(UUID(demo()["workspace_id"])))
+    else:
+        served = create_served_app() if helpdesk is None else create_served_app(helpdesk=helpdesk)
     try:
         from policyops.api.rate_limit import PublicRateLimit
 
@@ -338,8 +391,16 @@ def worker(*, execution_hooks: Any = None) -> None:
     from policyops.runtime.helpdesk import HelpdeskWorker
     from policyops.runtime.outbox import build_dispatcher
     from policyops.runtime.review import BoundScopes, build_review_runtime
+    from policyops.runtime.spec import UNCONFIGURED
     from policyops.runtime.worker import build_worker
     from policyops_contracts.retail_service import FIXTURE_SHA256
+
+    live = live_agent_enabled()
+    providers = None
+    if live:
+        from policyops.runtime.live_agent import provider_access, provider_secret
+
+        providers = provider_access(provider_secret(SECRETS / "openai_api_key"))
 
     drain_setting = os.environ.get("POLICYOPS_WORKER_DRAIN", "0")
     if drain_setting not in {"0", "1"}:
@@ -359,18 +420,37 @@ def worker(*, execution_hooks: Any = None) -> None:
         app = owned.enter_context(own_engine("policyops_app_runtime"))
         discovery = owned.enter_context(own_engine("policyops_worker_discovery"))
         helpdesk = helpdesk_settings()
-        review = build_review_runtime(env="local", app_engine=app, bindings=demo_bindings(app),
+        retail_key = (SECRETS / "retail_key").read_bytes()
+        retail_origin = os.environ["POLICYOPS_RETAIL_ORIGIN"]
+        env = os.environ["POLICYOPS_ENV"] if live else "local"
+        review = build_review_runtime(env=env, app_engine=app, bindings=demo_bindings(app),
             fixture_sha256=FIXTURE_SHA256,
-            retail_origin=os.environ["POLICYOPS_RETAIL_ORIGIN"], retail_key=(SECRETS / "retail_key").read_bytes(),
-            helpdesk_settings=helpdesk)
-        jobs = build_worker(env="local", app_engine=app, discovery_engine=discovery, review=review,
-                            clock=review.executor.clock, batch=1)
+            retail_origin=retail_origin, retail_key=retail_key, helpdesk_settings=helpdesk)
+        catalog = UNCONFIGURED
+        refusal: Callable[[Connection, Run], str | None] | None = None
+        binding: Callable[[Connection, CaseScope], CaseCustomerBinding | None] | None = None
+        if providers is not None:
+            from policyops.runtime import live_agent
+
+            workspace = UUID(demo()["workspace_id"])
+            aggregate, worst = live_agent.max_usd(), live_agent.preflight(live_agent.configuration())
+            loaded = live_agent.inputs(live_agent.INPUTS)
+            catalog = live_agent.catalog(
+                env=env, engine=app, loaded=loaded, workspace=workspace, providers=lambda: providers,
+                retail_origin=retail_origin, retail_key=retail_key, clock=review.executor.clock, aggregate=aggregate)
+            refusal = partial(live_agent.claim_refusal, workspace=workspace, aggregate=aggregate,
+                              worst=worst, vocab=loaded[1])
+            binding = partial(live_agent.case_binding, workspace=workspace)
+            print(json.dumps({"event": "live_agent.preflight", "run_max_usd": str(worst),
+                              "workspace_max_usd": str(aggregate)}), flush=True)
+        jobs = build_worker(env=env, app_engine=app, discovery_engine=discovery, review=review,
+                            clock=review.executor.clock, batch=1, catalog=catalog, claim_refusal=refusal)
         executions = build_execution_dispatcher(env="local" if execution_hooks is None else "test",
             app_engine=app, discovery_engine=discovery, hooks=execution_hooks,
             scopes=review.executor.scopes, retail=review.executor.retail, clock=review.executor.clock, batch=1)
         outbox = build_dispatcher(env="local", app_engine=app, discovery_engine=discovery, clock=review.executor.clock)
         def refresh_bindings() -> None:
-            scopes = BoundScopes(app, demo_bindings(app), FIXTURE_SHA256)
+            scopes = BoundScopes(app, demo_bindings(app), FIXTURE_SHA256, case_binding=binding)
             review.executor.scopes = executions.executor.scopes = scopes
 
         passes: tuple[Callable[[], int | list[Step] | None], ...] = (
@@ -387,6 +467,8 @@ def main() -> int:
         "bootstrap-app": bootstrap_app, "bootstrap-retail": bootstrap_retail,
         "migrate-app": lambda: migration(False), "migrate-retail": lambda: migration(True),
         "seed-demo": seed_demo, "api": api, "retail": retail, "worker": worker,
+        "ingest-live-agent": partial(live_agent_seed, create_case=False),
+        "seed-live-agent": partial(live_agent_seed, create_case=True),
     }
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=commands)
@@ -396,7 +478,13 @@ def main() -> int:
         return int(result is False)
     except Exception as error:
         # Third-party tracebacks can carry credentials. Emit only the exception type.
-        print(json.dumps({"command": args.command, "error_type": type(error).__name__}), file=sys.stderr)
+        details = {"command": args.command, "error_type": type(error).__name__}
+        if os.environ.get("POLICYOPS_LIVE_AGENT") == "1" or args.command.endswith("-live-agent"):
+            from policyops.runtime.live_agent import LiveAgentRefused
+
+            if isinstance(error, LiveAgentRefused):
+                details["category"] = str(error)
+        print(json.dumps(details), file=sys.stderr)
         return 1
 
 

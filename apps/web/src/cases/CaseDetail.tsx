@@ -9,7 +9,7 @@
 // full it stays capped, and later posts, including ones contiguous with it, go to the suffix. Case snapshots are applied only when their version is not older than the one shown: an idempotent
 // replay returns the original (older) snapshot and a slow read may arrive after a newer one.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "react-aria-components/Button";
 import { Link, useNavigate } from "react-router";
 
@@ -111,6 +111,8 @@ export interface Draft {
 
 const EMPTY_DRAFT: Draft = { source: null, text: "", confirming: false };
 
+type PostedEvent = Extract<Payload, { type: "case.message_posted" }>;
+
 export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; runId?: string | undefined; citationId?: string | undefined; me: MeOut }) {
   const load = useScopedLoader();
   const messageLoad = useScopedLoader();
@@ -125,10 +127,16 @@ export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; 
   const [announcement, setAnnouncement] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [focusComposer, setFocusComposer] = useState(0);
-  const onMessages = useCallback((events: Extract<Payload, { type: "case.message_posted" }>[]): void => {
-    const wanted = events.slice(-50).sort((a, b) => a.message_sequence - b.message_sequence);
+  const [syncingCase, setSyncingCase] = useState(false);
+  const pendingMessages = useRef<PostedEvent[]>([]);
+  const onMessages = useCallback((events: PostedEvent[]): void => {
+    // A later event can supersede a slow read. Include the messages that read has yet to apply.
+    const bySequence = new Map([...pendingMessages.current, ...events].map((event) => [event.message_sequence, event]));
+    const wanted = [...bySequence.values()].sort((a, b) => a.message_sequence - b.message_sequence).slice(-50);
     const first = wanted[0];
     if (first === undefined) return;
+    pendingMessages.current = wanted;
+    setSyncingCase(true);
     messageLoad(`case-live-messages:${caseId}`, async (options) => {
       const page = await listMessages(caseId, first.message_sequence - 1, options);
       const found: MessageView[] = [];
@@ -139,10 +147,17 @@ export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; 
             || message.source !== event.source) throw new ApiError("malformed");
         found.push(message);
       }
-      return found;
-    }, (messages) => {
-      setDetail((previous) => ({ ...previous, history: messages.reduce(addPosted, previous.history) }));
+      // The message commit also advances the case version used by the next write.
+      return { messages: found, view: await getCase(caseId, options) };
+    }, ({ messages, view }) => {
+      pendingMessages.current = [];
+      setDetail((previous) => previous.caseView === null ? previous : {
+        ...previous, caseView: newerCase(previous.caseView, view), history: messages.reduce(addPosted, previous.history),
+      });
+      setSyncingCase(false);
     }, (error) => {
+      pendingMessages.current = [];
+      setSyncingCase(false);
       setDetail((previous) => error.status === 403 || error.status === 404
         ? { ...previous, phase: "failed", caseView: null, history: EMPTY_HISTORY, error }
         : { ...previous, readError: error });
@@ -241,7 +256,7 @@ export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; 
 
   const send = (): void => {
     setNotice(null);
-    if (draft.source === null) {
+    if (syncingCase || draft.source === null) {
       return;
     }
     const begun = ledger.begin({ kind: "postMessage", caseId, ifMatch: view.version,
@@ -254,6 +269,7 @@ export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; 
   };
 
   const startInvestigation = (): void => {
+    if (syncingCase) return;
     setNotice(null);
     const begun = ledger.begin({ kind: "startRun", caseId, ifMatch: view.version, payload: null });
     if ("refused" in begun && begun.refused === "capacity") {
@@ -283,6 +299,7 @@ export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; 
 
       <section aria-labelledby="conversation-heading">
         <h2 id="conversation-heading">Conversation</h2>
+        {syncingCase && canOperate ? <Status label="Updating case version…" /> : null}
         {detail.readError !== null ? <ErrorPanel error={detail.readError} /> : null}
         <MessageList history={detail.history} me={me} busy={busy} onMore={loadMore} />
       </section>
@@ -295,14 +312,15 @@ export function CaseDetail({ caseId, runId, citationId, me }: { caseId: string; 
                                                refreshLabel="Refresh the conversation" />)}
             <Composer draft={posting?.payload != null ? { source: posting.payload.source, text: posting.payload.text,
                                                            confirming: false } : draft}
-                      locked={posting !== null} focusSignal={focusComposer} onChange={setDraft} onSend={send} />
+                      locked={posting !== null} submitDisabled={syncingCase}
+                      focusSignal={focusComposer} onChange={setDraft} onSend={send} />
           </section>
           <section aria-labelledby="run-heading">
             <h2 id="run-heading">Investigation</h2>
             <p className="muted">An investigation lets the agent gather facts and propose actions for review.</p>
             {runs.map((entry) => <RunStatus key={entry.id} entry={entry} onRefresh={refresh} />)}
             <Button className="button" onPress={startInvestigation}
-                    isDisabled={runs.some((entry) => entry.phase === "inFlight" || entry.phase === "unknown")}>
+                    isDisabled={syncingCase || runs.some((entry) => entry.phase === "inFlight" || entry.phase === "unknown")}>
               Start investigation
             </Button>
           </section>

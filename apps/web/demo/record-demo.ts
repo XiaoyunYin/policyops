@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, rmdir, writeFile } from "node:f
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { within } from "./capture.ts";
-import { browserEnv, demoOrigin, isWithin, outputPath, rejectLoopbackAddresses } from "./guards.ts";
+import { browserEnv, demoOrigin, isWithin, liveCasePath, outputPath, rejectLoopbackAddresses } from "./guards.ts";
 
 async function password(dir: string, name: "alice" | "bob"): Promise<string> {
   try {
@@ -13,7 +13,7 @@ async function password(dir: string, name: "alice" | "bob"): Promise<string> {
   throw new Error(`Read a nonempty public demo password from ${name} in --password-dir`);
 }
 
-async function cleanRun(root: string, run: string, published: boolean): Promise<void> {
+async function cleanRun(root: string, run: string, published: boolean, live: boolean): Promise<void> {
   const resolvedRun = await realpath(run);
   if (run !== resolvedRun || !isWithin(root, resolvedRun)) {
     throw new Error("Recording directory changed during the run; inspect it before cleanup");
@@ -30,24 +30,40 @@ async function cleanRun(root: string, run: string, published: boolean): Promise<
   if (!published) {
     await rm(resolve(run, "policyops-demo.webm"), { force: true });
     await rm(resolve(run, "policyops-demo.png"), { force: true });
+    if (live) await rm(resolve(run, "summary.json"), { force: true });
     await rmdir(resolvedRun);
   }
 }
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { local: { type: "boolean" }, "password-dir": { type: "string" },
-    help: { type: "boolean" } } });
+    help: { type: "boolean" }, mode: { type: "string" }, case: { type: "string" }, "output-dir": { type: "string" } } });
+  const live = values.mode === "live-agent";
+  if (values.mode !== undefined && !live) throw new Error("Use --mode live-agent for the local live-agent recorder");
+  if (live && values.help) {
+    console.log("node demo/record-demo.ts --mode live-agent --local --case /cases/<uuid> --password-dir <absolute directory> --output-dir <absolute directory>");
+    return;
+  }
   if (values.help) {
     console.log("node demo/record-demo.ts --password-dir <absolute directory> [--local]");
     console.log("Set POLICYOPS_DEMO_ORIGIN and POLICYOPS_TEMP_DIR. Output goes to POLICYOPS_TEMP_DIR/N12/<run>/.");
     return;
   }
+  if (live && values.local !== true) throw new Error("The live-agent recorder requires --local");
+  if (!live && (values.case !== undefined || values["output-dir"] !== undefined)) {
+    throw new Error("--case and --output-dir require --mode live-agent");
+  }
   const origin = demoOrigin(process.env["POLICYOPS_DEMO_ORIGIN"], values.local === true);
   const checkout = await realpath(resolve(import.meta.dirname, "../../.."));
-  const configuredRoot = process.env["POLICYOPS_TEMP_DIR"] ?? "";
-  outputPath(configuredRoot, checkout, "N12");
+  const subdir = live ? "live-agent" : "N12";
+  const configuredRoot = (live ? values["output-dir"] : process.env["POLICYOPS_TEMP_DIR"]) ?? "";
+  if (live && (!isAbsolute(configuredRoot) || isWithin(checkout, resolve(configuredRoot)))) {
+    throw new Error("--output-dir must be an absolute directory outside the checkout");
+  }
+  outputPath(configuredRoot, checkout, subdir);
   const root = await realpath(configuredRoot);
-  const output = outputPath(root, checkout, "N12");
+  const output = outputPath(root, checkout, subdir);
+  const livePath = live ? liveCasePath(values.case) : undefined;
   const dir = values["password-dir"];
   if (dir === undefined || !isAbsolute(dir)) throw new Error("Supply --password-dir as an absolute directory");
   const [alice, bob] = await Promise.all([password(dir, "alice"), password(dir, "bob")]);
@@ -59,7 +75,7 @@ async function main(): Promise<void> {
   await mkdir(output, { recursive: true });
   const parent = await realpath(output);
   if (!isWithin(root, parent) || isWithin(checkout, parent) || parent === root) {
-    throw new Error("The N12 output directory resolves outside the allowed output tree");
+    throw new Error(`The ${subdir} output directory resolves outside the allowed output tree`);
   }
   const run = await mkdtemp(resolve(parent, "run-"));
   const scratch = resolve(run, "chromium");
@@ -76,6 +92,27 @@ async function main(): Promise<void> {
     const { walkthrough } = await import("./walkthrough.ts");
     const browser = await chromium.launch({ headless: true, timeout: 20_000,
       args: ["--no-proxy-server"], env: browserEnv(process.env, scratch) });
+    if (livePath !== undefined) {
+      const recording = await (async () => {
+        try {
+          const { liveWalkthrough } = await import("./live-agent.ts");
+          return await liveWalkthrough(browser, origin, { alice, bob }, livePath);
+        } finally {
+          await within(browser.close(), "Closing Chromium", 15_000);
+        }
+      })();
+      await writeFile(videoPath, recording.data, { flag: "wx" });
+      const summaryPath = resolve(run, "summary.json");
+      await writeFile(summaryPath, JSON.stringify(recording.summary, null, 2) + "\n", { flag: "wx" });
+      published = true;
+      console.log(`WebM ${videoPath} (${String(recording.data.length)} bytes, ${recording.seconds.toFixed(2)} s)`);
+      console.log(`Summary ${summaryPath}`);
+      if (recording.summary.outcome !== "committed") {
+        console.error(`Live-agent recorder stopped (${recording.summary.outcome})`);
+        process.exitCode = 1;
+      }
+      return;
+    }
     const recording = await (async () => {
       try {
         return await walkthrough(browser, origin, { alice, bob });
@@ -89,7 +126,7 @@ async function main(): Promise<void> {
     console.log(`WebM ${videoPath} (${String(recording.data.length)} bytes, ${recording.seconds.toFixed(2)} s)`);
     console.log(`Poster ${posterPath} (${String(recording.poster.length)} bytes, 1280×720)`);
   } finally {
-    await cleanRun(root, run, published);
+    await cleanRun(root, run, published, live);
   }
 }
 

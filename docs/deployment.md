@@ -539,6 +539,82 @@ fixture from the repository root with `docker compose exec -T worker python -B i
 Set `POLICYOPS_DEMO_ORIGIN` to `http://127.0.0.1:8080`, add `--local`, and point `--password-dir` at that stack's
 `alice` and `bob` password files.
 
+## Local live-agent profile
+
+The opt-in `infra/compose/live-agent.yaml` overlay runs the real investigation graph with GPT-6-Luna at low
+reasoning effort. It uses `tool-contract-v1r1`, the pinned fictional retail fixture, and the
+`tau2-retail-policy` corpus. The local seed creates a fresh customer cancellation case with a single pending
+order. Start the investigation in the workbench to see its activity, then inspect the cited proposal, enter
+simulated customer consent, and approve it in a separate reviewer session. The final receipt comes from the
+retail simulator.
+
+This overlay is local-only and is not deployable. Use a disposable Compose project with a loopback HTTP origin.
+Public deployments use the explicit base and public Compose files. The default stack leaves the investigation
+catalog unconfigured.
+
+Use Docker Compose 2.33.1 or later for the worker's egress gateway priority. Set `POLICYOPS_TEMP_DIR` to an
+external directory, set `POLICYOPS_RUN_ID` to a unique name, and set `POLICYOPS_SECRETS_DIR` to a fresh
+subdirectory of that temp root. Generate the usual demo secret files with `scripts/compose_secrets.py`. Place the
+OpenAI key in the file `$POLICYOPS_SECRETS_DIR/openai_api_key`, using host permissions that give the worker's
+UID 10001 read access. Compose mounts this file only in the worker. The API can bind and queue the same runtime
+without a provider credential. Set `POLICYOPS_LIVE_AGENT_POLICY` to the absolute path of
+`data/tau2/domains/retail/policy.md` from the pinned tau2 checkout at
+`19f13ea3f5fba8b4c4d272d1353590f29dc53062`, with SHA-256
+`2c9652afbce57d6e087768d37cda64d31c53d50b3e3225cfdb791bac66466467`. Provision the tokenizer with
+`scripts/fetch_tokenizer_vocab.py --from-file <absolute-pinned-vocabulary>`.
+
+With those inputs prepared, run these commands from the checkout in PowerShell. The ingestion command may send
+paid embedding requests. The seed also ensures ingestion has completed, so the two worker commands can be
+reduced to the seed alone. A matching active corpus generation is reused without new rows or provider calls.
+
+```powershell
+$compose = @('compose', '-p', $env:POLICYOPS_RUN_ID, '-f', 'compose.yaml', '-f', 'infra/compose/live-agent.yaml')
+docker @compose config -q
+docker @compose up --build --wait --wait-timeout 300
+docker @compose logs --tail 20 worker
+docker @compose exec -T worker python -B infra/compose/runtime.py ingest-live-agent
+$case = docker @compose exec -T worker python -B infra/compose/runtime.py seed-live-agent
+```
+
+Set `POLICYOPS_DEMO_ORIGIN` to the stack's loopback HTTP origin and prepare Playwright Chromium with the locked
+web dependencies. Create an external recording directory before running the recorder. From `apps/web`:
+
+```powershell
+node demo/record-demo.ts --mode live-agent --local --case $case --password-dir $env:POLICYOPS_SECRETS_DIR --output-dir $recordings
+```
+
+The worker prints its price-bound preflight at startup. A run reserves at most **USD 0.012096** across eight
+model calls, with 10,000 input tokens and 1,024 output tokens per call and 120 seconds of active investigation
+time. Ingestion has separate operation caps of USD 0.01, four calls, 16,000 input tokens, and 120 seconds.
+`POLICYOPS_LIVE_AGENT_MAX_USD` defaults to **USD 0.50** for the life of the demo workspace. A new run needs enough
+room for its full preflight above settled and held liability. Each model and embedding reservation checks the
+same workspace limit. Unconfirmed charges remain held, and provider charges above their reservations are
+recorded as overruns. The runtime uses the configured model throughout.
+
+PostgreSQL and the simulator stay on the internal default network. The overlay adds a separate outbound bridge
+for the worker. The intended external endpoint is `api.openai.com`; Compose does not enforce that destination.
+This demonstration covers a fictional cancellation and its independently approved simulator effect. Live model
+output can abstain, stop, or omit the required citation. The recorder exits nonzero in those cases and keeps the
+captioned recording with a sanitized summary when it completes capture. The summary reports the run's pinned
+case version, proposal version, ledger call count and amounts, and the verified receipt digest when available.
+
+When finished, run `docker @compose down --volumes` for this disposable project, retain recordings as needed, and
+remove the local copy of the provider key from the secret directory.
+
+**Recorded result (2026-11-27, one Windows workstation, Docker Desktop).** The committed
+[recording](assets/policyops-live-agent.webm) shows one run. GPT-6-Luna read the customer and order, retrieved
+the cancellation policy and proposed cancelling the single pending order with cited policy evidence. Staff then
+entered simulated consent, a separate reviewer approved, and the simulator returned a verified receipt. The run
+used 6 model calls and settled an estimated USD 0.0022, with nothing held.
+
+While the profile was brought up, 16 local runs in one workspace settled an estimated USD 0.031 in total across
+88 ledgered calls, including the one-time policy embedding. Nothing was held. 11 runs reached a proposal. In the
+other 5, the agent ended without one, replying that it could not answer from the verified policy evidence.
+
+Those runs also exposed a workbench defect. A live `case.message_posted` event updated the conversation but not
+the case version, so the next customer message was rejected with HTTP 409. The case view now re-reads the case
+after such events and blocks posting until the read completes.
+
 ## Hardening and live acceptance
 
 - Confirm Lightsail ingress: TCP 80/443 from all IPv4, 22 only from admin `/32`, no IPv6.

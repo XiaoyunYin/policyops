@@ -26,6 +26,13 @@ export function rejectLoopbackAddresses(addresses: readonly string[]): void {
   if (loopback) throw new Error("The HTTPS hostname resolves to a loopback address. Use --local for Compose");
 }
 
+export function liveCasePath(value: string | undefined): string {
+  if (value === undefined || !/^\/cases\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value)) {
+    throw new Error("Supply the seeded /cases/<uuid> path with --case");
+  }
+  return value;
+}
+
 export function isWithin(parent: string, path: string): boolean {
   const child = relative(parent, path);
   return child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);

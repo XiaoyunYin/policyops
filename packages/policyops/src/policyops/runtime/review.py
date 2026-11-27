@@ -6,7 +6,7 @@ T19 reservation occur outside them. The execution ledger alone owns dispatch.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import timedelta
@@ -69,12 +69,16 @@ class BoundScopes:
     engine: Engine
     bindings: tuple[CaseCustomerBinding, ...]
     fixture_sha256: str
+    case_binding: Callable[[Connection, CaseScope], CaseCustomerBinding | None] | None = None
 
     def scope(self, run: RunScope) -> GatewayScope:
         matches = [binding for binding in self.bindings if (binding.scope.workspace_id, binding.scope.case_id)
                    == (run.workspace_id, run.case_id)]
         with workspace_transaction(self.engine, run.workspace_id) as connection:
-            binding = helpdesk.case_binding(connection, CaseScope(workspace_id=run.workspace_id, case_id=run.case_id))
+            scope = CaseScope(workspace_id=run.workspace_id, case_id=run.case_id)
+            binding = helpdesk.case_binding(connection, scope)
+            if self.case_binding is not None and (local := self.case_binding(connection, scope)) is not None:
+                matches.append(local)
         if binding is not None:
             matches.append(binding)
         if len(matches) != 1:

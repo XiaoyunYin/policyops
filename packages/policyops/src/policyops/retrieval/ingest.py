@@ -147,6 +147,7 @@ def _base_actor() -> EmbeddingActor:
 
 def ingest(request: Request, *, engine: Engine, tokenizer: Tokenizer, providers: Callable[[], Providers],
            env: str = "production", clock: LeaseClock | None = None,
+           workspace_max_usd: Decimal | None = None,
            before_verify: Callable[[Connection, UUID], None] | None = None) -> Outcome:
     actor = _base_actor()
     base = Configuration()
@@ -197,7 +198,7 @@ def ingest(request: Request, *, engine: Engine, tokenizer: Tokenizer, providers:
     # job must be settled before a cache-only publication, otherwise it goes through the same gated path.
     if misses or (job is not None and not _job_settled(job, embeddings, corpora)):
         stopped = _provider_work(request, expected, tokenizer, set(misses), job, embeddings, corpora, engine,
-                                 providers, env, clock, details)
+                                 providers, env, clock, details, workspace_max_usd)
         if stopped is not None:
             return stopped
         cached = embeddings.cached(expected.request_config_sha256, list(digests.values()))
@@ -279,7 +280,7 @@ def _state(embeddings: EmbeddingStore, corpora: CorpusStore, job_id: UUID) -> di
 def _provider_work(request: Request, expected: Expected, tokenizer: Tokenizer, misses: set[str], job: JobRow | None,
                    embeddings: EmbeddingStore, corpora: CorpusStore, engine: Engine,
                    providers: Callable[[], Providers], env: str, clock: LeaseClock | None,
-                   details: dict[str, Any]) -> Outcome | None:
+                   details: dict[str, Any], workspace_max_usd: Decimal | None) -> Outcome | None:
     """Plan, gate and run the remaining provider work; None when the job completed and publication may follow."""
     base = Configuration()
     job_input = EmbeddingJob(purpose=PURPOSE, subject_key=expected.subject_key, inputs=expected.inputs)
@@ -338,7 +339,7 @@ def _provider_work(request: Request, expected: Expected, tokenizer: Tokenizer, m
                 return Outcome("refused", "plan_exceeds_scope_budget", details)
     configuration = paid.configuration()
     ledger = build_app_ledger(env=env, engine=engine, workspace_id=request.workspace_id,
-                              configuration=configuration, clock=clock)
+                              configuration=configuration, clock=clock, workspace_max_usd=workspace_max_usd)
     prepared = prepare_job(job_input, configuration, tokenizer, deadline=time.monotonic() + PREPARE_SECONDS)
     try:
         report = run_job_sync(ledger, embeddings, providers(), prepared,

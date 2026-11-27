@@ -699,7 +699,8 @@ class GitleaksInstallTests(unittest.TestCase):
         self.assertFalse(dest.exists())
 
     def test_unknown_platform_is_rejected(self) -> None:
-        with mock.patch.object(gate.platform, "system", return_value="Plan9"), \
+        with mock.patch.object(gate.sys, "platform", "plan9"), \
+                mock.patch.object(gate.platform, "system", return_value="Plan9"), \
                 mock.patch.object(gate.platform, "machine", return_value="mips"), \
                 self.assertRaises(gate.GateError):
             gate.platform_key()

@@ -39,6 +39,7 @@ from policyops.budget.config import Caps, Configuration
 from policyops.budget.ledger import (
     Attempt,
     Binding,
+    BudgetExhausted,
     Diagnostic,
     EvalBinding,
     Intent,
@@ -192,11 +193,24 @@ def _same_caps(row: Mapping[str, Any], cap_usd: Decimal, cap_calls: int, what: s
 
 # -- app ---------------------------------------------------------------------------------------------------------
 
+def workspace_liability(connection: Connection) -> Decimal:
+    """Read settled plus held USD under the current workspace's RLS scope."""
+    return Decimal(connection.execute(text(
+        "SELECT coalesce(sum(spent_usd + held_usd), 0) FROM app.budget_scopes"
+    )).scalar_one())
+
+
 @dataclass
 class _AppTransaction:
     connection: Connection
     clock: LeaseClock
     claim_token: ClaimToken | None
+    workspace_max_usd: Decimal | None
+
+    def _lock_workspace_budget(self) -> None:
+        self.connection.execute(text(
+            "SELECT pg_advisory_xact_lock(hashtextextended('policyops:budget:' || app.current_workspace()::text, 0))"
+        ))
 
     def _admit_run(self, run_id: UUID) -> None:
         token = self.claim_token
@@ -263,6 +277,10 @@ class _AppTransaction:
         return None if row is None else _attempt(row, (row["scope_id"],))
 
     def insert_attempt(self, attempt: Attempt, now: datetime) -> None:
+        if self.workspace_max_usd is not None:
+            self._lock_workspace_budget()
+            if workspace_liability(self.connection) + attempt.intent.reserved_usd > self.workspace_max_usd:
+                raise BudgetExhausted("workspace", "usd_cap")
         (scope_id,) = attempt.intent.scope_ids
         with _unique_is_conflict(f"attempt {attempt.id} already exists"):
             self.connection.execute(text(APP_INSERT_ATTEMPT), _intent_params(attempt, now) | {"scope_id": scope_id})
@@ -273,6 +291,8 @@ class _AppTransaction:
                                     _settlement_params(attempt, now, settlement))
 
     def update_scope(self, scope: Scope, now: datetime) -> None:
+        if self.workspace_max_usd is not None:
+            self._lock_workspace_budget()
         self.connection.execute(text("UPDATE app.budget_scopes " + SET_SCOPE), _scope_params(scope, now))
 
     def record_usage(self, attempt: Attempt, settlement: Settlement, now: datetime) -> None:
@@ -304,7 +324,7 @@ def _checked_clock(env: str, clock: LeaseClock | None) -> LeaseClock:
 
 class AppLedgerStore:
     def __init__(self, engine: Engine, workspace_id: UUID, *, env: str, clock: LeaseClock | None = None,
-                 claim_token: ClaimToken | None = None) -> None:
+                 claim_token: ClaimToken | None = None, workspace_max_usd: Decimal | None = None) -> None:
         self.clock = _checked_clock(env, clock)
         if not isinstance(workspace_id, UUID):
             raise TypeError("workspace_id must be a UUID")
@@ -314,11 +334,12 @@ class AppLedgerStore:
         if claim_token is not None and claim_token.workspace_id != workspace_id:
             raise runs.Fenced("binding_changed")
         self.claim_token = claim_token
+        self.workspace_max_usd = workspace_max_usd
 
     @contextmanager
     def transaction(self) -> Iterator[_AppTransaction]:
         with workspace_transaction(self.engine, self.workspace_id) as connection:
-            yield _AppTransaction(connection, self.clock, self.claim_token)
+            yield _AppTransaction(connection, self.clock, self.claim_token, self.workspace_max_usd)
 
     def run_scope(self, run_id: UUID) -> Scope | None:
         with workspace_transaction(self.engine, self.workspace_id) as connection:
@@ -535,8 +556,9 @@ def _check_caps(cap_usd: Decimal, cap_calls: int) -> None:
 
 def build_app_ledger(*, env: str, engine: Engine, workspace_id: UUID, configuration: Configuration,
                      clock: LeaseClock | None = None, earlier_snapshots: Sequence[PriceSnapshot] = (),
-                     claim_token: ClaimToken | None = None) -> Ledger:
-    return Ledger(AppLedgerStore(engine, workspace_id, env=env, clock=clock, claim_token=claim_token),
+                     claim_token: ClaimToken | None = None, workspace_max_usd: Decimal | None = None) -> Ledger:
+    return Ledger(AppLedgerStore(engine, workspace_id, env=env, clock=clock, claim_token=claim_token,
+                                 workspace_max_usd=workspace_max_usd),
                   configuration, earlier_snapshots)
 
 

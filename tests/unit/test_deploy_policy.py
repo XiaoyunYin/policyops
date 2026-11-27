@@ -53,6 +53,44 @@ def shell_binary(name: str) -> str:
     return binary
 
 
+def seed_failure_block() -> str:
+    deploy = (ROOT / "infra/deploy/deploy.sh").read_text(encoding="utf-8")
+    start = deploy.index('  seed=$(mktemp "$base/logs/.scenario-$commit.XXXXXX")')
+    end = deploy.index("\nfi\nif [[ \"$mode\" != deploy", start)
+    return deploy[start:end]
+
+
+def test_deploy_seed_failure_reports_bounded_head_and_preserves_success_path() -> None:
+    block = seed_failure_block()
+    assert 'if "${compose[@]}" exec -T worker python -B infra/compose/scenario.py seed > "$seed"; then' in block
+    assert 'sync -f "$seed"\n    mv -f "$seed" "$base/logs/scenario-$commit.json"\n    sync -f "$base/logs"\n    trap - EXIT' in block
+    assert "seed_status=$?" in block
+    assert "head -c 4096 -- \"$seed\" >&2" in block
+    assert 'exit "$seed_status"' in block
+
+
+def test_deploy_seed_failure_is_visible_in_stderr_and_cleans_temp_file(tmp_path: Path) -> None:
+    block = seed_failure_block()
+    harness = f'''set -euo pipefail
+base={shlex.quote(tmp_path.as_posix())}
+commit=0123456789abcdef0123456789abcdef01234567
+mkdir -p "$base/logs"
+compose=(docker compose)
+docker() {{
+  printf '%s\\n' '{{"mode":"seed","error_type":"ScenarioError","detail":"seed fixture failed"}}'
+  return 3
+}}
+{block}
+'''
+    result = subprocess.run([shell_binary("bash"), "-s"], input=harness, text=True,
+                            capture_output=True, timeout=15)
+    assert result.returncode == 3, result.stderr
+    assert result.stdout == ""
+    assert result.stderr.startswith("Demo seed failed; first 4 KiB of its output:\n")
+    assert '{"mode":"seed","error_type":"ScenarioError","detail":"seed fixture failed"}' in result.stderr
+    assert list((tmp_path / "logs").iterdir()) == []
+
+
 def check_stub(stub: str) -> None:
     assert not re.search(r"pipefail|\[\[|\]\]|\bfunction\b|\bsource\b|\$'|(?:^|\n|;)\s*(?:local|declare|typeset)\s|"
                          r"\w+=\(|\$\{[^}]*\[|<\(|>\(|&>|==", stub)

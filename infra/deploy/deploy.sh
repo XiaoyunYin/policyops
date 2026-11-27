@@ -212,11 +212,17 @@ if [[ "$mode" != --rollback || "$inherited" -eq 1 ]]; then
   # This creates a presented deterministic proposal, never consent, approval, or a receipt.
   seed=$(mktemp "$base/logs/.scenario-$commit.XXXXXX")
   trap 'rm -f -- "$seed"' EXIT
-  "${compose[@]}" exec -T worker python -B infra/compose/scenario.py seed > "$seed"
-  sync -f "$seed"
-  mv -f "$seed" "$base/logs/scenario-$commit.json"
-  sync -f "$base/logs"
-  trap - EXIT
+  if "${compose[@]}" exec -T worker python -B infra/compose/scenario.py seed > "$seed"; then
+    sync -f "$seed"
+    mv -f "$seed" "$base/logs/scenario-$commit.json"
+    sync -f "$base/logs"
+    trap - EXIT
+  else
+    seed_status=$?
+    printf '%s\n' 'Demo seed failed; first 4 KiB of its output:' >&2
+    head -c 4096 -- "$seed" >&2
+    exit "$seed_status"
+  fi
 fi
 if [[ "$mode" != deploy && "$inherited" -eq 1 ]]; then exit 0; fi
 if test -L "$base/current"; then readlink "$base/current" > "$base/previous-release"; fi

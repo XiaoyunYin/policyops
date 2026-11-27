@@ -711,6 +711,7 @@ result. The agent closes the pipes after EOF or a quarter-second drain period
 following exit, so background descendants can contribute only during that
 period. On timeout the tail contains output captured before cleanup finished.
 An expired budget before launch or a spawn failure can produce a zero-byte file.
+A failed post-activation seed copies the head of its output to stderr, so it appears in the command's tail.
 
 `output_tails` records each file's path relative to `cd`, byte length and
 SHA-256. `output_tail_errors` lists commands whose diagnostics could not be

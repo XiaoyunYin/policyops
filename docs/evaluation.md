@@ -445,6 +445,36 @@ were eight declines without transfer and one transfer with an invalid next
 reply. Two missing-reason finishes remain indeterminate. The six harness
 stops reconcile to four call caps and two retrieval caps across both arms.
 
+### Live seeded-case reproduction
+
+The local live-agent profile (`tool-contract-v1r1`, GPT-6-Luna at low effort)
+re-ran the seeded cancellation case in 16 registered slots on 2026-11-28. Each
+slot used a fresh case for the same fictional customer, and the run used
+sanitized transport tapes. The registration was sealed before any provider
+call. The seeded customer message asks the agent to check the cancellation
+policy first and to cancel the order.
+
+| Outcome | Slots |
+| --- | ---: |
+| Cancellation proposal persisted, verified by the recorder | 10 |
+| Cancellation write emitted on the tape, persistence not verified (browser capture failed) | 2 |
+| Ended with `finish_answer` answering the policy question, no write | 3 |
+| Not started (browser capture failed before the run) | 1 |
+| **Registered slots** | **16** |
+
+All 15 started runs read the customer and the order and searched the policy.
+In the 3 runs without a write, the model answered the policy question with
+`finish_answer`. On this graph a valid finish is the run's only terminal, so the
+investigation ended with an answer instead of a proposal. In 4 other runs, a
+first `finish_answer` was not accepted, and the model then filed the
+cancellation.
+
+The earlier non-proposal runs on this case therefore come from a two-part
+request meeting a single-terminal graph, not from retrieval misses. The ledger
+settled an estimated $0.0294 across 83 calls for 15 runs and the corpus
+ingestion, with nothing held. This is one seeded case on one workstation, not
+a rate.
+
 ### Read-sequence census
 
 For exact first proposals, a read sequence is the ordered list of tool names

@@ -469,8 +469,9 @@ investigation ended with an answer instead of a proposal. In 4 other runs, a
 first `finish_answer` was not accepted, and the model then filed the
 cancellation.
 
-The earlier non-proposal runs on this case therefore come from a two-part
-request meeting a single-terminal graph, not from retrieval misses. The ledger
+In this reproduction, the non-proposal runs came from the two-part request
+meeting a single-terminal graph. The earlier non-proposal runs on this case
+were not recorded, so their mechanism is not established. The ledger
 settled an estimated $0.0294 across 83 calls for 15 runs and the corpus
 ingestion, with nothing held. This is one seeded case on one workstation, not
 a rate.

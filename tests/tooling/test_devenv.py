@@ -115,6 +115,15 @@ class DevenvTests(unittest.TestCase):
         self.assertIn(self.root, Path(env["UV_CACHE_DIR"]).parents)
         self.assertIn(self.root, Path(env["TEMP"]).parents)
 
+    def test_recording_mount_requires_an_existing_external_directory(self) -> None:
+        for invalid in ("relative", str(REPO), str(self.root / "missing")):
+            with self.subTest(path=invalid), self.assertRaises(devenv.EnvironmentErrorReport):
+                self.base["POLICYOPS_LIVE_AGENT_TAPES"] = invalid
+                self.env_for(["docker", "compose", "config"])
+        self.base["POLICYOPS_LIVE_AGENT_TAPES"] = str(self.root)
+        env = self.env_for(["docker", "compose", "config"])
+        self.assertEqual(Path(env["POLICYOPS_LIVE_AGENT_TAPES"]), self.root)
+
     def test_user_data_directory_is_routed_and_created_before_the_command(self) -> None:
         # Regression: Vitest wrote its API token to the caller's LOCALAPPDATA/XDG_DATA_HOME.
         inherited = self.root / "inherited-user-data"

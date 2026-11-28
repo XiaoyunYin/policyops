@@ -27,7 +27,7 @@ from policyops.orchestration import investigation_prompt as prompt
 from policyops.orchestration.adapters import InvestigationAdapters
 from policyops.orchestration.graph import ABSTENTION, InvestigationGraph, failed, update
 from policyops.orchestration.minimal import prompt_sha256
-from policyops.orchestration.profile import InvestigationProfile
+from policyops.orchestration.profile import InvestigationProfile, InvestigationProfileV2
 from policyops.orchestration.state import (
     AwaitingApproval,
     CheckpointStateVersionError,
@@ -41,8 +41,9 @@ from policyops.persistence import checkpoint_json as codec
 from policyops.providers.calls import CallReport
 from policyops.providers.serialize import prepare
 from policyops.runtime import investigation as runtime
-from policyops.runtime.spec import Outcome, Retry, StepContext
+from policyops.runtime.spec import Failed, InvestigationCompleted, Outcome, Retry, StepContext
 from policyops_contracts.conversation import AgentLimits, RuntimeNotice, ToolResult, UserMessage
+from policyops_contracts.events import InvestigationReason
 from policyops_contracts.grounding import CitedQuote, ReconcileOutcome, RecordOutcome
 from policyops_contracts.model import ModelRequest, TextPart, ToolCall
 from policyops_contracts.proposal import EvidenceRef
@@ -125,6 +126,43 @@ def run(model: ScriptedModel, state: InvestigationState | None = None, actions: 
 
 ABSTAIN = {"v": "policyops.grounded-answer/v1", "outcome": "abstain", "assertions": [],
            "abstention": {"reason": "insufficient_evidence", "detail": None}}
+
+
+@pytest.mark.parametrize("reason", list(InvestigationReason))
+def test_v2_closed_outcome_after_checkpoint_roundtrip(reason: InvestigationReason,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    selected = InvestigationProfileV2.TOOL_CONTRACT_V2
+    adapter = object.__new__(InvestigationAdapters)
+    adapter.typed_outcomes = True
+    ref = EvidenceRef(evidence_id=uuid4(), document_version_id=uuid4(), content_sha256="0" * 64)
+    model_detail = "<script>model text</script>"
+    choice = answer((True, (quote(0, "E1", "Refunds"),))).model_dump(mode="json")
+    control = prompt.FINISH
+    if reason is InvestigationReason.MODEL_ABSTAINED:
+        choice = ABSTAIN | {"abstention": {"reason": "insufficient_evidence", "detail": model_detail}}
+    elif reason is InvestigationReason.RENDERED_ANSWER_INVALID:
+        choice["assertions"] = [choice["assertions"][0] | {"text": "x" * 1800}] * 3
+    elif reason is InvestigationReason.CITED_DECLINE:
+        control = prompt.DECLINE
+        choice["assertions"][0]["text"] = model_detail
+
+    def record(_adapter: InvestigationAdapters, *_args: object) -> tuple[EvidenceRef, ...] | None:
+        if reason is InvestigationReason.SYSTEM_ERROR:
+            raise RuntimeError(model_detail)
+        return None if reason is InvestigationReason.CITATION_RECORDING_FAILED else (ref, ref, ref)
+
+    monkeypatch.setattr(InvestigationAdapters, "record", record)
+    builder = InvestigationGraph(ScriptedModel([calls(control, choice)]), FakeKnowledge(), adapter,
+        fictional_policy(), AgentLimits(knowledge_steps=16, consecutive_invalid=2),
+        time.monotonic() + 60, lambda: None, profile=selected)
+    raw = asyncio.run(builder.compile(RecordingSaver()).ainvoke({"state": initial().model_dump(mode="json")},
+        {"configurable": {"thread_id": "typed"}, "recursion_limit": 66}, durability="sync"))
+    completed = runtime.outcome(state_from_json(raw["state"]), profile=selected)
+    if reason is InvestigationReason.SYSTEM_ERROR:
+        assert isinstance(completed, Failed) and completed.rule_id == "investigation.tool_error"
+    else:
+        assert isinstance(completed, InvestigationCompleted) and completed.reason is reason
+        assert (model_detail in completed.text) == (reason is InvestigationReason.CITED_DECLINE)
 
 
 @pytest.mark.parametrize("name,args,node", [

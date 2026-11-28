@@ -21,6 +21,26 @@ function fixture(roles: Role[] = ["analyst"], state: RunView["state"] = "succeed
   return api;
 }
 describe("workbench routes and writes", () => {
+  test("a persisted investigation reason survives a case reload and model text stays inert", async () => {
+    const api = fixture(["analyst"]);
+    const text = '<img src=x onerror="alert(1)">The policy does not cover this request.';
+    const posted: MessageView = { message_id: CITATION_ID, case_id: CASE.case_id, sequence: 1,
+      source: "agent", entered_by: null, text, text_sha256: "a".repeat(64), created_at: NOW };
+    const outcome = event(1, { type: "investigation.outcome", reason: "cited_decline" });
+    api.on("GET", `${CASE_PATH}/messages`, () => json(200, { items: [posted], next_after_sequence: null }));
+    api.on("GET", `${RUN_PATH}/snapshot`, () => json(200, snapshot({ highwater: 1,
+      run: run({ state: "succeeded", event_highwater: 1 }), events: [outcome], latest_investigation: outcome })));
+    const url = `/cases/${CASE.case_id}/runs/${RUN_ID}`;
+    const opened = renderApp(url);
+    expect(await screen.findByText("The investigation declined the request with a policy citation")).toBeTruthy();
+    opened.unmount();
+    renderApp(url);
+    expect(await screen.findByText("The investigation declined the request with a policy citation")).toBeTruthy();
+    const message = await screen.findByText(text);
+    expect(message.querySelector("img")).toBeNull();
+    expect(message.textContent).toBe(text);
+  });
+
   test("case entry discovers a run; a pinned reload uses the exact ID and never posts", async () => {
     const api = fixture(["auditor"]);
     renderApp(`/cases/${CASE.case_id}/runs/${RUN_ID}`);

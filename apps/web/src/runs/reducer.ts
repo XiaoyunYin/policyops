@@ -11,6 +11,7 @@ export interface Activity {
   readonly latestReview: EventEnvelope | null;
   readonly latestStop: EventEnvelope | null;
   readonly latestExecution: EventEnvelope | null;
+  readonly latestInvestigation: EventEnvelope | null;
   readonly projectionsComplete: boolean;
   readonly historyGap: boolean;
 }
@@ -36,6 +37,7 @@ function project(state: Activity, event: EventEnvelope): Activity {
   if (p.type === "proposal.presented") return { ...state, proposalRef: { proposal_id: p.proposal_id, proposal_version: p.proposal_version } };
   if (p.type === "run.state_changed") return { ...state, run: { ...state.run, state: p.current } };
   if (p.type === "run.stopped") return { ...state, latestStop: event };
+  if (p.type === "investigation.outcome") return { ...state, latestInvestigation: event };
   if (p.type !== "review.outcome" && p.type !== "execution.changed") return state;
   const previous = state.latestReview?.payload;
   if (p.type === "review.outcome" && previous?.type === "review.outcome"
@@ -66,10 +68,11 @@ function project(state: Activity, event: EventEnvelope): Activity {
 export function hydrate(snapshot: RunSnapshot, historyGap = false, previous?: Activity): Activity {
   let state: Activity = { run: snapshot.run, cursor: snapshot.highwater, events: snapshot.events,
     proposalRef: snapshot.proposal_ref,
-    latestReview: null, latestStop: null, latestExecution: null,
+    latestReview: null, latestStop: null, latestExecution: null, latestInvestigation: null,
     projectionsComplete: snapshot.projections_complete, historyGap };
   const projections = [snapshot.latest_review, snapshot.latest_stop, snapshot.latest_execution,
-    previous?.latestReview ?? null, previous?.latestStop ?? null, previous?.latestExecution ?? null];
+    snapshot.latest_investigation ?? null, previous?.latestReview ?? null, previous?.latestStop ?? null,
+    previous?.latestExecution ?? null, previous?.latestInvestigation ?? null];
   const merged = new Map<number, ReplayItem>();
   for (const e of [...snapshot.events, ...projections.filter((e): e is EventEnvelope => e !== null)]) {
     const old = merged.get(e.sequence);

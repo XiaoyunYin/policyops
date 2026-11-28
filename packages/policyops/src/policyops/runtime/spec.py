@@ -26,7 +26,7 @@ from uuid import UUID, uuid5
 from policyops.persistence.runs import ClaimToken
 from policyops_contracts.conversation import AgentMessage
 from policyops_contracts.errors import ErrorCode
-from policyops_contracts.events import EventPayload
+from policyops_contracts.events import EventPayload, InvestigationReason
 from policyops_contracts.stops import StopDetails, StopReason
 
 
@@ -83,6 +83,7 @@ class AwaitingApproval:
 class InvestigationCompleted:
     message_id: UUID
     text: str
+    reason: InvestigationReason | None = None
 
     def __post_init__(self) -> None:
         AgentMessage(text=self.text)
@@ -152,6 +153,7 @@ class RuntimeSpec:
     lease: timedelta = timedelta(seconds=30)
     run_timeout: timedelta = timedelta(minutes=15)
     test_only: bool = False
+    typed_investigation: bool = False
 
     def __post_init__(self) -> None:
         if not SLUG.fullmatch(self.spec_id):

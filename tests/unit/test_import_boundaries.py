@@ -216,6 +216,15 @@ SCENARIO_IMPORTS = {
     "tests/test_scenario_gate.py": {"policyops.gateway.steps", "policyops.orchestration",
                                     "policyops.orchestration.adapters", "policyops.orchestration.profile",
                                     "policyops.persistence"},
+    # N18 reads the same durable timestamps as the live recorder and instruments only the bound runtime.
+    "src/policyops_evals/run_latency.py": {
+        "policyops.orchestration.profile", "policyops.persistence.database", "policyops.persistence.runs",
+        "policyops.runtime.investigation", "policyops.runtime.live_agent", "policyops.runtime.spec",
+    },
+    "tests/test_typed_scenario_gate.py": {
+        "policyops.orchestration", "policyops.orchestration.adapters", "policyops.orchestration.profile",
+        "policyops.persistence", "policyops.persistence.database",
+    },
     "tests/test_scenario_lock.py": {"policyops.orchestration", "policyops.orchestration.profile",
                                     "policyops.providers.tokenizer", "policyops.providers.tool_diagnostics"},
     # N7 composes the locked workbench with cache-aware reservations and audits live app ledger rows.

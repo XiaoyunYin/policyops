@@ -37,11 +37,12 @@ async function cleanRun(root: string, run: string, published: boolean, live: boo
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { local: { type: "boolean" }, "password-dir": { type: "string" },
-    help: { type: "boolean" }, mode: { type: "string" }, case: { type: "string" }, "output-dir": { type: "string" } } });
+    help: { type: "boolean" }, mode: { type: "string" }, case: { type: "string" }, "output-dir": { type: "string" },
+    "investigation-only": { type: "boolean" } } });
   const live = values.mode === "live-agent";
   if (values.mode !== undefined && !live) throw new Error("Use --mode live-agent for the local live-agent recorder");
   if (live && values.help) {
-    console.log("node demo/record-demo.ts --mode live-agent --local --case /cases/<uuid> --password-dir <absolute directory> --output-dir <absolute directory>");
+    console.log("node demo/record-demo.ts --mode live-agent --local --case /cases/<uuid> --password-dir <absolute directory> --output-dir <absolute directory> [--investigation-only]");
     return;
   }
   if (values.help) {
@@ -50,8 +51,8 @@ async function main(): Promise<void> {
     return;
   }
   if (live && values.local !== true) throw new Error("The live-agent recorder requires --local");
-  if (!live && (values.case !== undefined || values["output-dir"] !== undefined)) {
-    throw new Error("--case and --output-dir require --mode live-agent");
+  if (!live && (values.case !== undefined || values["output-dir"] !== undefined || values["investigation-only"])) {
+    throw new Error("--case, --output-dir and --investigation-only require --mode live-agent");
   }
   const origin = demoOrigin(process.env["POLICYOPS_DEMO_ORIGIN"], values.local === true);
   const checkout = await realpath(resolve(import.meta.dirname, "../../.."));
@@ -96,7 +97,7 @@ async function main(): Promise<void> {
       const recording = await (async () => {
         try {
           const { liveWalkthrough } = await import("./live-agent.ts");
-          return await liveWalkthrough(browser, origin, { alice, bob }, livePath);
+          return await liveWalkthrough(browser, origin, { alice, bob }, livePath, values["investigation-only"]);
         } finally {
           await within(browser.close(), "Closing Chromium", 15_000);
         }
@@ -107,7 +108,7 @@ async function main(): Promise<void> {
       published = true;
       console.log(`WebM ${videoPath} (${String(recording.data.length)} bytes, ${recording.seconds.toFixed(2)} s)`);
       console.log(`Summary ${summaryPath}`);
-      if (recording.summary.outcome !== "committed") {
+      if (recording.summary.outcome !== "committed" && recording.summary.outcome !== "proposal_persisted") {
         console.error(`Live-agent recorder stopped (${recording.summary.outcome})`);
         process.exitCode = 1;
       }

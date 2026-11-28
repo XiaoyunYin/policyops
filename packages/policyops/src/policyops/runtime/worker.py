@@ -71,7 +71,15 @@ from policyops.runtime.spec import (
 )
 from policyops.telemetry import annotate, claim, count, enabled, observed, span
 from policyops_contracts.errors import ErrorCode
-from policyops_contracts.events import ErrorRaised, EventPayload, MessagePosted, RunStateChanged, RunStopped
+from policyops_contracts.events import (
+    ErrorRaised,
+    EventPayload,
+    InvestigationOutcome,
+    InvestigationReason,
+    MessagePosted,
+    RunStateChanged,
+    RunStopped,
+)
 from policyops_contracts.scalars import CaseScope
 from policyops_contracts.stops import StopDetails, StopReason
 
@@ -267,7 +275,9 @@ class Worker:
                 if reason == "deadline_exceeded":
                     self._stop_run(connection, run, job, now, StopDetails(reason=StopReason.ACTIVE_TIME))
                 else:
-                    self._fail_run(connection, run, now, code=code, rule_id=rule_id)
+                    self._fail_run(connection, run, now, code=code, rule_id=rule_id,
+                                   investigation_error=reason == "max_attempts" and bool(
+                                       spec and spec.typed_investigation))
                     store.end_job(connection, job, state="dead", now=now, error_code=reason)
                 return None
             if spec is None:  # unreachable: `_refusal` dead-letters a missing spec
@@ -301,12 +311,14 @@ class Worker:
 
     @staticmethod
     def _fail_run(connection: Connection, run: store.Run, now: datetime, *, code: ErrorCode, rule_id: str,
-                  retryable: bool = False) -> None:
+                  retryable: bool = False, investigation_error: bool = False) -> None:
         locked = store.get_run(connection, run.id, lock=True)
         if locked is None or locked.terminal:
             return
         store.append_event(connection, locked, ErrorRaised(code=code, rule_id=rule_id, correlation_id=uuid4(),
                                                            retryable=retryable), now)
+        if investigation_error:
+            store.append_event(connection, locked, InvestigationOutcome(reason=InvestigationReason.SYSTEM_ERROR), now)
         failed = store.set_state(connection, locked, "failed", now, bump_generation=True)
         store.append_event(connection, failed, RunStateChanged(previous=locked.state, current="failed"), now)
 
@@ -357,6 +369,8 @@ class Worker:
                         store.append_event(connection, run, MessagePosted(message_id=message.message_id,
                                                                          message_sequence=message.sequence,
                                                                          source="agent"), now)
+                        if outcome.reason is not None:
+                            store.append_event(connection, run, InvestigationOutcome(reason=outcome.reason), now)
                     elif isinstance(outcome, AwaitingApproval):
                         proposal = repo.get_proposal(connection, outcome.proposal_id, outcome.proposal_version)
                         row = repo.proposal_row(connection, outcome.proposal_id, outcome.proposal_version)
@@ -374,10 +388,13 @@ class Worker:
                                        now)
                     store.end_job(connection, job, state="done", now=now)
                 elif isinstance(outcome, Failed):
-                    self._fail_run(connection, run, now, code=outcome.code, rule_id=outcome.rule_id)
+                    self._fail_run(connection, run, now, code=outcome.code, rule_id=outcome.rule_id,
+                                   investigation_error=outcome.code in {ErrorCode.UNAVAILABLE, ErrorCode.INTERNAL}
+                                   and self._typed_investigation(run))
                     store.end_job(connection, job, state="done", now=now, error_code="run_failed")
                 elif job.attempts >= job.max_attempts:
-                    self._fail_run(connection, run, now, code=ErrorCode.UNAVAILABLE, rule_id="runtime.max_attempts")
+                    self._fail_run(connection, run, now, code=ErrorCode.UNAVAILABLE, rule_id="runtime.max_attempts",
+                                   investigation_error=self._typed_investigation(run))
                     store.end_job(connection, job, state="dead", now=now, error_code="max_attempts")
                 elif (now + backoff(job.attempts) >= job.deadline_at
                       or store.remaining_us(run, now) <= int(backoff(job.attempts).total_seconds() * 1_000_000)):
@@ -387,3 +404,7 @@ class Worker:
                                   available_at=now + backoff(job.attempts))
         except store.Fenced as fenced:
             log.info("claim_lost claim=%s reason=%s", token.claim_id, fenced.reason)
+
+    def _typed_investigation(self, run: store.Run) -> bool:
+        spec = self.catalog.for_run(run.graph_sha256, run.prompt_sha256, run.config_sha256)
+        return spec is not None and spec.typed_investigation

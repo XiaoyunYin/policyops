@@ -156,6 +156,12 @@ def git_config_overrides(base: Mapping[str, str], settings: Mapping[str, str]) -
 
 def build_environment(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -> dict[str, str]:
     root = temp_root(base)
+    live_tapes = base.get("POLICYOPS_LIVE_AGENT_TAPES")
+    if live_tapes:
+        source = Path(live_tapes)
+        if not source.is_absolute() or not source.is_dir() or _inside(source.resolve(), ROOT):
+            raise EnvironmentErrorReport("POLICYOPS_LIVE_AGENT_TAPES must be an existing absolute directory "
+                                         "outside the repository")
     project = project_root(uv_target(base, argv, cwd))
     namespace = {
         EVALS: f"evals-{EVALS_NAMESPACE}",
@@ -187,6 +193,8 @@ def build_environment(base: Mapping[str, str], argv: Sequence[str], cwd: Path) -
         "XDG_DATA_HOME": root / "user-data",
     }
     env = dict(base)
+    if live_tapes:
+        env["POLICYOPS_LIVE_AGENT_TAPES"] = str(source.resolve())
     env.update({name: str(path) for name, path in paths.items()})
     env.update(
         POLICYOPS_TEMP_DIR=str(root),

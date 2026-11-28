@@ -32,6 +32,13 @@ export const RUN_STATES = ["queued", "running", "waiting_input", "waiting_approv
   "failed", "cancelled", "budget_exceeded"] as const;
 export const STOP_REASONS = ["usd_cap", "call_cap", "count_cap", "input_tokens", "active_time", "tool_cap",
   "retrieval_cap", "invalid_cap", "context_limit", "overrun", "contract_block", "usage_unconfirmed"] as const;
+export const INVESTIGATION_REASONS = {
+  model_abstained: "The model ended without a usable decision",
+  citation_recording_failed: "Citation verification or recording failed",
+  rendered_answer_invalid: "The rendered answer failed validation",
+  cited_decline: "The investigation declined the request with a policy citation",
+  system_error: "A system error ended the investigation",
+} satisfies Record<S["RunEventInvestigationReason"], string>;
 const NONCOMMIT = ["upstream_rejected", "effect_mismatch", "money_unrepresentable", "version_conflict", "fenced",
   "precheck_refused", "cancelled_before_dispatch"];
 const REVIEW_REASONS = ["review_rejected", "proposal_expired", "proposal_stale", "run_deadline_exceeded",
@@ -71,6 +78,8 @@ export function parseEvent(v: unknown, scope: Scope): EventEnvelope {
         && opt(d["cleanup_unconfirmed"], (v) => typeof v === "boolean")
         && (d["reason"] !== "usage_unconfirmed" || d["usage_unconfirmed"] === true); break;
     }
+    case "investigation.outcome":
+      valid = one(p["reason"], Object.keys(INVESTIGATION_REASONS)) && Object.keys(p).length === 2; break;
     case "tool.requested": {
       const kind = TOOLS.indexOf(String(p["tool"])) >= 9 ? "write"
         : one(p["tool"], ["calculate", "transfer_to_human_agents"]) ? "generic" : "read";
@@ -160,7 +169,9 @@ export function parseSnapshot(v: unknown, scope: Scope): RunSnapshot {
     if (!uuid(ref["proposal_id"]) || !integer(ref["proposal_version"], 1)) bad();
   }
   return { ...s, run, events, latest_review: projection("latest_review", "review.outcome"),
-    latest_stop: projection("latest_stop", "run.stopped"), latest_execution: projection("latest_execution", "execution.changed") } as RunSnapshot;
+    latest_stop: projection("latest_stop", "run.stopped"), latest_execution: projection("latest_execution", "execution.changed"),
+    latest_investigation: s["latest_investigation"] === undefined ? null
+      : projection("latest_investigation", "investigation.outcome") } as RunSnapshot;
 }
 
 export function parseCitation(v: unknown, scope: Scope): CitationSummary {

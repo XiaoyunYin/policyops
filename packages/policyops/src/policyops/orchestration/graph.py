@@ -21,7 +21,7 @@ from policyops.orchestration.context import fit
 from policyops.orchestration.mechanics import Notice, Say, Use, after_transfer, parse, report_terminal
 from policyops.orchestration.minimal import AGENT_NAMESPACE, AGENT_OPERATION
 from policyops.orchestration.ports import KnowledgePort, ModelPort
-from policyops.orchestration.profile import InvestigationProfile
+from policyops.orchestration.profile import InvestigationProfile, InvestigationVersion
 from policyops.orchestration.state import (
     AwaitingApproval,
     InvestigationAction,
@@ -41,6 +41,7 @@ from policyops.telemetry import annotate, count, observed
 from policyops_contracts.base import WireModel
 from policyops_contracts.conversation import (
     AgentLimits,
+    AgentToolCall,
     Entry,
     PendingToolOutcome,
     PolicyContext,
@@ -112,7 +113,8 @@ class InvestigationGraph:
     fence: Callable[[], None]
     resource_stop: Callable[[], StopReason | None] = lambda: None
     accounting: Stopped | None = None
-    profile: InvestigationProfile = InvestigationProfile.BASELINE
+    profile: InvestigationVersion = InvestigationProfile.BASELINE
+    observe_tool: Callable[[str, int], None] | None = None
 
     def fitted(self, state: InvestigationState, entries: tuple[Entry, ...] = ()) -> InvestigationState:
         return fit(state, self.policy, self.limits, append=entries, profile=self.profile)
@@ -139,6 +141,12 @@ class InvestigationGraph:
                 elif name == "finalize":
                     kind, text = self.actions.finalize(state, deadline=self.deadline)
                     state = completed(state, kind, text)
+                elif self.observe_tool is not None:
+                    started = time.monotonic()
+                    try:
+                        state = await self.dispatch(name, state)
+                    finally:
+                        self.observe_tool(name, int((time.monotonic() - started) * 1000))
                 else:
                     state = await self.dispatch(name, state)
             except InvestigationStop as error:
@@ -211,18 +219,26 @@ class InvestigationGraph:
         detailed = self.profile.tool_contract
         action: Notice | Say | Use
         # Control tools use the same one-call gate, then their own schema (never retail to_agent_step).
+        finish_tools = {prompt.FINISH, prompt.DECLINE} if self.profile.typed_outcomes else {prompt.FINISH}
         if (result.outcome == "completed" and len(result.tool_calls) == 1 and not result.text
-                and result.tool_calls[0].name == prompt.FINISH):
+                and result.tool_calls[0].name in finish_tools):
+            finish = result.tool_calls[0]
             if after_transfer(state.previous_step):
                 action = Notice("protocol_violation")
             else:
                 try:
-                    answer = GroundedAnswer.model_validate_json(result.tool_calls[0].arguments_json)
+                    answer = GroundedAnswer.model_validate_json(finish.arguments_json)
                 except ValidationError as error:
-                    action = Notice("invalid_arguments", argument_issue(prompt.FINISH, error) if detailed else None)
+                    action = Notice("invalid_arguments", argument_issue(finish.name, error) if detailed else None)
                 else:
-                    return update(state, invalid_count=0,
-                                  next_action=InvestigationAction(kind="finalize", answer=answer))
+                    if finish.name == prompt.DECLINE and answer.outcome != "answer":
+                        action = Notice("invalid_arguments")
+                    else:
+                        # The control tag is server-owned. Keep the validated answer separately.
+                        marker = (AgentToolCall(name=prompt.DECLINE, call_id=finish.call_id, arguments_json="{}")
+                                  if finish.name == prompt.DECLINE else None)
+                        return update(state, invalid_count=0,
+                                      next_action=InvestigationAction(kind="finalize", answer=answer, call=marker))
         else:
             action = parse(result, names=names, retail=True, previous=state.previous_step,
                            detailed_tool_errors=detailed)

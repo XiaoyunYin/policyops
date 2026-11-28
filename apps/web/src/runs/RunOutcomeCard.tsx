@@ -1,5 +1,5 @@
 import type { Activity } from "./reducer";
-import type { EventEnvelope } from "./contracts";
+import { INVESTIGATION_REASONS, type EventEnvelope } from "./contracts";
 
 const REASONS: Readonly<Record<string, string>> = {
   review_rejected: "Reviewer rejected the proposal", proposal_expired: "Proposal expired", proposal_stale: "Proposal changed",
@@ -44,6 +44,7 @@ export function RunOutcomeCard({ activity, proposalId, version, integrityError =
   const outcome = !activity.projectionsComplete || mismatched || integrityError ? { title: "Outcome unavailable — refresh required", tone: "warning" }
     : action(candidates[0]);
   const stop = activity.latestStop?.payload;
+  const investigation = activity.latestInvestigation?.payload;
   const selected = candidates[0]?.payload;
   const executionId = selected?.type === "review.outcome" || selected?.type === "execution.changed" ? selected.execution_id : null;
   const ref = selected?.type === "review.outcome" ? { proposal_id: selected.proposal_id, proposal_version: selected.proposal_version } : activity.proposalRef;
@@ -51,6 +52,8 @@ export function RunOutcomeCard({ activity, proposalId, version, integrityError =
     : `Investigation ${activity.run.state === "succeeded" ? "completed" : activity.run.state.replaceAll("_", " ")}`;
   return <section className={`outcome-card outcome-${outcome.tone}`} aria-label="Run outcome">
     <section aria-label="Investigation result"><p className="eyebrow">Investigation lifecycle</p><h3>{lifecycle}</h3>
+      {investigation?.type === "investigation.outcome" && activity.projectionsComplete && !integrityError
+        ? <p>{INVESTIGATION_REASONS[investigation.reason]}</p> : null}
       {stop?.type === "run.stopped" ? <><p>{stop.details.cleanup_unconfirmed ? "Cleanup pending." : ""}</p>
         {stop.details.usage_unconfirmed ? <p className="notice">Usage remains unconfirmed.</p> : null}</> : null}</section>
     <section aria-label="Action outcome"><p className="eyebrow">Action outcome</p><h3>{outcome.title}</h3>

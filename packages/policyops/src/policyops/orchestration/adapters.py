@@ -21,6 +21,7 @@ from policyops.retrieval.search import Retriever
 from policyops.services.proposals import WRITE_CALLS, Prepared, ProposalService
 from policyops_contracts.agent import AgentStep, ToolCallStep
 from policyops_contracts.conversation import AgentMessage, AgentToolCall, KnowledgeResult, ToolResult
+from policyops_contracts.events import InvestigationReason
 from policyops_contracts.gateway import LookupObservation, ToolError
 from policyops_contracts.grounding import Assertion, CitationBundle, CitedQuote, GroundedAnswer, ValidatedAnswer
 from policyops_contracts.proposal import EvidenceRef
@@ -67,6 +68,7 @@ class InvestigationAdapters:
     by_step: dict[int, tuple[EvidenceRef, ...]] = field(default_factory=dict)
     disclose_lookup_user_id: bool = False
     observe_write: Callable[[AgentToolCall, StepResult], None] | None = None
+    typed_outcomes: bool = False
 
     def __post_init__(self) -> None:
         run = self.gateway.scope.run
@@ -209,10 +211,10 @@ class InvestigationAdapters:
                  ) -> tuple[Literal["answered", "abstained"], str]:
         answer = None if state.next_action is None else state.next_action.answer
         if answer is None or answer.outcome != "answer":
-            return "abstained", ABSTENTION
+            return self._abstain(InvestigationReason.MODEL_ABSTAINED)
         refs = self.record(answer, state.retrieved_steps, deadline)
         if refs is None:
-            return "abstained", ABSTENTION
+            return self._abstain(InvestigationReason.CITATION_RECORDING_FAILED)
         offset, lines = 0, []
         for assertion in answer.assertions:
             ids = refs[offset:offset + len(assertion.citations)]
@@ -222,5 +224,9 @@ class InvestigationAdapters:
         try:
             AgentMessage(text=text)
         except ValueError:
-            return "abstained", ABSTENTION
+            return self._abstain(InvestigationReason.RENDERED_ANSWER_INVALID)
         return "answered", text
+
+    def _abstain(self, reason: InvestigationReason) -> tuple[Literal["abstained"], str]:
+        # Only the worker translates this server-owned checkpoint value into case text and a run event.
+        return "abstained", reason.value if self.typed_outcomes else ABSTENTION

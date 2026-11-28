@@ -17,10 +17,12 @@ services:
     <<: *live-inputs
     environment:
       POLICYOPS_LIVE_AGENT: "1"
+      POLICYOPS_LIVE_AGENT_PROFILE: '${POLICYOPS_LIVE_AGENT_PROFILE:-tool-contract-v1r1}'
   worker:
     <<: *live-inputs
     environment:
       POLICYOPS_LIVE_AGENT: "1"
+      POLICYOPS_LIVE_AGENT_PROFILE: '${POLICYOPS_LIVE_AGENT_PROFILE:-tool-contract-v1r1}'
       POLICYOPS_LIVE_AGENT_MAX_USD: '${POLICYOPS_LIVE_AGENT_MAX_USD:-0.50}'
     secrets: [openai_api_key]
     networks:

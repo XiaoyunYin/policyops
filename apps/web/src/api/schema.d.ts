@@ -827,7 +827,7 @@ export interface components {
              */
             occurred_at: string;
             /** Payload */
-            payload: components["schemas"]["RunEventRunStateChanged"] | components["schemas"]["RunEventMessagePosted"] | components["schemas"]["RunEventToolCallRequested"] | components["schemas"]["RunEventToolCallFinished"] | components["schemas"]["RunEventProposalPresented"] | components["schemas"]["RunEventConsentRecorded"] | components["schemas"]["RunEventClarificationRequested"] | components["schemas"]["RunEventApprovalDecided"] | components["schemas"]["RunEventEscalationRequested"] | components["schemas"]["RunEventErrorRaised"] | components["schemas"]["RunEventExecutionChanged"] | components["schemas"]["RunEventReviewOutcome"] | components["schemas"]["RunEventRunStopped"];
+            payload: components["schemas"]["RunEventRunStateChanged"] | components["schemas"]["RunEventMessagePosted"] | components["schemas"]["RunEventToolCallRequested"] | components["schemas"]["RunEventToolCallFinished"] | components["schemas"]["RunEventProposalPresented"] | components["schemas"]["RunEventConsentRecorded"] | components["schemas"]["RunEventClarificationRequested"] | components["schemas"]["RunEventApprovalDecided"] | components["schemas"]["RunEventEscalationRequested"] | components["schemas"]["RunEventErrorRaised"] | components["schemas"]["RunEventExecutionChanged"] | components["schemas"]["RunEventReviewOutcome"] | components["schemas"]["RunEventRunStopped"] | components["schemas"]["RunEventInvestigationOutcome"];
             /**
              * Schema Version
              * @default policyops.run-event/v1
@@ -943,6 +943,21 @@ export interface components {
              */
             type: "execution.changed";
         };
+        /** InvestigationOutcome */
+        InvestigationOutcome: {
+            reason: components["schemas"]["InvestigationReason"];
+            /**
+             * Type
+             * @default investigation.outcome
+             * @constant
+             */
+            type: "investigation.outcome";
+        };
+        /**
+         * InvestigationReason
+         * @enum {string}
+         */
+        InvestigationReason: "model_abstained" | "citation_recording_failed" | "rendered_answer_invalid" | "cited_decline" | "system_error";
         /** ItemChangeLine */
         ItemChangeLine: {
             /** Item Id */
@@ -1599,6 +1614,20 @@ export interface components {
              */
             type: "execution.changed";
         };
+        /** InvestigationOutcome */
+        RunEventInvestigationOutcome: {
+            reason: components["schemas"]["RunEventInvestigationReason"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "investigation.outcome";
+        };
+        /**
+         * InvestigationReason
+         * @enum {string}
+         */
+        RunEventInvestigationReason: "model_abstained" | "citation_recording_failed" | "rendered_answer_invalid" | "cited_decline" | "system_error";
         /** MessagePosted */
         RunEventMessagePosted: {
             /**
@@ -1839,6 +1868,7 @@ export interface components {
             /** Highwater */
             highwater: number;
             latest_execution: components["schemas"]["EventEnvelope"] | null;
+            latest_investigation?: components["schemas"]["EventEnvelope"] | null;
             latest_review: components["schemas"]["EventEnvelope"] | null;
             latest_stop: components["schemas"]["EventEnvelope"] | null;
             /** Projections Complete */

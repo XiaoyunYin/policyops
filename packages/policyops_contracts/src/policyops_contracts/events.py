@@ -45,6 +45,19 @@ class RunStopped(WireModel):
     details: StopDetails
 
 
+class InvestigationReason(StrEnum):
+    MODEL_ABSTAINED = "model_abstained"
+    CITATION_RECORDING_FAILED = "citation_recording_failed"
+    RENDERED_ANSWER_INVALID = "rendered_answer_invalid"
+    CITED_DECLINE = "cited_decline"
+    SYSTEM_ERROR = "system_error"
+
+
+class InvestigationOutcome(WireModel):
+    type: Literal["investigation.outcome"] = "investigation.outcome"
+    reason: InvestigationReason
+
+
 class ToolCallRequested(WireModel):
     type: Literal["tool.requested"] = "tool.requested"
     tool: ToolName
@@ -181,7 +194,7 @@ class ErrorRaised(WireModel):
 EventPayload = Annotated[
     RunStateChanged | MessagePosted | ToolCallRequested | ToolCallFinished | ProposalPresented | ConsentRecorded
     | ClarificationRequested | ApprovalDecided | EscalationRequested | ErrorRaised | ExecutionChanged | ReviewOutcome
-    | RunStopped,
+    | RunStopped | InvestigationOutcome,
     Field(discriminator="type"),
 ]
 

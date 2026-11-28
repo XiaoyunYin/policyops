@@ -22,7 +22,7 @@ from policyops.api.run_reads import Reads, Viewer
 from policyops.budget.config import CHAT_ACTORS, DEFAULT_ACTORS, Caps, ChatActor, Configuration, EmbeddingActor
 from policyops.domain.roles import Action
 from policyops.gateway.ports import GatewayScope, RetailPort
-from policyops.orchestration.profile import InvestigationProfile
+from policyops.orchestration.profile import InvestigationProfile, InvestigationProfileV2, InvestigationVersion
 from policyops.persistence import repositories as repo
 from policyops.persistence.budget import workspace_liability
 from policyops.persistence.database import workspace_transaction
@@ -36,7 +36,7 @@ from policyops.retrieval.ingest import PaidCaps, Request, ingest
 from policyops.retrieval.parse import CHUNK_CONFIG
 from policyops.runtime.clock import LeaseClock
 from policyops.runtime.investigation import build_investigation_spec
-from policyops.runtime.spec import RuntimeCatalog
+from policyops.runtime.spec import RuntimeCatalog, StepContext
 from policyops.services.writes import not_found, recheck
 from policyops_contracts.conversation import AgentLimits, PolicyContext
 from policyops_contracts.policy import RETAIL_POLICY
@@ -64,6 +64,15 @@ MESSAGE = (f"My account email is {EMAIL}. Please cancel my pending order because
 
 class LiveAgentRefused(RuntimeError):
     """A fixed category safe to print at the container command boundary."""
+
+
+def selected_profile() -> InvestigationVersion:
+    value = os.environ.get("POLICYOPS_LIVE_AGENT_PROFILE", PROFILE.value)
+    if value == PROFILE.value:
+        return PROFILE
+    if value == InvestigationProfileV2.TOOL_CONTRACT_V2.value:
+        return InvestigationProfileV2.TOOL_CONTRACT_V2
+    raise LiveAgentRefused("live_agent.invalid_profile")
 
 
 def configuration() -> Configuration:
@@ -190,7 +199,10 @@ def client(origin: str, key: bytes, scope: CaseScope, customer: str) -> RetailCl
 def catalog(*, env: str, engine: Engine, loaded: tuple[PolicyContext, Tokenizer],
             workspace: UUID, providers: Callable[[], Providers],
             retail_origin: str | None = None, retail_key: bytes | None = None,
-            clock: LeaseClock | None = None, aggregate: Decimal | None = None) -> RuntimeCatalog:
+            clock: LeaseClock | None = None, aggregate: Decimal | None = None,
+            profile: InvestigationVersion = PROFILE,
+            record_run: Callable[[StepContext], tuple[Providers, Callable[[str, int], None]]]
+            | None = None) -> RuntimeCatalog:
     policy, vocab = loaded
 
     def unowned_retail(_scope: GatewayScope) -> RetailPort:
@@ -209,7 +221,7 @@ def catalog(*, env: str, engine: Engine, loaded: tuple[PolicyContext, Tokenizer]
         retrieval_config=RETRIEVAL, limits=LIMITS, max_steps=16, bindings=(), fixture_sha256=FIXTURE_SHA256,
         case_binding=lambda conn, scope: case_binding(conn, scope, workspace),
         retail=unowned_retail, retail_session=retail_session, providers=providers, tokenizer=vocab,
-        clock=clock, profile=PROFILE, workspace_max_usd=aggregate,
+        clock=clock, profile=profile, workspace_max_usd=aggregate, record_run=record_run,
     )
     return RuntimeCatalog.of((spec,), default=spec.spec_id)
 
@@ -271,10 +283,33 @@ def seed_case(engine: Engine, workspace: UUID, *, retail_origin: str, retail_key
     return scope.case_id
 
 
+class Timing(BaseModel):
+    created_at: datetime
+    first_model_call_at: datetime | None
+    proposal_persisted_at: datetime | None
+    investigation_ended_at: datetime | None
+
+
+def timing(connection: Connection, run: Run) -> Timing:
+    row = connection.execute(text(
+        "SELECT min(occurred_at) FILTER (WHERE event_type = 'proposal.presented') AS proposal, "
+        "min(occurred_at) FILTER (WHERE event_type = 'run.state_changed' "
+        "AND payload->>'current' IN ('waiting_approval','succeeded','failed','cancelled','budget_exceeded')) AS ended "
+        "FROM app.run_events WHERE run_id = :run"
+    ), {"run": run.id}).one()
+    first = connection.execute(text(
+        "SELECT min(a.created_at) FROM app.usage_attempts a JOIN app.budget_scopes s ON a.scope_id = s.id "
+        "AND a.workspace_id = s.workspace_id WHERE s.run_id = :run AND a.actor = 'agent'"
+    ), {"run": run.id}).scalar_one()
+    return Timing(created_at=run.created_at, first_model_call_at=first, proposal_persisted_at=row.proposal,
+                  investigation_ended_at=row.ended)
+
+
 class Usage(BaseModel):
     call_count: int
     settled_usd: str
     held_usd: str
+    timing: Timing
 
 
 def usage_router(workspace: UUID) -> APIRouter:
@@ -291,9 +326,10 @@ def usage_router(workspace: UUID) -> APIRouter:
             row = connection.execute(text(
                 "SELECT calls_consumed, spent_usd, held_usd FROM app.budget_scopes WHERE run_id = :run"
             ), {"run": run_id}).one_or_none()
+            measured = timing(connection, run)
         if row is None:
-            return view(Usage(call_count=0, settled_usd="0", held_usd="0"))
+            return view(Usage(call_count=0, settled_usd="0", held_usd="0", timing=measured))
         return view(Usage(call_count=row.calls_consumed, settled_usd=format(row.spent_usd, "f"),
-                          held_usd=format(row.held_usd, "f")))
+                          held_usd=format(row.held_usd, "f"), timing=measured))
 
     return router

@@ -34,6 +34,8 @@ def composition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, An
     monkeypatch.setenv("POLICYOPS_PUBLIC_ORIGIN", "http://127.0.0.1:8080")
     monkeypatch.setenv("POLICYOPS_RETAIL_ORIGIN", "http://retail:8001")
     monkeypatch.delenv("POLICYOPS_LIVE_AGENT", raising=False)
+    monkeypatch.delenv("POLICYOPS_LIVE_AGENT_RECORD", raising=False)
+    monkeypatch.delenv("POLICYOPS_LIVE_AGENT_PROFILE", raising=False)
     globals_ = runtime["worker"].__globals__
     monkeypatch.setitem(globals_, "SECRETS", tmp_path)
     monkeypatch.setitem(globals_, "own_engine", lambda _role: nullcontext(engine))
@@ -70,9 +72,12 @@ def test_default_catalogs_are_unconfigured(composition: dict[str, Any], monkeypa
     assert len(seen) == 1 and seen[0] is UNCONFIGURED
 
 
+@pytest.mark.parametrize("profile", [None, "tool-contract-v2"])
 def test_live_catalog_twins_and_api_refusal(composition: dict[str, Any], monkeypatch: pytest.MonkeyPatch,
-                                             tmp_path: Path) -> None:
+                                             tmp_path: Path, profile: str | None) -> None:
     monkeypatch.setenv("POLICYOPS_LIVE_AGENT", "1")
+    if profile is not None:
+        monkeypatch.setenv("POLICYOPS_LIVE_AGENT_PROFILE", profile)
     (tmp_path / "openai_api_key").write_text("synthetic-test-credential", encoding="utf-8")
     # Only replace the mounted policy data here. The integration test uses the exact pinned policy bytes.
     policy = PolicyContext.model_construct(domain="retail", source="pinned_retail_policy",
@@ -87,7 +92,8 @@ def test_live_catalog_twins_and_api_refusal(composition: dict[str, Any], monkeyp
     assert api_spec.test_only is worker_spec.test_only is False
     assert binding(api_spec) == binding(worker_spec)
     assert isinstance(api_spec.executor, InvestigationExecutor)
-    assert api_spec.executor.profile is InvestigationProfile.TOOL_CONTRACT_V1R1
+    assert api_spec.executor.profile.value == (profile or InvestigationProfile.TOOL_CONTRACT_V1R1.value)
+    assert api_spec.typed_investigation == (profile is not None)
     assert api_spec.executor.configuration.reservation("agent").model == "gpt-6-luna"
     with pytest.raises(live_agent.LiveAgentRefused, match=r"^live_agent\.api_provider_disabled$"):
         api_spec.executor.providers()
@@ -129,13 +135,18 @@ def test_public_deploy_cannot_load_the_overlay(composition: dict[str, Any], monk
         "compose=(docker compose -f compose.yaml -f infra/compose/public.yaml)"
     ]
     for source in (deploy, base, public):
-        assert all(marker not in source for marker in ("live-agent.yaml", "POLICYOPS_LIVE_AGENT", "openai_api_key"))
+        assert all(marker not in source for marker in (
+            "live-agent.yaml", "live-agent-recording.yaml", "POLICYOPS_LIVE_AGENT", "openai_api_key", "/recordings"))
     for source in (base, public):
         assert not any(line.lstrip().startswith(("include:", "extends:")) for line in source.splitlines())
     monkeypatch.setenv("POLICYOPS_LIVE_AGENT", "1")
     monkeypatch.setenv("POLICYOPS_PUBLIC_ORIGIN", "https://support.example.invalid")
     with pytest.raises(live_agent.LiveAgentRefused, match=r"^live_agent\.local_only$"):
         composition["live_agent_enabled"]()
+    monkeypatch.setenv("POLICYOPS_LIVE_AGENT_RECORD", "1")
+    monkeypatch.setenv("POLICYOPS_ENV", "deployment")
+    with pytest.raises(live_agent.LiveAgentRefused, match=r"^live_agent\.local_only$"):
+        composition["worker"]()
 
 
 def test_overlay_secret_network_and_pinned_inputs() -> None:
@@ -144,10 +155,20 @@ def test_overlay_secret_network_and_pinned_inputs() -> None:
     assert base["networks"]["default"]["internal"] is True
     assert set(overlay["services"]) == {"api", "worker"}
     api, worker_service = (overlay["services"][name] for name in ("api", "worker"))
-    assert api["environment"] == {"POLICYOPS_LIVE_AGENT": "1"}
+    assert api["environment"] == {
+        "POLICYOPS_LIVE_AGENT": "1",
+        "POLICYOPS_LIVE_AGENT_PROFILE": "${POLICYOPS_LIVE_AGENT_PROFILE:-tool-contract-v1r1}",
+    }
     assert "secrets" not in api and "networks" not in api
     assert worker_service["secrets"] == ["openai_api_key"]
     assert set(worker_service["networks"]) == {"default", "live-agent-egress"}
     assert worker_service["volumes"] == api["volumes"]
     assert all(mount["read_only"] for mount in api["volumes"])
     assert sha256(live_agent.corpus_manifest()).hexdigest() == live_agent.MANIFEST_SHA256
+
+    recording = yaml.safe_load((ROOT / "infra/compose/live-agent-recording.yaml").read_text(encoding="utf-8"))
+    assert set(recording["services"]) == {"worker"}
+    recorder = recording["services"]["worker"]
+    assert recorder["environment"] == {"POLICYOPS_LIVE_AGENT_RECORD": "1"}
+    assert recorder["volumes"][0]["target"] == "/recordings"
+    assert "POLICYOPS_LIVE_AGENT_RECORD" not in worker_service["environment"]

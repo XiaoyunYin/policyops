@@ -24,8 +24,9 @@ from policyops.orchestration.adapters import InvestigationAdapters
 from policyops.orchestration.context import fit
 from policyops.orchestration.facts import load_critical_facts
 from policyops.orchestration.graph import GRAPH_ENTRY, GRAPH_NODES, GRAPH_TARGETS, InvestigationGraph, failed
+from policyops.orchestration.outcomes import ABSTENTION_TEXT
 from policyops.orchestration.ports import ModelPort, agent_model_port
-from policyops.orchestration.profile import InvestigationProfile
+from policyops.orchestration.profile import InvestigationProfile, InvestigationProfileV2, InvestigationVersion
 from policyops.orchestration.state import (
     AwaitingApproval as ApprovalTerminal,
 )
@@ -76,6 +77,7 @@ from policyops.telemetry import annotate, enabled, observed
 from policyops_contracts.clock import Clock, SystemClock
 from policyops_contracts.conversation import AgentLimits, AgentToolCall, PolicyContext, UserMessage
 from policyops_contracts.errors import ErrorCode
+from policyops_contracts.events import InvestigationReason
 from policyops_contracts.retrieval import RetrievalConfig, RetrievalScope, canonical_sha256
 from policyops_contracts.scalars import CaseScope
 from policyops_contracts.seeds import CaseCustomerBinding
@@ -87,7 +89,7 @@ GRAPH_VERSION = "policyops.investigation-graph/v2"
 CaseBindingResolver = Callable[[Connection, CaseScope], CaseCustomerBinding | None]
 
 
-def graph_digest(profile: InvestigationProfile = InvestigationProfile.BASELINE) -> str:
+def graph_digest(profile: InvestigationVersion = InvestigationProfile.BASELINE) -> str:
     versions = codec.Envelope.model_json_schema()["properties"]
     schema = InvestigationState.model_json_schema()
     fields = {
@@ -130,11 +132,12 @@ class InvestigationExecutor:
     prompt_sha256: str
     config_sha256: str
     test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None
-    profile: InvestigationProfile = InvestigationProfile.BASELINE
+    profile: InvestigationVersion = InvestigationProfile.BASELINE
     observe_write: Callable[[AgentToolCall, StepResult], None] | None = None
     case_binding: CaseBindingResolver | None = None
     retail_session: Callable[[GatewayScope], AbstractContextManager[RetailPort]] | None = None
     workspace_max_usd: Decimal | None = None
+    record_run: Callable[[StepContext], tuple[Providers, Callable[[str, int], None]]] | None = None
 
     @observed("investigation")
     def execute(self, context: StepContext) -> Outcome:
@@ -234,7 +237,7 @@ class InvestigationExecutor:
                                        actor_sha256=self.configuration.reservation("agent").config_sha256)
             state = fit(state, self.policy, self.limits, profile=self.profile)
             if state.terminal is not None:
-                return outcome(state)
+                return outcome(state, profile=self.profile)
             initial = {"state": state.model_dump(mode="json")}
         else:
             channels = saved.checkpoint["channel_values"]
@@ -256,14 +259,22 @@ class InvestigationExecutor:
                 return Failed(ErrorCode.UNAVAILABLE, "investigation.input_changed")
         if state.terminal is not None:
             self.fence(context)
-            return outcome(state)
+            return outcome(state, profile=self.profile)
         deadline = observed_monotonic + runs.remaining_us(run, now) / 1_000_000
         ledger = build_app_ledger(env=self.env, engine=self.engine, workspace_id=context.workspace_id,
                                   configuration=self.configuration, clock=self.clock, claim_token=context.claim_token,
                                   workspace_max_usd=self.workspace_max_usd)
         repaired = self.profile.tool_contract
+        providers, observe_tool = self.providers, None
+        if self.record_run is not None:
+            recorded_providers, observe_tool = self.record_run(context)
+
+            def scoped_providers() -> Providers:
+                return recorded_providers
+
+            providers = scoped_providers
         model = (self.test_model(ledger, RunBinding(context.run_id)) if self.test_model is not None else
-                 agent_model_port(ledger, RunBinding(context.run_id), self.providers, detailed_tool_errors=repaired))
+                 agent_model_port(ledger, RunBinding(context.run_id), providers, detailed_tool_errors=repaired))
         retriever = Retriever(self.engine, context.workspace_id,
                               embeddings=EmbeddingStore(self.engine, context.workspace_id, env=self.env),
                               ledger=ledger, providers=self.providers, tokenizer=self.tokenizer, env=self.env,
@@ -278,11 +289,13 @@ class InvestigationExecutor:
                                          EvidenceValidator(self.engine, context.workspace_id),
                                          CitationRecorder(self.engine, context.workspace_id),
                                          references={r.evidence_id: r for r in state.recorded_evidence},
-                                         disclose_lookup_user_id=repaired, observe_write=self.observe_write)
+                                         disclose_lookup_user_id=repaired, observe_write=self.observe_write,
+                                         typed_outcomes=self.profile.typed_outcomes)
         builder = InvestigationGraph(model, adapters, adapters, self.policy, self.limits, deadline,
                                    lambda: self.fence(context),
                                    lambda: (stop_reason(reason) if (reason := ledger.exhaustion(
-                                       RunBinding(context.run_id))) is not None else None), profile=self.profile)
+                                       RunBinding(context.run_id))) is not None else None), profile=self.profile,
+                                   observe_tool=observe_tool)
         graph = builder.compile(saver)
         stop = asyncio.Event()
         heartbeat_error: list[BaseException] = []
@@ -316,7 +329,7 @@ class InvestigationExecutor:
         try:
             result = await task
             self.fence(context)
-            final = outcome(state_from_json(result["state"]))
+            final = outcome(state_from_json(result["state"]), profile=self.profile)
             return builder.accounting if builder.accounting is not None else final
         except asyncio.CancelledError as error:
             primary = heartbeat_error[0] if heartbeat_error else error
@@ -341,12 +354,25 @@ class InvestigationExecutor:
         return canonical_sha256(fields)
 
 
-def outcome(state: InvestigationState) -> Outcome:
+def outcome(state: InvestigationState, *, profile: InvestigationVersion = InvestigationProfile.BASELINE) -> Outcome:
     terminal = state.terminal
     if isinstance(terminal, ApprovalTerminal):
         return AwaitingApproval(terminal.proposal_id, terminal.proposal_version)
     if isinstance(terminal, CompletedTerminal) and state.final_text is not None:
-        return InvestigationCompleted(terminal.message_id, state.final_text)
+        text = state.final_text
+        reason = None
+        if profile.typed_outcomes:
+            if terminal.kind == "abstained":
+                # An abstained checkpoint carries a closed, server-generated code in its final slot.
+                if text not in ABSTENTION_TEXT:
+                    return Failed(ErrorCode.UNAVAILABLE, "investigation.checkpoint_incompatible")
+                reason = InvestigationReason(text)
+                text = ABSTENTION_TEXT[reason]
+            elif terminal.kind == "answered" and state.next_action is not None:
+                control = state.next_action.call
+                if control is not None and control.name == prompt.DECLINE:
+                    reason = InvestigationReason.CITED_DECLINE
+        return InvestigationCompleted(terminal.message_id, text, reason)
     if isinstance(terminal, InvestigationStopped):
         return Stopped(terminal.details)
     if isinstance(terminal, InvestigationFailed):
@@ -362,19 +388,23 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
                              clock: LeaseClock | None = None, wall_clock: Clock | None = None,
                              lease: timedelta = timedelta(seconds=30),
                              test_model: Callable[[Ledger, RunBinding], ModelPort] | None = None,
-                             profile: InvestigationProfile = InvestigationProfile.BASELINE,
+                             profile: InvestigationVersion = InvestigationProfile.BASELINE,
                              case_binding: CaseBindingResolver | None = None,
                              retail_session: Callable[[GatewayScope], AbstractContextManager[RetailPort]] | None = None,
-                             workspace_max_usd: Decimal | None = None) -> RuntimeSpec:
+                             workspace_max_usd: Decimal | None = None,
+                             record_run: Callable[[StepContext], tuple[Providers, Callable[[str, int], None]]]
+                             | None = None) -> RuntimeSpec:
     """Install the returned spec in the SAME catalog passed to the API runtime and worker."""
     if test_model is not None and env != "test":
         raise ValueError("test model factories require env=test")
     if policy.source == "fictional" and env != "test":
         raise ValueError("fictional policy requires env=test")
+    if record_run is not None and env not in {"local", "test"}:
+        raise ValueError("investigation recording requires a local runtime")
     if type(max_steps) is not int or not 1 <= max_steps <= 64:
         raise ValueError("max_steps must be 1..64")
-    if not isinstance(profile, InvestigationProfile):
-        raise ValueError("profile must be an InvestigationProfile")
+    if not isinstance(profile, InvestigationProfile | InvestigationProfileV2):
+        raise ValueError("unknown investigation profile")
     lease_clock = clock or DatabaseLeaseClock()
     require_test_environment(lease_clock, env)
     selected = limits or AgentLimits(knowledge_steps=16)
@@ -405,8 +435,8 @@ def build_investigation_spec(*, env: str, engine: Engine, configuration: Configu
                                      wall_clock or SystemClock(), max_steps, lease, graph_digest(profile),
                                      prompt.digest(profile), config_sha, test_model=test_model, profile=profile,
                                      case_binding=case_binding, retail_session=retail_session,
-                                     workspace_max_usd=workspace_max_usd)
+                                     workspace_max_usd=workspace_max_usd, record_run=record_run)
     spec_id = f"investigation.{profile}" if profile.tool_contract else "investigation.v2"
     return RuntimeSpec(spec_id, executor.graph_sha256, executor.prompt_sha256, config_sha, executor,
                        lease=lease, run_timeout=timedelta(seconds=configuration.caps.active_seconds),
-                       test_only=env == "test")
+                       test_only=env == "test", typed_investigation=profile.typed_outcomes)

@@ -66,6 +66,7 @@ class RunSnapshot(WireModel):
     latest_review: EventEnvelope | None
     latest_stop: EventEnvelope | None
     latest_execution: EventEnvelope | None
+    latest_investigation: EventEnvelope | None = None
     projections_complete: bool
     server_time: UtcDatetime
 
@@ -208,7 +209,7 @@ class RunReads:
                 raise conflict()
             latest: list[EventEnvelope | None] = []
             complete = run.event_retention_floor == 0 and not any(isinstance(e, store.UnsupportedEvent) for e in events)
-            for kind in ("review.outcome", "run.stopped", "execution.changed"):
+            for kind in ("review.outcome", "run.stopped", "execution.changed", "investigation.outcome"):
                 row = conn.execute(text(
                     "SELECT id, sequence, event_type, schema_version, payload::text AS payload, occurred_at "
                     "FROM app.run_events WHERE run_id=:r AND sequence<=:h AND event_type=:kind "
@@ -230,7 +231,8 @@ class RunReads:
                     proposal_ref=ProposalRef(proposal_id=refs[0].proposal_id,
                                              proposal_version=refs[0].version) if refs else None,
                     events=[replay(e) for e in events], latest_review=latest[0], latest_stop=latest[1],
-                    latest_execution=latest[2], projections_complete=complete, server_time=self.clock.now(conn))
+                    latest_execution=latest[2], latest_investigation=latest[3],
+                    projections_complete=complete, server_time=self.clock.now(conn))
             except ValidationError:
                 raise conflict() from None
 

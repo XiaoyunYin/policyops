@@ -294,6 +294,36 @@
       "title": "ExecutionChanged",
       "type": "object"
     },
+    "InvestigationOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/InvestigationReason"
+        },
+        "type": {
+          "const": "investigation.outcome",
+          "default": "investigation.outcome",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "InvestigationOutcome",
+      "type": "object"
+    },
+    "InvestigationReason": {
+      "enum": [
+        "model_abstained",
+        "citation_recording_failed",
+        "rendered_answer_invalid",
+        "cited_decline",
+        "system_error"
+      ],
+      "title": "InvestigationReason",
+      "type": "string"
+    },
     "MessagePosted": {
       "additionalProperties": false,
       "properties": {
@@ -794,6 +824,7 @@
           "error.raised": "#/$defs/ErrorRaised",
           "escalation.requested": "#/$defs/EscalationRequested",
           "execution.changed": "#/$defs/ExecutionChanged",
+          "investigation.outcome": "#/$defs/InvestigationOutcome",
           "proposal.presented": "#/$defs/ProposalPresented",
           "review.outcome": "#/$defs/ReviewOutcome",
           "run.state_changed": "#/$defs/RunStateChanged",
@@ -842,6 +873,9 @@
         },
         {
           "$ref": "#/$defs/RunStopped"
+        },
+        {
+          "$ref": "#/$defs/InvestigationOutcome"
         }
       ],
       "title": "Payload"

@@ -1,0 +1,10 @@
+# Optional third local overlay. The host launcher verifies the existing bind source.
+services:
+  worker:
+    environment:
+      POLICYOPS_LIVE_AGENT_RECORD: "1"
+    volumes:
+      - type: bind
+        source: '${POLICYOPS_LIVE_AGENT_TAPES:?Supply an external tape directory}'
+        target: /recordings
+        bind: {create_host_path: false}

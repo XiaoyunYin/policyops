@@ -989,6 +989,7 @@
                 "error.raised": "#/components/schemas/RunEventErrorRaised",
                 "escalation.requested": "#/components/schemas/RunEventEscalationRequested",
                 "execution.changed": "#/components/schemas/RunEventExecutionChanged",
+                "investigation.outcome": "#/components/schemas/RunEventInvestigationOutcome",
                 "proposal.presented": "#/components/schemas/RunEventProposalPresented",
                 "review.outcome": "#/components/schemas/RunEventReviewOutcome",
                 "run.state_changed": "#/components/schemas/RunEventRunStateChanged",
@@ -1037,6 +1038,9 @@
               },
               {
                 "$ref": "#/components/schemas/RunEventRunStopped"
+              },
+              {
+                "$ref": "#/components/schemas/RunEventInvestigationOutcome"
               }
             ],
             "title": "Payload"
@@ -1328,6 +1332,36 @@
         ],
         "title": "ExecutionChanged",
         "type": "object"
+      },
+      "InvestigationOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/InvestigationReason"
+          },
+          "type": {
+            "const": "investigation.outcome",
+            "default": "investigation.outcome",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "InvestigationOutcome",
+        "type": "object"
+      },
+      "InvestigationReason": {
+        "enum": [
+          "model_abstained",
+          "citation_recording_failed",
+          "rendered_answer_invalid",
+          "cited_decline",
+          "system_error"
+        ],
+        "title": "InvestigationReason",
+        "type": "string"
       },
       "ItemChangeLine": {
         "additionalProperties": false,
@@ -2898,6 +2932,36 @@
         "title": "ExecutionChanged",
         "type": "object"
       },
+      "RunEventInvestigationOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/RunEventInvestigationReason"
+          },
+          "type": {
+            "const": "investigation.outcome",
+            "default": "investigation.outcome",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "InvestigationOutcome",
+        "type": "object"
+      },
+      "RunEventInvestigationReason": {
+        "enum": [
+          "model_abstained",
+          "citation_recording_failed",
+          "rendered_answer_invalid",
+          "cited_decline",
+          "system_error"
+        ],
+        "title": "InvestigationReason",
+        "type": "string"
+      },
       "RunEventMessagePosted": {
         "additionalProperties": false,
         "properties": {
@@ -3452,6 +3516,16 @@
             "type": "integer"
           },
           "latest_execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_investigation": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/EventEnvelope"

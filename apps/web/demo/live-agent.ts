@@ -12,6 +12,7 @@ type ProposalRef = Schema["ProposalRef"];
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
 const USD = /^\d+(?:\.\d+)?$/;
+const UTC_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/;
 const check = expect.configure({ timeout: ACTION_TIMEOUT });
 const PROPOSAL_TIMEOUT = 140_000;
 const RECEIPT_TIMEOUT = 45_000;
@@ -100,17 +101,31 @@ interface Usage {
   call_count: number;
   settled_usd: string;
   held_usd: string;
+  timing: {
+    created_at: string;
+    first_model_call_at: string | null;
+    proposal_persisted_at: string | null;
+    investigation_ended_at: string | null;
+  };
 }
 
 interface Summary {
   run_id: string | null;
-  outcome: "committed" | Stop;
+  outcome: "committed" | "proposal_persisted" | Stop;
   call_count: number | null;
   settled_usd: string | null;
   held_usd: string | null;
   receipt_sha256: string | null;
   case_version: number | null;
   proposal_version: number | null;
+  timing: Usage["timing"] | null;
+}
+
+function timestamp(value: string | null): string | null {
+  if (value !== null && (typeof value !== "string" || !UTC_TIME.test(value) || !Number.isFinite(Date.parse(value)))) {
+    throw new Error("Investigation timing was malformed");
+  }
+  return value;
 }
 
 const liveCapture = { maxBytes: 24_000_000, validate(seconds: number, bytes: number): void {
@@ -120,7 +135,7 @@ const liveCapture = { maxBytes: 24_000_000, validate(seconds: number, bytes: num
 } };
 
 export async function liveWalkthrough(browser: Browser, origin: string, passwords: { alice: string; bob: string },
-  path: string) {
+  path: string, investigationOnly = false) {
   const bob = (await signIn(browser, origin, "bob", "reviewer", passwords.bob, false)).session;
   const alice = (await signIn(browser, origin, "alice", "analyst", passwords.alice, false)).session;
   if (alice.principal === bob.principal || alice.workspace !== bob.workspace) throw new Error("Expected separate roles");
@@ -146,6 +161,7 @@ export async function liveWalkthrough(browser: Browser, origin: string, password
       const summary: Summary = {
         run_id: null, outcome: "recording_failed", call_count: null, settled_usd: null, held_usd: null,
         receipt_sha256: null, case_version: null, proposal_version: null,
+        timing: null,
       };
       const recordUsage = async (): Promise<void> => {
         if (summary.run_id === null) return;
@@ -157,6 +173,11 @@ export async function liveWalkthrough(browser: Browser, origin: string, password
         summary.call_count = usage.call_count;
         summary.settled_usd = usage.settled_usd;
         summary.held_usd = usage.held_usd;
+        const times = usage.timing;
+        if (timestamp(times.created_at) === null) throw new Error("Run creation time was missing");
+        summary.timing = { created_at: times.created_at, first_model_call_at: timestamp(times.first_model_call_at),
+          proposal_persisted_at: timestamp(times.proposal_persisted_at),
+          investigation_ended_at: timestamp(times.investigation_ended_at) };
       };
       try {
         try {
@@ -208,6 +229,11 @@ export async function liveWalkthrough(browser: Browser, origin: string, password
           await center(action.locator(".message-text").first());
           await caption(page, captions.proposal);
           await hold(2000);
+          if (investigationOnly) {
+            await recordUsage();
+            summary.outcome = "proposal_persisted";
+            return { summary, ...await recording.finish() };
+          }
           await action.getByRole("link", { name: /^Inspect source / }).first().click();
           const evidence = page.getByRole("region", { name: "Historical evidence", exact: true });
           await center(evidence.locator(".evidence-excerpt"));

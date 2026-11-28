@@ -75,10 +75,58 @@ def api_catalog(app: Engine) -> RuntimeCatalog:
 
     if not live_agent_enabled():
         return UNCONFIGURED
-    from policyops.runtime.live_agent import INPUTS, catalog, inputs, unavailable_providers
+    from policyops.runtime.live_agent import INPUTS, catalog, inputs, selected_profile, unavailable_providers
 
     return catalog(env=os.environ["POLICYOPS_ENV"], engine=app, loaded=inputs(INPUTS),
-                   workspace=UUID(demo()["workspace_id"]), providers=unavailable_providers)
+                   workspace=UUID(demo()["workspace_id"]), providers=unavailable_providers,
+                   profile=selected_profile())
+
+
+def live_recording_root() -> Path | None:
+    if os.environ.get("POLICYOPS_LIVE_AGENT_RECORD") != "1":
+        return None
+    if not live_agent_enabled():
+        raise ValueError("transport recording requires the local live-agent overlay")
+    from policyops.runtime.live_recording import tape_root
+
+    return tape_root(Path("/recordings"), ROOT)
+
+
+def summarize_live_agent(run_id: UUID) -> None:
+    from policyops.orchestration.profile import InvestigationProfile, InvestigationProfileV2
+    from policyops.persistence import runs
+    from policyops.persistence.database import workspace_transaction
+    from policyops.runtime.investigation import graph_digest
+    from policyops.runtime.live_agent import configuration, timing
+    from policyops.runtime.live_recording import measurements
+
+    root = live_recording_root()
+    if root is None:
+        raise ValueError("transport recording overlay required")
+    workspace = UUID(demo()["workspace_id"])
+    with own_engine("policyops_app_runtime") as app, workspace_transaction(app, workspace) as connection:
+        run = runs.get_run(connection, run_id)
+        if run is None:
+            raise ValueError("unknown live run")
+        times = timing(connection, run)
+    profiles = (InvestigationProfile.TOOL_CONTRACT_V1R1, InvestigationProfileV2.TOOL_CONTRACT_V2)
+    profile = next((item for item in profiles if graph_digest(item) == run.graph_sha256), None)
+    if profile is None:
+        raise ValueError("run did not use a live-agent investigation graph")
+    exchanges, tools = measurements(root, run.id)
+
+    def elapsed(at: datetime | None) -> int | None:
+        return None if at is None else int((at - times.created_at).total_seconds() * 1000)
+
+    print(json.dumps({"run_id": str(run.id), "state": run.state, **times.model_dump(mode="json"),
+        "profile": profile, "model": configuration().reservation("agent").model, "turn": 1,
+        "first_model_exchange_at": exchanges[0].started_at.isoformat() if exchanges else None,
+        "proposal_elapsed_ms": elapsed(times.proposal_persisted_at),
+        "terminal_elapsed_ms": elapsed(times.investigation_ended_at),
+        "provider_attempts": [{"phase": e.phase, "started_at": e.started_at.isoformat(), "elapsed_ms": e.elapsed_ms,
+                               "status": e.status, "complete": e.complete,
+                               "captured": e.request is not None and e.response is not None} for e in exchanges],
+        "tool_steps": [item.model_dump(mode="json") for item in tools]}))
 
 
 def live_agent_seed(*, create_case: bool) -> None:
@@ -406,6 +454,7 @@ def worker(*, execution_hooks: Any = None) -> None:
     if drain_setting not in {"0", "1"}:
         raise ValueError("POLICYOPS_WORKER_DRAIN must be 0 or 1")
     drain = drain_setting == "1"
+    recording_root = live_recording_root()
     if execution_hooks is not None and (os.environ.get("POLICYOPS_COMPOSE_DRILL") != "1"
                                         or os.environ.get("POLICYOPS_ENV") != "local"):
         raise RuntimeError("execution fault hooks require the explicit local Compose drill")
@@ -431,13 +480,16 @@ def worker(*, execution_hooks: Any = None) -> None:
         binding: Callable[[Connection, CaseScope], CaseCustomerBinding | None] | None = None
         if providers is not None:
             from policyops.runtime import live_agent
+            from policyops.runtime.live_recording import bind_recording
 
             workspace = UUID(demo()["workspace_id"])
             aggregate, worst = live_agent.max_usd(), live_agent.preflight(live_agent.configuration())
             loaded = live_agent.inputs(live_agent.INPUTS)
             catalog = live_agent.catalog(
                 env=env, engine=app, loaded=loaded, workspace=workspace, providers=lambda: providers,
-                retail_origin=retail_origin, retail_key=retail_key, clock=review.executor.clock, aggregate=aggregate)
+                retail_origin=retail_origin, retail_key=retail_key, clock=review.executor.clock, aggregate=aggregate,
+                profile=live_agent.selected_profile(),
+                record_run=partial(bind_recording, recording_root, providers) if recording_root is not None else None)
             refusal = partial(live_agent.claim_refusal, workspace=workspace, aggregate=aggregate,
                               worst=worst, vocab=loaded[1])
             binding = partial(live_agent.case_binding, workspace=workspace)
@@ -469,10 +521,14 @@ def main() -> int:
         "seed-demo": seed_demo, "api": api, "retail": retail, "worker": worker,
         "ingest-live-agent": partial(live_agent_seed, create_case=False),
         "seed-live-agent": partial(live_agent_seed, create_case=True),
+        "summarize-live-agent": lambda: summarize_live_agent(args.run),
     }
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=commands)
+    parser.add_argument("--run", type=UUID)
     args = parser.parse_args()
+    if (args.run is not None) != (args.command == "summarize-live-agent"):
+        parser.error("--run is required for summarize-live-agent only")
     try:
         result = commands[args.command]()
         return int(result is False)

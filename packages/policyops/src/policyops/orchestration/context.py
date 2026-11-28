@@ -5,7 +5,7 @@ from typing import cast
 
 from policyops.orchestration import investigation_prompt as prompt
 from policyops.orchestration.mechanics import TranscriptInvariant
-from policyops.orchestration.profile import InvestigationProfile
+from policyops.orchestration.profile import InvestigationProfile, InvestigationVersion
 from policyops.orchestration.state import InvestigationState, InvestigationStopped, state_from_json
 from policyops.providers.canonical import CanonicalError, canonical_size
 from policyops.providers.contract import ContractGap
@@ -22,7 +22,7 @@ from policyops_contracts.stops import StopDetails, StopReason
 
 
 def fit(state: InvestigationState, policy: PolicyContext, limits: AgentLimits, *,
-        append: tuple[Entry, ...] = (), profile: InvestigationProfile = InvestigationProfile.BASELINE
+        append: tuple[Entry, ...] = (), profile: InvestigationVersion = InvestigationProfile.BASELINE
         ) -> InvestigationState:
     entries = (*state.transcript, *append)
     pairs: list[tuple[int, int]] = []

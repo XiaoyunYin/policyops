@@ -19,7 +19,7 @@ import pytest
 from policyops.budget.config import Configuration
 from policyops.domain.examples import World as RetailWorld
 from policyops.orchestration import investigation_prompt as prompt
-from policyops.orchestration.profile import InvestigationProfile
+from policyops.orchestration.profile import InvestigationProfile, InvestigationProfileV2, InvestigationVersion
 from policyops.orchestration.state import InvestigationState
 from policyops.persistence import repositories as repo
 from policyops.persistence import runs
@@ -42,6 +42,7 @@ from policyops.runtime.worker import Context, Worker
 from policyops.services.proposals import ProposalService
 from policyops_contracts.clock import FixedClock
 from policyops_contracts.conversation import AgentLimits, ToolResult
+from policyops_contracts.events import InvestigationReason
 from policyops_contracts.model import ModelRequest, ToolResultPart
 from policyops_contracts.retail import FindUserIdByEmail, GetOrderDetails, GetUserDetails
 from policyops_contracts.retail_service import FIXTURE_SHA256
@@ -65,6 +66,7 @@ ANSWER = {"v": "policyops.grounded-answer/v1", "outcome": "answer", "abstention"
                                          "start": None, "end": None}]}]}
 ABSTAIN = {"v": "policyops.grounded-answer/v1", "outcome": "abstain", "assertions": [],
            "abstention": {"reason": "insufficient_evidence", "detail": None}}
+PAYLOAD = '<img src=x onerror="alert(1)">'
 
 
 class SimulatedCrash(BaseException):
@@ -118,7 +120,7 @@ def db(new_app_database: NewDatabase) -> AppDatabase:
 
 def scenario(db: AppDatabase, path: Path, mode: str = "answer", *, max_steps: int = 32,
              limits: AgentLimits | None = None, retrieval_config: RetrievalConfig | None = None,
-             profile: InvestigationProfile = InvestigationProfile.BASELINE,
+             profile: InvestigationVersion = InvestigationProfile.BASELINE,
              input_text: str = "Please help with my refund.") -> Scenario:
     world = World(db, path)
     world.publish(documents([("refunds", "Refund policy", TEXT)]))
@@ -177,6 +179,52 @@ def test_worker_graph_terminal_paths(db: AppDatabase, tmp_path: Path, mode: str,
         assert test.world.count("app.action_proposals") == 1
         assert test.world.count("app.proposal_presentations") == 1
         assert test.world.count("app.customer_consents") == 0
+
+
+@pytest.mark.parametrize("reason", list(InvestigationReason))
+def test_typed_outcome_is_fenced_durable_and_projected(
+        db: AppDatabase, tmp_path: Path, reason: InvestigationReason,
+) -> None:
+    from copy import deepcopy
+
+    test = scenario(db, tmp_path, limits=AgentLimits(knowledge_steps=16, consecutive_invalid=2),
+                    profile=InvestigationProfileV2.TOOL_CONTRACT_V2)
+    answer: dict[str, Any] = deepcopy(ANSWER)
+    if reason is InvestigationReason.MODEL_ABSTAINED:
+        test.model.script[:] = [calls(prompt.FINISH, ABSTAIN | {
+            "abstention": {"reason": "insufficient_evidence", "detail": PAYLOAD}})]
+    elif reason is InvestigationReason.SYSTEM_ERROR:
+        test.model.script[:] = [CallReport(None, "failed", "provider_error")]
+    else:
+        control = prompt.FINISH
+        if reason is InvestigationReason.CITATION_RECORDING_FAILED:
+            answer["assertions"][0]["citations"][0]["quote"] = "Fabricated quote."
+        elif reason is InvestigationReason.RENDERED_ANSWER_INVALID:
+            answer["assertions"] = [answer["assertions"][0] | {"text": "x" * 1800}] * 3
+        else:
+            control = prompt.DECLINE
+            answer["assertions"][0]["text"] = PAYLOAD + " Policy requires a decline."
+        test.model.script[:] = [calls("search_policy", {"query": "refunds"}), calls(control, answer)]
+
+    claimed = test.claim()
+    first = test.executor.execute(claimed)
+    assert test.executor.execute(claimed) == first
+    test.worker.finish(claimed.claim_token, first)
+    test.worker.finish(claimed.claim_token, first)
+    assert test.state() == ("failed" if reason is InvestigationReason.SYSTEM_ERROR else "succeeded")
+    assert test.world.count("app.action_proposals") == 0
+    assert test.api.scalar("SELECT count(*) FROM app.run_events WHERE run_id = %s "
+                           "AND event_type = 'investigation.outcome'", test.run_id) == 1
+    viewer = test.api.member(f"reader-{uuid4().hex}", test.world.ws, "auditor")
+    snapshot = viewer.get(f"/api/v1/runs/{test.run_id}/snapshot?tail=0")
+    assert snapshot.status_code == 200 and snapshot.json()["events"] == []
+    assert snapshot.json()["latest_investigation"]["payload"] == {
+        "type": "investigation.outcome", "reason": reason.value,
+    }
+    if reason is not InvestigationReason.SYSTEM_ERROR:
+        message = test.api.scalar("SELECT text FROM app.case_messages WHERE case_id = %s AND source = 'agent'",
+                                  test.case_id)
+        assert (PAYLOAD in message) == (reason is InvestigationReason.CITED_DECLINE)
 
 
 def test_tool_contract_profile_uses_the_bound_lookup_id_to_reach_a_proposal(db: AppDatabase, tmp_path: Path) -> None:

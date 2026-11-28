@@ -591,6 +591,45 @@ room for its full preflight above settled and held liability. Each model and emb
 same workspace limit. Unconfirmed charges remain held, and provider charges above their reservations are
 recorded as overruns. The runtime uses the configured model throughout.
 
+### Transport tapes and latency
+
+For a recorded reproduction, create an external directory writable by worker UID 10001. Set
+`POLICYOPS_LIVE_AGENT_TAPES` to its absolute path and add `-f infra/compose/live-agent-recording.yaml` to
+`$compose`. Run Compose through `python -B scripts/devenv.py -- docker @compose ...` so the host path is
+checked before it is passed to Docker. The mount and recorder are worker-only and opt-in. Use
+`tool-contract-v1r1` for the original seeded case. Set `POLICYOPS_LIVE_AGENT_PROFILE=tool-contract-v2` to run
+the version with typed operator outcomes. Both the API and worker read this setting when they start.
+
+Each run and claim gets its own tape directory. The tape records only bounded JSON bodies for the OpenAI
+Responses token-count and inference endpoints. It excludes HTTP headers and redacts the configured key,
+sensitive JSON fields and recognizable credential strings. Tapes still contain fictional prompts, tool
+results and model output. Keep them private. Missing responses and incomplete exchanges remain visible.
+Pass `--investigation-only` to the browser recorder to end at the proposal or another investigation outcome.
+That skips consent and approval. Use the worker to export the corresponding transport timing summary.
+
+```powershell
+python -B scripts/devenv.py -- docker @compose exec -T worker python -B infra/compose/runtime.py summarize-live-agent --run $runId
+```
+
+The case recording summary and the worker summary use the following database times.
+
+- Run creation comes from the persisted run row. First model call is the first agent ledger reservation, before
+  the preflight count request. The tape reports the start of each HTTP exchange separately.
+- Proposal time comes from the first `proposal.presented` event written in the proposal persistence
+  transaction. Investigation end is the first state change to `waiting_approval` or a terminal state.
+  Consent, approval and execution time are outside that interval.
+- Each tape exchange measures monotonic time from dispatch to complete response body, failed dispatch or
+  incomplete close. Count and inference samples are reported separately. Tool time measures the graph's
+  retrieval, read and proposal calls, including their own validation and persistence. Queueing, checkpoint
+  work and retry waits remain in end-to-end time. An incomplete exchange or non-200 status is a transport
+  failure. A 200 response can still fail later model or accounting checks.
+
+For the latency panel, report nearest-rank p50 and p95 among slots reaching a persisted proposal by the
+registered horizon. Include that count over all scheduled slots and report terminal durations for the other
+slots with an observed end. Report provider duration sample and failure counts separately for count and
+inference. Keep profiles, models and turns separate and state that runs are serial along with the workstation
+network path. Missing timestamps and unstarted slots remain in the denominator.
+
 PostgreSQL and the simulator stay on the internal default network. The overlay adds a separate outbound bridge
 for the worker. The intended external endpoint is `api.openai.com`; Compose does not enforce that destination.
 This demonstration covers a fictional cancellation and its independently approved simulator effect. Live model

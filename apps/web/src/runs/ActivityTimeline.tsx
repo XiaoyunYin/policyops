@@ -10,6 +10,7 @@ export function activityLabel(item: ReplayItem): string {
   switch (p.type) {
     case "run.state_changed": return `Investigation ${p.current.replaceAll("_", " ")}`;
     case "case.message_posted": return p.source === "staff_note" ? "Internal staff note recorded" : "Conversation message recorded";
+    case "investigation.outcome": return "Investigation outcome recorded";
     case "run.stopped": return `Investigation stopped · ${p.details.reason.replaceAll("_", " ")}`;
     case "tool.requested": return `Requested ${p.tool.replaceAll("_", " ")}`;
     case "tool.finished": return `Tool ${p.outcome} · ${p.tool.replaceAll("_", " ")}`;

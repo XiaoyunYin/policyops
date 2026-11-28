@@ -260,6 +260,17 @@ SCENARIO_IMPORTS = {
                                   "policyops.gateway.ports"},
     # The PostgreSQL negative control writes another run's handoff message through the trusted seed path.
     "tests/test_scenario_n8_pg.py": {"policyops.persistence.repositories", "policyops.runtime.spec"},
+    # N18 consumes existing offline wire diagnostics, receipt hashes, review evidence views and pinned rates.
+    "src/policyops_evals/scenarios/n18_cache.py": {"policyops.budget.prices"},
+    "src/policyops_evals/scenarios/n18_diagnosis.py": {
+        "policyops.orchestration.investigation_prompt", "policyops.orchestration.mechanics",
+        "policyops.persistence.evaluation", "policyops.providers.tool_diagnostics", "policyops.providers.tools",
+        "policyops.retrieval.grounding", "policyops.services.run_reads",
+    },
+    "src/policyops_evals/scenarios/n18_evidence.py": {"policyops.persistence.evaluation"},
+    "src/policyops_evals/scenarios/proposal_grading.py": {"policyops.services.run_reads"},
+    "tests/test_scenario_n18.py": {"policyops.domain.examples", "policyops.domain.retail_rules",
+                                   "policyops.providers.tool_diagnostics", "policyops.services.run_reads"},
 }
 
 

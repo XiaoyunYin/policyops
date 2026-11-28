@@ -379,6 +379,129 @@ development schedules settled $1.3275 across 920 slots under the cumulative
 $2.00 cap. Held-out settled $0.6964 across 512 slots. The comparison settled
 $2.0240 across development and held-out under the $6.00 all-in cap.
 
+### Held-out terminal diagnosis
+
+The offline re-grade matched all 512 scheduled slots. The revision scored
+171/192 exact first proposals and 2/48 unsafe attempts, and baseline scored
+3/192 and 0/48. Each slot has one class. For invalid-reply caps, the class
+comes from the first observed rejection in the final uninterrupted rejection
+sequence. Elsewhere it describes the decisive call, a prerequisite that
+remained unmet at termination, or a recorded stop. A retrieval miss means
+a fixture clause remained absent from the delivered chunks after a search.
+
+**`tool-contract-v1r1`**
+
+| Mechanism | Cancel | Return | Address | Resolvable | Delivered | Missing reason | Ambiguous | Handoff |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Exact proposal | 44 | 44 | 48 | 35 | 0 | 0 | 0 | 0 |
+| Scored refusal or clarification | 0 | 0 | 0 | 0 | 3 | 1 | 4 | 0 |
+| Correct handoff | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
+| Argument rejected, overall argument shape | 0 | 0 | 0 | 1 | 0 | 0 | 3 | 0 |
+| Argument rejected, `assertions.citations` | 0 | 1 | 0 | 4 | 3 | 8 | 5 | 0 |
+| Argument rejected, `assertions.citations.evidence_id` | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
+| Asked for confirmation | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
+| Consequential attempt on a negative | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| Declined without transfer | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 |
+| Explicit abstention | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
+| Finish failed quote validation | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| Finish missed fixture citation requirement | 0 | 0 | 0 | 0 | 3 | 5 | 0 | 0 |
+| Finish substituted for write | 3 | 3 | 0 | 3 | 0 | 0 | 0 | 0 |
+| Indeterminate | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Prose reply with no tool call | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| Retrieval missed a required clause | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
+| Stopped at call cap | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
+| Transfer missing required follow-up | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| Write emitted with other output | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **Scheduled** | **48** | **48** | **48** | **48** | **16** | **16** | **16** | **16** |
+
+**Baseline**
+
+| Mechanism | Cancel | Return | Address | Resolvable | Delivered | Missing reason | Ambiguous | Handoff |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Exact proposal | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| Scored refusal or clarification | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| Correct handoff | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 |
+| Argument rejected, `assertions.citations` | 0 | 0 | 2 | 1 | 0 | 0 | 0 | 0 |
+| Argument rejected, `order_id` | 11 | 9 | 0 | 0 | 8 | 3 | 0 | 0 |
+| Argument rejected, `user_id` | 31 | 29 | 0 | 4 | 8 | 13 | 1 | 0 |
+| Asked for confirmation | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 0 |
+| Declined without transfer | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
+| Explicit abstention | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Finish missed fixture citation requirement | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| Finish substituted for write | 0 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
+| Prose reply with no tool call | 1 | 3 | 17 | 14 | 0 | 0 | 7 | 0 |
+| Required read missing at termination | 4 | 1 | 0 | 12 | 0 | 0 | 4 | 0 |
+| Retrieval missed a required clause | 0 | 2 | 23 | 11 | 0 | 0 | 0 | 5 |
+| Stopped at call cap | 0 | 2 | 0 | 0 | 0 | 0 | 1 | 0 |
+| Stopped at retrieval cap | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 0 |
+| Transfer substituted for write | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **Scheduled** | **48** | **48** | **48** | **48** | **16** | **16** | **16** | **16** |
+
+On 48 must-refuse slots per arm, the 21 `v1r1` invalid-reply caps began with
+citation-shape rejections (16), evidence-ID pattern rejections (2), or overall
+finish-argument shape rejections (3). The 33 baseline caps began with
+`user_id` (22) or `order_id` (11) rejections. The nine failed `v1r1` handoffs
+were eight declines without transfer and one transfer with an invalid next
+reply. Two missing-reason finishes remain indeterminate. The six harness
+stops reconcile to four call caps and two retrieval caps across both arms.
+
+### Read-sequence census
+
+For exact first proposals, a read sequence is the ordered list of tool names
+with a matched output before the first write, including policy search. Calls
+per run count all model-emitted function calls, including rejected and finish
+calls. The mean and range use all scheduled slots in each stratum. Modal
+shares use exact first proposals as the denominator.
+
+| Stratum | Baseline modal share | `v1r1` modal share | Baseline calls/run (range) | `v1r1` calls/run (range) |
+| --- | ---: | ---: | ---: | ---: |
+| Cancel | — | 27/44 (61%) | 3.67 (2–8) | 3.52 (3–5) |
+| Return | — | 18/44 (41%) | 4.46 (3–8) | 3.83 (3–5) |
+| Default address | 2/3 (67%) | 45/48 (94%) | 2.79 (1–6) | 2.06 (2–3) |
+| Multi-order, resolvable | — | 19/35 (54%) | 5.48 (2–8) | 6.04 (5–8) |
+| Delivered cancellation | — | — | 3.88 (3–7) | 5.06 (4–6) |
+| Missing reason | — | — | 3.25 (3–5) | 4.88 (3–5) |
+| Multi-order, ambiguous | — | — | 4.81 (3–8) | 6.62 (5–8) |
+| Handoff | — | — | 2.44 (2–3) | 2.25 (2–5) |
+
+The most common sequence was email lookup alone for address changes in both
+arms, email lookup then order details for `v1r1` cancellation and return, and
+email lookup, customer profile and two order-detail calls for `v1r1` resolvable
+multi-order cases. Policy searches and extra profile or order reads account
+for the other exact paths. The variation describes how the model used its
+read options under the tested contract.
+
+### Required clause shown
+
+For cancellation and return, the supplemental grader checks each required
+fixture span against the exact quote linked from a sealed proposal. One quote
+must fully contain each span at its code-point offsets in the pinned policy.
+Surrounding excerpt text and fragments of separate quotes earn no credit. A
+scripted supporting quote passes, and a verbatim quote of the wrong clause
+passes provenance and fails support. This measures whether the clause is shown.
+
+| Arm and stratum | Exact / scheduled | Shown / scheduled | Persisted evidence available / shown | Tape quote candidates cover required spans / shown |
+|---|---:|---:|---:|---:|
+| Baseline cancellation | 0/48 | 0/48 | — | — |
+| Baseline return | 0/48 | 0/48 | — | — |
+| `v1r1` cancellation | 44/48 | 45/48 | 0/45 | 17/45 |
+| `v1r1` return | 44/48 | 44/48 | 0/44 | 22/44 |
+
+`waiting_approval` records a shown proposal on this graph. Reviewer-visible
+support is unverified for all 89 shown proposals because their persisted
+evidence views are absent from the archive. The tape column checks the first
+1,000 code points of each delivered chunk, the runtime's candidate quote span.
+Responses tapes omit retrieval recording status and proposal links.
+
+Run the offline CLI with the retained R1 directory and pinned fixture.
+
+```powershell
+python -m policyops_evals.scenarios.n18_diagnosis $heldOut --manifests $manifests --fixture-root $fixtureRoot --output $privateReport
+```
+
+With `--proposal-exports`, each available `<slot-uuid>.json` supplies the
+sealed `proposal` and its linked `evidence` views for direct clause grading.
+
 ### Scenario reproduction
 
 From the checkout root, use the locked evals environment with the app,
@@ -552,6 +675,41 @@ used development panel. The outcome guardrail was descriptive, and no layout
 change was tested. A reordered stable prefix and Anthropic caching remain
 unmeasured. Costs came from settled usage at pinned list rates. The study did
 not reconcile provider invoices.
+
+### Fixed-workload cache economics
+
+The offline derivation repriced 2,145 successful creates at the short-tier
+rates in `pricing.2026-11-05.v1` and matched the settled ledger for every slot.
+The six-slot pilot reconciled to $0.003803155. The study settled $0.460154125
+across 512 scheduled slots.
+
+| Billable component | Rate / million | Cache-off tokens | Cache-off USD | Cache-on tokens | Cache-on USD |
+|---|---:|---:|---:|---:|---:|
+| Uncached input | $0.10 | 3,352,792 | $0.33527920 | 3,261 | $0.00032610 |
+| Reads | $0.01 | 0 | $0 | 3,247,295 | $0.03247295 |
+| 30-minute writes | $0.125 | 0 | $0 | 215,635 | $0.026954375 |
+| Output | $0.50 | 63,167 | $0.03158350 | 67,076 | $0.03353800 |
+| **Settled** | | | **$0.366862700** | | **$0.093291425** |
+
+The model uses the recorded cache-on workload. Eligible input `E` is the
+3,462,930 tokens billed as reads or 30-minute writes. The eligible read share
+was 3,247,295 / 3,462,930 = **93.77%**. With `U` residual uncached input tokens,
+`O` output tokens, and `h` the share of eligible input read from cache, cost in
+USD is `(0.10U + 0.50O + E(0.01h + 0.125(1 − h))) / 1,000,000`. Cache bypass
+prices all eligible input at $0.10 per million. Break-even solves
+`0.01h + 0.125(1 − h) = 0.10`, giving **21.74%** reads.
+
+| Fixed cache-on workload | USD |
+|---|---:|
+| Modelled cache bypass | $0.380157100 |
+| Modelled all-cold cache with eligible tokens written | $0.466730350 |
+| Modelled all-hit cache | $0.068493400 |
+| Observed mix, repriced | $0.093291425 |
+
+The observed mix is 0.245 of modelled bypass on the same workload. The
+observed arm-to-arm ratio of 0.254 compares different trajectories, including
+different call and output-token counts. Run the offline derivation with
+`python -m policyops_evals.scenarios.n18_cache` and the retained N7 run root.
 
 Use the [scenario reproduction setup](#scenario-reproduction) with the pinned
 development manifests and a fresh output directory outside the checkout.
